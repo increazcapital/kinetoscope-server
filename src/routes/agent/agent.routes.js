@@ -60,9 +60,20 @@ router.get('/auth/me', getMe);
 // 2. Agent Dashboard Stats
 router.get('/dashboard', getAgentDashboard);
 
-// 3. Agent Client List
+const {
+  getClientInvestmentsTab,
+  getClientRoiTab,
+  getClientDocumentsTab,
+  getClientPerksTab,
+} = require('../../controllers/super-admin/client-financials.controller');
+
+// 3. Agent Client List & Client Sub-tabs
 router.get('/clients', getAgentClients);
 router.get('/clients/:id', getAgentClientById);
+router.get('/clients/:id/investments', getClientInvestmentsTab);
+router.get('/clients/:id/roi/payouts', getClientRoiTab);
+router.get('/clients/:id/documents', getClientDocumentsTab);
+router.get('/clients/:id/perks', getClientPerksTab);
 
 // 4. Agent Commission History
 router.get('/commissions', getAgentCommissions);
@@ -90,6 +101,7 @@ router.post('/settings/change-password/verify-otp', verifyChangePasswordOtpRules
 // 8. News & Articles (Reader)
 router.get('/articles', getPublishedArticles);
 router.get('/articles/:id', getPublishedArticleById);
+router.get('/news/:id', getPublishedArticleById);
 
 // 9. Transaction requests (deposit / withdrawal on behalf of assigned client)
 const {
@@ -106,6 +118,7 @@ router.route('/transactions')
 router.route('/withdrawal')
   .get(getAgentWithdrawals)
   .post(requestAgentWithdrawal);
+router.get('/withdrawals', getAgentWithdrawals);
 
 // 10. Agent direct messaging/notifications
 const { sendAgentNotificationEmail } = require('../../controllers/agent/notification.controller');

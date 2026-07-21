@@ -304,39 +304,73 @@ const getAgentClients = asyncHandler(async (req, res, next) => {
   const monthlySlabPct = parseFloat(monthlySlabStr) || 0.5;
   const months = 3;
 
-  // 3) Bulk fetch client profiles and active investments in parallel
-  const [profiles, investments] = await Promise.all([
-    ClientProfile.find({ userId: { $in: clientIds } }).lean(),
-    Investment.find({ clientId: { $in: clientIds }, status: 'active' }).lean()
+  const clientCodes = clients.map(c => c.clientCode).filter(Boolean);
+
+  // 3) Bulk fetch client profiles, active investments, and approved deposit transactions in parallel
+  const [profiles, investments, approvedDeposits] = await Promise.all([
+    ClientProfile.find({
+      $or: [
+        { userId: { $in: clientIds } },
+        { email: { $in: clients.map(c => c.email).filter(Boolean) } }
+      ]
+    }).lean(),
+    Investment.find({
+      $or: [
+        { clientId: { $in: clientIds } },
+        { clientCode: { $in: clientCodes } }
+      ],
+      status: 'active'
+    }).lean(),
+    Transaction.find({
+      $or: [
+        { clientId: { $in: clientIds } },
+        { clientCode: { $in: clientCodes } }
+      ],
+      type: 'deposit',
+      status: 'approved'
+    }).lean()
   ]);
 
-  // 4) Map profiles and investments for O(1) in-memory lookup
+  // 4) Map profiles, investments, and deposits for O(1) in-memory lookup
   const profileMap = {};
   profiles.forEach(p => {
-    profileMap[p.userId.toString()] = p;
+    if (p.userId) profileMap[p.userId.toString()] = p;
+    if (p.email) profileMap[p.email.toLowerCase()] = p;
   });
 
   const investmentsMap = {};
-  clientIds.forEach(id => {
-    investmentsMap[id.toString()] = [];
-  });
+  const depositsMap = {};
+
   investments.forEach(inv => {
-    const cidStr = inv.clientId.toString();
-    if (investmentsMap[cidStr]) {
-      investmentsMap[cidStr].push(inv);
-    }
+    const amt = inv.investmentAmount || inv.amount || 0;
+    const idKey = inv.clientId ? inv.clientId.toString() : '';
+    const codeKey = inv.clientCode || '';
+    if (idKey) investmentsMap[idKey] = (investmentsMap[idKey] || 0) + amt;
+    if (codeKey) investmentsMap[codeKey] = (investmentsMap[codeKey] || 0) + amt;
+  });
+
+  approvedDeposits.forEach(tx => {
+    const amt = tx.amount || 0;
+    const idKey = tx.clientId ? tx.clientId.toString() : '';
+    const codeKey = tx.clientCode || '';
+    if (idKey) depositsMap[idKey] = (depositsMap[idKey] || 0) + amt;
+    if (codeKey) depositsMap[codeKey] = (depositsMap[codeKey] || 0) + amt;
   });
 
   // 5) Assemble client records
   const clientRecords = clients.map(client => {
     const clientIdStr = client._id.toString();
-    const profile = profileMap[clientIdStr] || null;
-    const clientInvestments = investmentsMap[clientIdStr] || [];
-    const totalInvestment = clientInvestments.reduce((sum, inv) => sum + inv.investmentAmount, 0);
+    const codeStr = client.clientCode || '';
+    const emailStr = (client.email || '').toLowerCase();
+
+    const profile = profileMap[clientIdStr] || profileMap[emailStr] || null;
+    const invTotal = Math.max(investmentsMap[clientIdStr] || 0, investmentsMap[codeStr] || 0);
+    const depTotal = Math.max(depositsMap[clientIdStr] || 0, depositsMap[codeStr] || 0);
+    const totalInvestment = Math.max(invTotal, depTotal);
     const commissionPaid = totalInvestment * (monthlySlabPct / 100) * months;
     
-    // Parse monthlyRoi safely to cover numbers, strings, and fallbacks
-    const monthlyRoi = profile ? (parseFloat(profile.monthlyRoi) || 0) : 1.2;
+    // Parse monthlyRoi safely directly from DB profile — exact value without fallback
+    const monthlyRoi = profile && profile.monthlyRoi !== undefined ? (parseFloat(profile.monthlyRoi) || 0) : 0;
 
     return {
       clientId: client.clientCode || '',

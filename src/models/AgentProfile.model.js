@@ -145,35 +145,30 @@ const agentProfileSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
-    // Nominee Details
+    // Nominee Details (Optional for Agents)
     nomineeName: {
       type: String,
-      required: [true, 'Nominee name is required'],
+      default: '',
       trim: true,
     },
     nomineeRelation: {
       type: String,
-      required: [true, 'Nominee relation is required'],
+      default: '',
       trim: true,
     },
     nomineePhone: {
       type: String,
-      required: [true, 'Nominee phone number is required'],
+      default: '',
       trim: true,
     },
     nomineeEmail: {
       type: String,
-      required: [true, 'Nominee email address is required'],
+      default: '',
       trim: true,
       lowercase: true,
-      match: [
-        /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/,
-        'Please provide a valid nominee email address',
-      ],
     },
     nomineeResidency: {
       type: String,
-      required: [true, 'Nominee Residency / Citizenship is required'],
       enum: {
         values: ['National (Domestic)', 'International'],
         message: 'Nominee Residency must be either National (Domestic) or International',

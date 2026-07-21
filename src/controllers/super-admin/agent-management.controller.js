@@ -100,19 +100,21 @@ const createAgent = asyncHandler(async (req, res, next) => {
     return next(new AppError('Email address is already in use by another account.', 400));
   }
 
-  // 3) Generate a sequential agent code starting from AGT-001
+  // 3) Generate a sequential agent code starting from KFPL-AG-1001
   const agents = await User.find({ role: ROLES.AGENT }, { clientCode: 1 });
-  let maxSeq = 0;
+  let maxSeq = 1000;
   agents.forEach(a => {
-    if (a.clientCode && a.clientCode.startsWith('AGT-')) {
-      const parts = a.clientCode.split('-');
-      const seq = parseInt(parts[1], 10);
-      if (!isNaN(seq) && seq > maxSeq) {
-        maxSeq = seq;
+    if (a.clientCode) {
+      const digits = a.clientCode.match(/\d+/);
+      if (digits) {
+        const seq = parseInt(digits[0], 10);
+        if (!isNaN(seq) && seq > maxSeq) {
+          maxSeq = seq;
+        }
       }
     }
   });
-  const agentCode = `AGT-${String(maxSeq + 1).padStart(3, '0')}`;
+  const agentCode = `KFPL-AG-${maxSeq + 1}`;
 
   // 4) Use provided custom password or generate a secure temporary password
   const tempPassword = password || portalPassword || generateTempPassword();
@@ -548,12 +550,20 @@ const deleteAgent = asyncHandler(async (req, res, next) => {
     { $unset: { assignedAgent: '' } }
   );
 
-  // 3) Delete User document from Mongo
+  // 3) Delete AgentCommissions and Agent Withdrawals so deleted agent commissions are never calculated
+  const AgentCommission = require('../../models/AgentCommission.model');
+  const Transaction = require('../../models/Transaction.model');
+  await Promise.all([
+    AgentCommission.deleteMany({ agentId: userId }),
+    Transaction.deleteMany({ agentId: userId, isAgentWithdrawal: true })
+  ]);
+
+  // 4) Delete User document from Mongo
   await User.findByIdAndDelete(userId);
 
   res.status(200).json({
     success: true,
-    message: 'Agent account and associated profile/documents deleted successfully. Client associations cleared.',
+    message: 'Agent account, profile, documents, and associated commissions deleted successfully.',
   });
 });
 
@@ -580,19 +590,26 @@ const getAgentClients = asyncHandler(async (req, res, next) => {
   const clients = await User.find({ role: ROLES.CLIENT, assignedAgent: agentId }).sort({ createdAt: -1 });
   const clientIds = clients.map(c => c._id);
 
-  // Bulk fetch profiles
-  const profiles = await ClientProfile.find({ userId: { $in: clientIds } });
+  // Bulk fetch profiles, investments, and approved deposit transactions
+  const [profiles, investments, approvedDeposits] = await Promise.all([
+    ClientProfile.find({ userId: { $in: clientIds } }).lean(),
+    Investment.find({ clientId: { $in: clientIds }, status: 'active' }).lean(),
+    Transaction.find({ clientId: { $in: clientIds }, type: 'deposit', status: 'approved' }).lean()
+  ]);
+
   const profileMap = {};
   profiles.forEach(p => {
     profileMap[p.userId.toString()] = p;
   });
 
-  // Bulk fetch investments
-  const investments = await Investment.find({ clientId: { $in: clientIds }, status: 'active' });
   const investmentsMap = {};
+  const depositsMap = {};
   clientIds.forEach(id => {
-    investmentsMap[id.toString()] = [];
+    const idStr = id.toString();
+    investmentsMap[idStr] = [];
+    depositsMap[idStr] = 0;
   });
+
   investments.forEach(inv => {
     const cidStr = inv.clientId.toString();
     if (investmentsMap[cidStr]) {
@@ -600,10 +617,20 @@ const getAgentClients = asyncHandler(async (req, res, next) => {
     }
   });
 
+  approvedDeposits.forEach(tx => {
+    const cidStr = tx.clientId ? tx.clientId.toString() : '';
+    if (cidStr && depositsMap[cidStr] !== undefined) {
+      depositsMap[cidStr] += (tx.amount || 0);
+    }
+  });
+
   const clientRecords = clients.map(client => {
-    const profile = profileMap[client._id.toString()];
-    const clientInvestments = investmentsMap[client._id.toString()] || [];
-    const totalInvestment = clientInvestments.reduce((sum, inv) => sum + inv.investmentAmount, 0);
+    const cidStr = client._id.toString();
+    const profile = profileMap[cidStr];
+    const clientInvestments = investmentsMap[cidStr] || [];
+    const invTotal = clientInvestments.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
+    const depTotal = depositsMap[cidStr] || 0;
+    const totalInvestment = Math.max(invTotal, depTotal);
 
     const commissionPaid = totalInvestment * (monthlySlabPct / 100) * months;
 
@@ -755,7 +782,7 @@ const verifyAgentDocument = asyncHandler(async (req, res, next) => {
     (documentField === 'panDocument' ? true : profile.panDocumentVerified) &&
     (documentField === 'idProofDocument' ? true : profile.idProofDocumentVerified) &&
     (documentField === 'bankProofDocument' ? true : profile.bankProofDocumentVerified) &&
-    (documentField === 'nomineeProofDocument' ? true : profile.nomineeProofDocumentVerified);
+    (!profile.nomineeProofDocument || documentField === 'nomineeProofDocument' ? true : profile.nomineeProofDocumentVerified);
 
   if (allVerified) {
     profile.kycStatus = 'VERIFIED';
@@ -853,12 +880,56 @@ const payAgentCommission = asyncHandler(async (req, res, next) => {
   });
 });
 
+/**
+ * Clear all Agents (Super Admin only)
+ * DELETE /api/super-admin/agents/clear
+ */
+const clearAllAgents = asyncHandler(async (req, res, next) => {
+  // Find all agent users
+  const agents = await User.find({ role: ROLES.AGENT });
+  const agentIds = agents.map(a => a._id);
+
+  // Fetch agent profiles
+  const profiles = await AgentProfile.find({ userId: { $in: agentIds } });
+
+  // Purge documents from Cloudinary
+  const documentUrls = [];
+  profiles.forEach(profile => {
+    if (profile.panDocument) documentUrls.push(profile.panDocument);
+    if (profile.idProofDocument) documentUrls.push(profile.idProofDocument);
+    if (profile.bankProofDocument) documentUrls.push(profile.bankProofDocument);
+    if (profile.nomineeProofDocument) documentUrls.push(profile.nomineeProofDocument);
+  });
+
+  if (documentUrls.length > 0) {
+    await deleteCloudinaryFiles(documentUrls);
+  }
+
+  // Delete profiles, user accounts, agent commissions, and agent transactions
+  const AgentCommission = require('../../models/AgentCommission.model');
+  const Transaction = require('../../models/Transaction.model');
+  await Promise.all([
+    AgentProfile.deleteMany({ userId: { $in: agentIds } }),
+    AgentCommission.deleteMany({ agentId: { $in: agentIds } }),
+    Transaction.deleteMany({ agentId: { $in: agentIds }, isAgentWithdrawal: true }),
+    User.updateMany({ assignedAgent: { $in: agentIds } }, { $unset: { assignedAgent: '' } }),
+    User.deleteMany({ _id: { $in: agentIds } })
+  ]);
+
+  res.status(200).json({
+    success: true,
+    message: `All agent accounts (${agentIds.length}), profiles, and commission logs cleared successfully.`,
+    count: agentIds.length
+  });
+});
+
 module.exports = {
   createAgent,
   getAllAgents,
   getAgentById,
   updateAgent,
   deleteAgent,
+  clearAllAgents,
   getAgentClients,
   getAgentCommissions,
   updateAgentStatus,

@@ -4,6 +4,9 @@ const clientDetailsService = require('../../services/client-details.service');
 const perksService = require('../../services/perks.service');
 const ClientProfile = require('../../models/ClientProfile.model');
 const User = require('../../models/User.model');
+const Investment = require('../../models/Investment.model');
+const ClientPerk = require('../../models/ClientPerk.model');
+const Perk = require('../../models/Perk.model');
 const { sendRoiPayoutNotification } = require('../../services/email.service');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
@@ -116,21 +119,123 @@ const getClientDocumentsTab = asyncHandler(async (req, res, next) => {
  * GET /api/super-admin/clients/:id/perks
  */
 const getClientPerksTab = asyncHandler(async (req, res, next) => {
+  const clientId = req.params.id;
   if (req.user.role === ROLES.AGENT) {
-    await verifyAgentClientAccess(req.params.id, req.user.id);
+    await verifyAgentClientAccess(clientId, req.user.id);
   }
-  const profile = await ClientProfile.findOne({ userId: req.params.id });
-  if (!profile) {
+
+  const [user, investments, approvedDeposits, assignments, profile, allDbPerks] = await Promise.all([
+    User.findById(clientId),
+    Investment.find({ clientId }).lean(),
+    Transaction.find({ clientId, type: 'deposit', status: 'approved' }).lean(),
+    ClientPerk.find({ clientId })
+      .populate({
+        path: 'perkId',
+        select: 'title description tier minInvestment status',
+      })
+      .sort({ createdAt: -1 }),
+    ClientProfile.findOne({ userId: clientId }),
+    Perk.find({ status: 'active' }).lean(),
+  ]);
+
+  if (!user) {
     return next(new AppError('Client profile not found.', 404));
   }
 
-  const perks = perksService.getPerksByTier(profile.tier);
+  const validInvestments = (investments || []).filter(inv => inv.status !== 'cancelled');
+  const invTotal = validInvestments.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
+  const depTotal = (approvedDeposits || []).reduce((sum, tx) => sum + (tx.amount || 0), 0);
+  const totalInvestment = Math.max(invTotal, depTotal);
+
+  let investmentTier = 'SILVER';
+  if (totalInvestment >= 5000000) investmentTier = 'DIAMOND';
+  else if (totalInvestment >= 1500000) investmentTier = 'PLATINUM';
+  else if (totalInvestment >= 500000) investmentTier = 'GOLD';
+
+  const tierWeights = { SILVER: 1, GOLD: 2, PLATINUM: 3, DIAMOND: 4 };
+  const profileTier = profile ? (profile.tier || 'SILVER').toUpperCase() : 'SILVER';
+  let currentTier = 'SILVER';
+  let maxWeight = tierWeights[investmentTier];
+
+  if (profileTier && tierWeights[profileTier] > maxWeight) {
+    maxWeight = tierWeights[profileTier];
+    currentTier = profileTier;
+  }
+
+  const activeAssignedPerks = assignments
+    .map(assign => assign.perkId)
+    .filter(perk => perk && (perk.status || 'active').toLowerCase() === 'active');
+
+  activeAssignedPerks.forEach(p => {
+    const t = (p.tier || 'SILVER').toUpperCase();
+    if (tierWeights[t] > maxWeight) {
+      maxWeight = tierWeights[t];
+      currentTier = t;
+    }
+  });
+
+  const tierPerksFromDb = allDbPerks.filter(p => (p.tier || '').toUpperCase() === currentTier);
+
+  const defaultBenefitsMap = {
+    SILVER: [
+      { title: 'Monthly investment reports', description: 'Standard monthly performance statement' },
+      { title: 'Email support (24hr response)', description: 'Standard email help desk access' },
+      { title: 'Basic portfolio insights', description: 'Access to view portfolio growth details' }
+    ],
+    GOLD: [
+      { title: 'All Silver benefits', description: 'Includes all lower tier benefits' },
+      { title: 'Priority support (12hr response)', description: 'Faster help desk ticket processing' },
+      { title: 'Quarterly investment review call', description: 'One-on-one portfolio review call each quarter' },
+      { title: 'Early access to new projects', description: 'Priority access to upcoming investment projects' }
+    ],
+    PLATINUM: [
+      { title: 'All Gold benefits', description: 'Includes all lower tier benefits' },
+      { title: 'Dedicated relationship manager', description: 'Direct contact point for all operations' },
+      { title: 'Exclusive event invitations', description: 'VIP invites to company galas and screenings' },
+      { title: 'Bonus eligibility (annual)', description: 'Eligible for annual investment bonus' }
+    ],
+    DIAMOND: [
+      { title: 'All Platinum benefits', description: 'Includes all lower tier benefits' },
+      { title: 'VIP concierge service', description: 'White-glove treatment for deposits/withdrawals' },
+      { title: 'Board-level investment insights', description: 'Quarterly reports directly from executives' }
+    ]
+  };
+
+  const assignedPerkTitles = activeAssignedPerks.map(perk => ({
+    title: perk.title,
+    description: perk.description,
+    tier: perk.tier || currentTier,
+    isCustom: true
+  }));
+
+  const dbTierPerkTitles = tierPerksFromDb.map(perk => ({
+    title: perk.title,
+    description: perk.description,
+    tier: perk.tier || currentTier,
+    isCustom: false
+  }));
+
+  const perkTitleSet = new Set();
+  const allPerksCombined = [];
+
+  const rawList = (assignedPerkTitles.length > 0 || dbTierPerkTitles.length > 0)
+    ? [...assignedPerkTitles, ...dbTierPerkTitles]
+    : (defaultBenefitsMap[currentTier] || []);
+
+  rawList.forEach(p => {
+    if (p && p.title && !perkTitleSet.has(p.title.toLowerCase())) {
+      perkTitleSet.add(p.title.toLowerCase());
+      allPerksCombined.push(p);
+    }
+  });
 
   res.status(200).json({
     success: true,
     message: 'Client perks retrieved successfully',
     data: {
-      perks,
+      currentTier,
+      totalInvestment,
+      perks: allPerksCombined,
     },
   });
 });

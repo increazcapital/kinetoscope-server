@@ -65,6 +65,7 @@ const {
   getAgentById,
   updateAgent,
   deleteAgent,
+  clearAllAgents,
   getAgentClients,
   getAgentCommissions,
   updateAgentStatus,
@@ -316,6 +317,8 @@ router.post('/roi/payouts/bulk', memoryUpload.single('file'), bulkUploadPayouts)
 router.patch('/roi/payouts/:id/pay', markPayoutPaid);
 
 // 5. Agent Management
+router.delete('/agents/clear', clearAllAgents);
+
 router.route('/agents')
   .get(getAllAgents)
   .post(memoryAgentOnboardingUpload, createAgentValidationRules, createAgent);
@@ -337,12 +340,16 @@ const {
   approveRejectTransaction,
   getApprovalsHistory,
   getTransactionById,
+  clearAllHistory,
+  backfillApprovedDeposits,
 } = require('../../controllers/super-admin/transaction.controller');
 
 router.route('/transactions/approvals')
   .get(getPendingApprovals);
 
 router.get('/transactions/history', getApprovalsHistory);
+router.delete('/transactions/history/clear', clearAllHistory);
+router.post('/transactions/backfill-investments', backfillApprovedDeposits);
 router.get('/transactions/:id', getTransactionById);
 router.patch('/transactions/:id/action', approveRejectTransaction);
 router.patch('/transactions/:id/approve', approveRejectTransaction);
@@ -352,13 +359,27 @@ router.route('/perks')
   .get(getAllPerks)
   .post(createPerkValidationRules, createPerk);
 
+router.route('/perks/assign')
+  .post(assignPerkValidationRules, assignPerkToClients);
+
+router.route('/perks/assignments')
+  .get(getAssignedPerks)
+  .post(assignPerkValidationRules, assignPerkToClients);
+
+router.route('/perks/assignments/:id')
+  .delete(unassignPerk);
+
+router.route('/perks/assigned')
+  .get(getAssignedPerks)
+  .post(assignPerkValidationRules, assignPerkToClients);
+
+router.route('/perks/assigned/:id')
+  .delete(unassignPerk);
+
 router.route('/perks/:id')
   .patch(updatePerkValidationRules, updatePerk)
+  .put(updatePerkValidationRules, updatePerk)
   .delete(deletePerk);
-
-router.post('/perks/assign', assignPerkValidationRules, assignPerkToClients);
-router.get('/perks/assignments', getAssignedPerks);
-router.delete('/perks/assignments/:id', unassignPerk);
 
 // 8. Activity Logs
 router.get('/activity-logs', (req, res) => {
@@ -577,5 +598,6 @@ router.route('/faqs')
 router.route('/faqs/:id')
   .patch(updateFaq)
   .delete(deleteFaq);
+
 
 module.exports = router;

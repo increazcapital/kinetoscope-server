@@ -111,11 +111,14 @@ router.post('/articles/subscribe', subscribeToNewsletter);
 router.get('/perks', getMyPerks);
 
 // 9. Portfolio Projects (Client view)
+const { getUpdateHistory } = require('../../controllers/super-admin/project-update.controller');
 router.get('/projects', getClientProjects);
+router.get('/projects/updates/history', getUpdateHistory);
 
 // 10. Dividends & Allotment Ledger (Client view)
 router.get('/dividends', getClientAllotments);
 router.get('/dividends/stats', getClientDividendStats);
+router.get('/stats', getClientDashboard);
 
 // 11. Transaction requests (deposit / withdrawal)
 const {
@@ -142,5 +145,8 @@ router.route('/service-requests')
 // 14. FAQ Management
 const { getClientFaqs } = require('../../controllers/client/client-faq.controller');
 router.get('/faqs', getClientFaqs);
+
+// 15. Client Perks Management
+router.get('/perks/my-perks', getMyPerks);
 
 module.exports = router;

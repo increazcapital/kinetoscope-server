@@ -325,7 +325,7 @@ const registerClient = asyncHandler(async (req, res, next) => {
       address,
       riskProfile: riskProfile || 'Conservative',
       residencyStatus: residencyStatus || citizenship || 'National (Domestic)',
-      monthlyRoi: monthlyRoi !== undefined ? Number(monthlyRoi) : 1.2,
+      monthlyRoi: monthlyRoi !== undefined ? Number(monthlyRoi) : 0,
       panNumber,
       aadhaarNumber,
       bankName,

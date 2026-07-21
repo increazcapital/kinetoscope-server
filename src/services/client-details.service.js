@@ -1,6 +1,7 @@
 const User = require('../models/User.model');
 const ClientProfile = require('../models/ClientProfile.model');
 const Investment = require('../models/Investment.model');
+const Transaction = require('../models/Transaction.model');
 const AppError = require('../utils/AppError');
 const { ROLES } = require('../constants/roles');
 
@@ -21,22 +22,41 @@ const getClientDetailsData = async (clientId) => {
     throw new AppError('Client profile not found.', 404);
   }
 
-  const investments = await Investment.find({ clientId: user._id });
+  const userIds = [user._id];
+  const clientCodes = user.clientCode ? [user.clientCode] : [];
+
+  const [investments, approvedDeposits] = await Promise.all([
+    Investment.find({
+      $or: [
+        { clientId: { $in: userIds } },
+        { clientCode: { $in: clientCodes } }
+      ]
+    }).lean(),
+    Transaction.find({
+      $or: [
+        { clientId: { $in: userIds } },
+        { clientCode: { $in: clientCodes } }
+      ],
+      type: 'deposit',
+      status: 'approved'
+    }).lean()
+  ]);
 
   // Summary Metrics calculations
   const validInvestments = investments.filter(inv => inv.status !== 'cancelled');
-  const totalInvestment = validInvestments.reduce((sum, inv) => sum + inv.investmentAmount, 0);
+  const invTotal = validInvestments.reduce((sum, inv) => sum + (inv.investmentAmount || inv.amount || 0), 0);
+  const depTotal = approvedDeposits.reduce((sum, tx) => sum + (tx.amount || 0), 0);
+  const totalInvestment = Math.max(invTotal, depTotal);
 
   const activeInvestmentsList = investments.filter(inv => inv.status === 'active');
-  const activeInvestmentsCount = activeInvestmentsList.length;
+  const activeInvestmentsCount = Math.max(activeInvestmentsList.length, (approvedDeposits.length > 0 && invTotal === 0) ? 1 : 0);
 
   let roiAverage = 0;
-  if (activeInvestmentsCount > 0) {
-    const roiSum = activeInvestmentsList.reduce((sum, inv) => sum + inv.roiPercentage, 0);
-    roiAverage = Number((roiSum / activeInvestmentsCount).toFixed(2));
-  } else if (validInvestments.length > 0) {
-    const roiSum = validInvestments.reduce((sum, inv) => sum + inv.roiPercentage, 0);
-    roiAverage = Number((roiSum / validInvestments.length).toFixed(2));
+  if (activeInvestmentsList.length > 0) {
+    const roiSum = activeInvestmentsList.reduce((sum, inv) => sum + (inv.roiPercentage || 0), 0);
+    roiAverage = Number((roiSum / activeInvestmentsList.length).toFixed(2));
+  } else {
+    roiAverage = profile.monthlyRoi !== undefined ? profile.monthlyRoi : 0;
   }
 
   const kycStatusVal = profile.kycStatus || 'PENDING';
@@ -45,7 +65,7 @@ const getClientDetailsData = async (clientId) => {
     header: {
       clientName: user.name,
       clientCode: user.clientCode || '',
-      tier: profile.tier ? profile.tier.toUpperCase() : 'SILVER',
+      tier: profile.tier ? profile.tier.toUpperCase() : (totalInvestment >= 1500000 ? 'PLATINUM' : 'SILVER'),
       status: profile.status ? profile.status.toUpperCase() : 'ACTIVE',
       riskProfile: profile.riskProfile ? profile.riskProfile.toUpperCase() : 'MODERATE',
       kycStatus: kycStatusVal,
@@ -53,8 +73,9 @@ const getClientDetailsData = async (clientId) => {
     summaryCards: {
       totalInvestment,
       activeInvestments: activeInvestmentsCount,
+      activeSegments: activeInvestmentsCount,
       averageRoi: roiAverage,
-      monthlyRoi: profile.monthlyRoi !== undefined ? profile.monthlyRoi : 1.2,
+      monthlyRoi: roiAverage || (profile.monthlyRoi !== undefined ? profile.monthlyRoi : 0),
       kycStatus: kycStatusVal,
     },
     profile: {
@@ -71,7 +92,7 @@ const getClientDetailsData = async (clientId) => {
       ifscCode: profile.ifscCode || '',
       riskProfile: profile.riskProfile ? profile.riskProfile.charAt(0).toUpperCase() + profile.riskProfile.slice(1).toLowerCase() : 'Moderate',
       residencyStatus: profile.residencyStatus || 'National (Domestic)',
-      monthlyRoi: profile.monthlyRoi !== undefined ? profile.monthlyRoi : 1.2,
+      monthlyRoi: profile.monthlyRoi !== undefined ? profile.monthlyRoi : 0,
       totalPortfolioValue: totalInvestment,
       kycStatus: kycStatusVal,
       nomineeName: profile.nomineeName || '',

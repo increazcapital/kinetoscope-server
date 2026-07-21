@@ -10,7 +10,6 @@ const asyncHandler = require('../../utils/asyncHandler');
  * Seed standard mock perks if database is empty
  */
 const seedMockPerks = async () => {
-  return; // Disabled seeder
   const count = await Perk.countDocuments();
   if (count > 0) return;
 
@@ -90,7 +89,11 @@ const createPerk = asyncHandler(async (req, res, next) => {
  * GET /api/super-admin/perks
  */
 const getAllPerks = asyncHandler(async (req, res, next) => {
-  const perks = await Perk.find().sort({ createdAt: -1 }).lean();
+  let perks = await Perk.find().sort({ createdAt: -1 }).lean();
+  if (perks.length === 0) {
+    await seedMockPerks();
+    perks = await Perk.find().sort({ createdAt: -1 }).lean();
+  }
 
   // Calculate card statistics
   const totalPerks = perks.length;
@@ -315,51 +318,48 @@ const unassignPerk = asyncHandler(async (req, res, next) => {
 const getMyPerks = asyncHandler(async (req, res, next) => {
   const clientId = req.user.id;
 
-  // 1) Fetch client user and investments
-  const user = await User.findById(clientId);
+  // 1) Concurrent parallel execution of all independent queries (Promise.all)
+  const [user, investments, assignments, profile, allDbPerks] = await Promise.all([
+    User.findById(clientId),
+    Investment.find({ clientId }).lean(),
+    ClientPerk.find({ clientId })
+      .populate({
+        path: 'perkId',
+        select: 'title description tier minInvestment status',
+      })
+      .sort({ createdAt: -1 }),
+    ClientProfile.findOne({ userId: clientId }),
+    Perk.find({ status: 'active' }).lean(),
+  ]);
+
   if (!user) {
     return next(new AppError('Client user not found', 404));
   }
 
-  const investments = await Investment.find({ clientId }).lean();
   const validInvestments = investments.filter(inv => inv.status !== 'cancelled');
   const totalInvestment = validInvestments.reduce((sum, inv) => sum + inv.investmentAmount, 0);
 
-  // 2) Fetch custom assigned perks from database first
-  const assignments = await ClientPerk.find({ clientId })
-    .populate({
-      path: 'perkId',
-      select: 'title description tier minInvestment status',
-    })
-    .sort({ createdAt: -1 });
-
   const activeAssignedPerks = assignments
     .map(assign => assign.perkId)
-    .filter(perk => perk && perk.status === 'active');
+    .filter(perk => perk && (perk.status || 'active').toLowerCase() === 'active');
 
-  const profile = await ClientProfile.findOne({ userId: clientId });
   const profileTier = profile ? (profile.tier || 'SILVER').toUpperCase() : 'SILVER';
 
-  // 3) Calculate investment-based tier
-  // Silver: 0 to 25 Lakh (0 to 2,500,000)
-  // Gold: 25 Lakh to 1 Crore (2,500,000 to 10,000,000)
-  // Platinum: 1 Crore to 3 Crore (10,000,000 to 30,000,000)
-  // Diamond: 3 Crore + (30,000,000+)
+  // 2) Tier Calculation
   let investmentTier = 'SILVER';
-  if (totalInvestment >= 30000000) {
+  if (totalInvestment >= 5000000) {
     investmentTier = 'DIAMOND';
-  } else if (totalInvestment >= 10000000) {
+  } else if (totalInvestment >= 1500000) {
     investmentTier = 'PLATINUM';
-  } else if (totalInvestment >= 2500000) {
+  } else if (totalInvestment >= 500000) {
     investmentTier = 'GOLD';
   }
 
-  // Determine currentTier as the maximum of: investment tier, database profile tier, and highest assigned perk tier
   const tierWeights = { SILVER: 1, GOLD: 2, PLATINUM: 3, DIAMOND: 4 };
   let currentTier = 'SILVER';
   let maxWeight = tierWeights[investmentTier];
 
-  if (tierWeights[profileTier] > maxWeight) {
+  if (profileTier && tierWeights[profileTier] > maxWeight) {
     maxWeight = tierWeights[profileTier];
     currentTier = profileTier;
   }
@@ -375,7 +375,7 @@ const getMyPerks = asyncHandler(async (req, res, next) => {
   // Calculate next tier boundaries based on current tier
   let tierLevel = 1;
   let nextTier = 'GOLD';
-  let targetAmount = 2500000;
+  let targetAmount = 500000;
 
   if (currentTier === 'DIAMOND') {
     tierLevel = 4;
@@ -384,17 +384,17 @@ const getMyPerks = asyncHandler(async (req, res, next) => {
   } else if (currentTier === 'PLATINUM') {
     tierLevel = 3;
     nextTier = 'DIAMOND';
-    targetAmount = 30000000;
+    targetAmount = 5000000;
   } else if (currentTier === 'GOLD') {
     tierLevel = 2;
     nextTier = 'PLATINUM';
-    targetAmount = 10000000;
+    targetAmount = 1500000;
   }
 
   const requiredMore = nextTier ? Math.max(0, targetAmount - totalInvestment) : 0;
   let percentage = 0;
   if (nextTier) {
-    const prevTarget = currentTier === 'SILVER' ? 0 : (currentTier === 'GOLD' ? 2500000 : 10000000);
+    const prevTarget = currentTier === 'SILVER' ? 0 : (currentTier === 'GOLD' ? 500000 : 1500000);
     const range = targetAmount - prevTarget;
     const progress = Math.max(0, totalInvestment - prevTarget);
     percentage = Math.min(100, Math.max(0, Math.round((progress / range) * 100)));
@@ -402,13 +402,13 @@ const getMyPerks = asyncHandler(async (req, res, next) => {
     percentage = 100;
   }
 
-  // 4) Auto-sync calculated tier to ClientProfile model in DB if higher than stored tier
-  if (profile && (!profile.tier || tierWeights[currentTier] > tierWeights[profile.tier.toUpperCase()])) {
+  // 3) Auto-sync calculated tier to ClientProfile model in DB
+  if (profile && (!profile.tier || profile.tier.toUpperCase() !== currentTier)) {
     profile.tier = currentTier;
     await profile.save();
   }
 
-  // 5) Gather tier-specific default benefits
+  // 4) Default benefits map
   const defaultBenefitsMap = {
     SILVER: [
       { title: 'Monthly investment reports', description: 'Standard monthly performance statement' },
@@ -418,91 +418,126 @@ const getMyPerks = asyncHandler(async (req, res, next) => {
     GOLD: [
       { title: 'All Silver benefits', description: 'Includes all lower tier benefits' },
       { title: 'Priority support (12hr response)', description: 'Faster help desk ticket processing' },
-      { title: 'Quarterly investment review call', description: 'One-on-one portfolio review call each quarter' }
+      { title: 'Quarterly investment review call', description: 'One-on-one portfolio review call each quarter' },
+      { title: 'Early access to new projects', description: 'Priority access to upcoming investment projects' }
     ],
     PLATINUM: [
       { title: 'All Gold benefits', description: 'Includes all lower tier benefits' },
       { title: 'Dedicated relationship manager', description: 'Direct contact point for all operations' },
-      { title: 'Exclusive event invitations', description: 'VIP invites to company galas and screenings' }
+      { title: 'Exclusive event invitations', description: 'VIP invites to company galas and screenings' },
+      { title: 'Bonus eligibility (annual)', description: 'Eligible for annual investment bonus' }
     ],
     DIAMOND: [
       { title: 'All Platinum benefits', description: 'Includes all lower tier benefits' },
       { title: 'VIP concierge service', description: 'White-glove treatment for deposits/withdrawals' },
-      { title: 'Board-level investment insights', description: 'Quarterly reports directly from the executives' }
+      { title: 'Board-level investment insights', description: 'Quarterly reports directly from executives' }
     ]
   };
 
-  const currentTierBenefits = defaultBenefitsMap[currentTier] || [];
+  // Group DB perks by tier
+  const tierDbPerks = {
+    SILVER: allDbPerks.filter(p => (p.tier || '').toUpperCase() === 'SILVER'),
+    GOLD: allDbPerks.filter(p => (p.tier || '').toUpperCase() === 'GOLD'),
+    PLATINUM: allDbPerks.filter(p => (p.tier || '').toUpperCase() === 'PLATINUM'),
+    DIAMOND: allDbPerks.filter(p => (p.tier || '').toUpperCase() === 'DIAMOND'),
+  };
 
-  const assignedPerks = activeAssignedPerks.map(perk => ({
+  // Helper to compile dynamic tier benefits list
+  const getTierBenefitsList = (tierKey) => {
+    const dbPerks = (tierDbPerks[tierKey] || []).map(b => b.title);
+    if (dbPerks.length > 0) return dbPerks;
+    const defaults = (defaultBenefitsMap[tierKey] || []).map(b => b.title);
+    return defaults;
+  };
+
+  const tierPerksFromDb = tierDbPerks[currentTier] || [];
+  const assignedPerkTitles = activeAssignedPerks.map(perk => ({
     title: perk.title,
     description: perk.description,
     isCustom: true
   }));
+  const dbTierPerkTitles = tierPerksFromDb.map(perk => ({
+    title: perk.title,
+    description: perk.description,
+    isCustom: false
+  }));
 
-  // Merge default benefits with custom assigned perks
-  const allPerks = [...currentTierBenefits, ...assignedPerks];
+  const perkTitleSet = new Set();
+  const allPerksCombined = [];
 
-  // 6) Compile history (dynamic joined event based on join date)
+  const rawList = (assignedPerkTitles.length > 0 || dbTierPerkTitles.length > 0)
+    ? [...assignedPerkTitles, ...dbTierPerkTitles]
+    : (defaultBenefitsMap[currentTier] || []);
+
+  rawList.forEach(p => {
+    if (p && p.title && !perkTitleSet.has(p.title.toLowerCase())) {
+      perkTitleSet.add(p.title.toLowerCase());
+      allPerksCombined.push(p);
+    }
+  });
+
+  // 5) Compile dynamic recognition history
   const history = [
     {
-      date: user.createdAt,
-      event: `Joined KFPL — Silver tier assigned`
+      date: user.createdAt || new Date(),
+      event: `Joined KFPL — Silver tier assigned`,
+      type: 'join'
     }
   ];
 
-  // If tier has upgraded beyond Silver, add upgrade event
+  validInvestments.forEach(inv => {
+    const amtStr = inv.investmentAmount ? `₹${inv.investmentAmount.toLocaleString('en-IN')}` : '';
+    history.push({
+      date: inv.createdAt || inv.investmentDate || new Date(),
+      event: `Invested ${amtStr} in ${inv.segment || 'Film Production Segment'}`,
+      type: 'investment'
+    });
+  });
+
+  assignments.forEach(assign => {
+    const perkTitle = assign.perkId?.title || 'Custom Perk';
+    history.push({
+      date: assign.createdAt || new Date(),
+      event: `Unlocked perk: ${perkTitle}`,
+      type: 'perk'
+    });
+  });
+
   if (currentTier !== 'SILVER') {
     history.push({
       date: profile ? profile.updatedAt : new Date(),
-      event: `Upgraded to ${currentTier.charAt(0) + currentTier.slice(1).toLowerCase()} tier based on investment`
+      event: `Upgraded to ${currentTier.charAt(0) + currentTier.slice(1).toLowerCase()} tier based on investment`,
+      type: 'tier'
     });
   }
 
-  // 7) Roadmap configurations
+  history.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  // 6) 100% Dynamic Tier Roadmap cards populated from DB Perks!
   const roadmap = [
     {
       tier: 'Silver',
-      range: '₹0 - ₹25.0L',
-      benefitsCount: 3,
-      benefits: [
-        'Monthly investment reports',
-        'Email support (24hr response)',
-        'Basic portfolio insights'
-      ]
+      range: '₹0 - ₹5.0L',
+      benefitsCount: getTierBenefitsList('SILVER').length,
+      benefits: getTierBenefitsList('SILVER')
     },
     {
       tier: 'Gold',
-      range: '₹25.0L - ₹1.0Cr',
-      benefitsCount: 4,
-      benefits: [
-        'All Silver benefits',
-        'Priority support (12hr response)',
-        'Quarterly investment review call',
-        '+1 more'
-      ]
+      range: '₹5.0L - ₹15.0L',
+      benefitsCount: getTierBenefitsList('GOLD').length,
+      benefits: getTierBenefitsList('GOLD')
     },
     {
       tier: 'Platinum',
-      range: '₹1.0Cr - ₹3.0Cr',
-      benefitsCount: 5,
-      benefits: [
-        'All Gold benefits',
-        'Dedicated relationship manager',
-        'Exclusive event invitations',
-        '+2 more'
-      ]
+      range: '₹15.0L - ₹50.0L',
+      benefitsCount: getTierBenefitsList('PLATINUM').length,
+      benefits: getTierBenefitsList('PLATINUM')
     },
     {
       tier: 'Diamond',
-      range: '₹3.0Cr - ∞',
-      benefitsCount: 6,
-      benefits: [
-        'All Platinum benefits',
-        'VIP concierge service',
-        'Board-level investment insights',
-        '+3 more'
-      ]
+      range: '₹50.0L - ∞',
+      benefitsCount: getTierBenefitsList('DIAMOND').length,
+      benefits: getTierBenefitsList('DIAMOND')
     }
   ];
 
@@ -518,7 +553,7 @@ const getMyPerks = asyncHandler(async (req, res, next) => {
         requiredMore,
         percentage,
       },
-      perks: allPerks,
+      perks: allPerksCombined,
       history,
       roadmap,
     },

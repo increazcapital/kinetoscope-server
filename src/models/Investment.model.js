@@ -85,6 +85,12 @@ const investmentSchema = new mongoose.Schema(
       ref: 'User',
       required: [true, 'Investment must be assigned by a user'],
     },
+    // Tracks the approved deposit Transaction that auto-created this Investment
+    sourceTransactionId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Transaction',
+      default: null,
+    },
   },
   {
     timestamps: true,

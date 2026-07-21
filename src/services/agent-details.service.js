@@ -33,6 +33,8 @@ const getAgentDetailsData = async (agentId) => {
     totalInvestment = investments.reduce((sum, inv) => sum + inv.investmentAmount, 0);
   }
 
+  const profObj = profile.toObject ? profile.toObject({ getters: true }) : profile;
+
   return {
     header: {
       agentName: user.name,
@@ -47,15 +49,17 @@ const getAgentDetailsData = async (agentId) => {
       specialCommission: profile.specialCommission || 0,
     },
     profile: {
-      fullName: profile.fullName || user.name,
-      email: profile.email || user.email,
-      phone: profile.phone || '',
+      fullName: profObj.fullName || user.name,
+      email: profObj.email || user.email,
+      phone: profObj.phone || '',
       joinDate: user.createdAt,
-      panNumber: profile.panNumber || '',
-      aadhaarNumber: profile.aadhaarNumber || '',
-      bankName: profile.bankName || '',
-      accountNumber: profile.accountNumber || '',
-      ifscCode: profile.ifscCode || '',
+      panNumber: profObj.panNumber || '',
+      aadhaarNumber: profObj.aadhaarNumber || '',
+      bankName: profObj.bankName || '',
+      accountNumber: profObj.accountNumber || '',
+      bankAccount: profObj.accountNumber || profObj.bankAccount || '',
+      ifscCode: profObj.ifscCode || '',
+      ifsc: profObj.ifscCode || profObj.ifsc || '',
       residencyStatus: profile.residencyStatus || 'National (Domestic)',
       nomineeName: profile.nomineeName || '',
       nomineeRelation: profile.nomineeRelation || '',

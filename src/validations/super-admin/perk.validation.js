@@ -17,10 +17,10 @@ const validate = (req, res, next) => {
 
 /**
  * Helper to validate minimum investment tier ranges
- * Silver: 0 to 25 Lakh (0 to 2,500,000)
- * Gold: 25 Lakh to 1 Crore (2,500,000 to 10,000,000)
- * Platinum: 1 Crore to 3 Crore (10,000,000 to 30,000,000)
- * Diamond: 3 Crore + (30,000,000+)
+ * Silver: 0 to 5 Lakh (0 to 500,000)
+ * Gold: 5 Lakh to 15 Lakh (500,000 to 1,500,000)
+ * Platinum: 15 Lakh to 50 Lakh (1,500,000 to 5,000,000)
+ * Diamond: 50 Lakh + (5,000,000+)
  */
 const validateTierMinInvestmentRange = (value, { req }) => {
   const minInv = Number(value);
@@ -30,20 +30,20 @@ const validateTierMinInvestmentRange = (value, { req }) => {
   const upperTier = tier.toUpperCase();
 
   if (upperTier === 'SILVER') {
-    if (minInv < 0 || minInv > 2500000) {
-      throw new Error('For SILVER tier, minimum investment must be between ₹0 and ₹25 Lakhs (2,500,000)');
+    if (minInv < 0 || minInv > 500000) {
+      throw new Error('For SILVER tier, minimum investment must be between ₹0 and ₹5 Lakhs (500,000)');
     }
   } else if (upperTier === 'GOLD') {
-    if (minInv < 2500000 || minInv > 10000000) {
-      throw new Error('For GOLD tier, minimum investment must be between ₹25 Lakhs (2,500,000) and ₹1 Crore (10,000,000)');
+    if (minInv < 500000 || minInv > 1500000) {
+      throw new Error('For GOLD tier, minimum investment must be between ₹5 Lakhs (500,000) and ₹15 Lakhs (1,500,000)');
     }
   } else if (upperTier === 'PLATINUM') {
-    if (minInv < 10000000 || minInv > 30000000) {
-      throw new Error('For PLATINUM tier, minimum investment must be between ₹1 Crore (10,000,000) and ₹3 Crores (30,000,000)');
+    if (minInv < 1500000 || minInv > 5000000) {
+      throw new Error('For PLATINUM tier, minimum investment must be between ₹15 Lakhs (1,500,000) and ₹50 Lakhs (5,000,000)');
     }
   } else if (upperTier === 'DIAMOND') {
-    if (minInv < 30000000) {
-      throw new Error('For DIAMOND tier, minimum investment must be ₹3 Crores (30,000,000) or more');
+    if (minInv < 5000000) {
+      throw new Error('For DIAMOND tier, minimum investment must be ₹50 Lakhs (5,000,000) or more');
     }
   }
   return true;

@@ -24,7 +24,8 @@ const getAdminDashboard = asyncHandler(async (req, res, next) => {
     activeInvestmentsList,
     allTransactions,
     paidRoiPayouts,
-    paidPayouts
+    paidPayouts,
+    approvedDepositsList
   ] = await Promise.all([
     User.countDocuments({ role: ROLES.CLIENT }),
     User.countDocuments({ role: ROLES.AGENT }),
@@ -35,14 +36,14 @@ const getAdminDashboard = asyncHandler(async (req, res, next) => {
     Investment.find({ status: 'active' }).lean(),
     Transaction.find().sort({ createdAt: -1 }).limit(100).lean(),
     RoiPayout.find({ status: 'PAID' }).lean(),
-    Payout.find({ recipientType: 'Client Return (ROI)', status: 'paid' }).lean()
+    Payout.find({ recipientType: 'Client Return (ROI)', status: 'paid' }).lean(),
+    Transaction.find({ type: 'deposit', status: 'approved' }).lean()
   ]);
 
   // 2) Calculate total investment amount
-  const totalInvestmentAmount = activeInvestmentsList.reduce(
-    (sum, inv) => sum + (inv.investmentAmount || 0),
-    0
-  );
+  const invSum = activeInvestmentsList.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
+  const depSum = (approvedDepositsList || []).reduce((sum, tx) => sum + (tx.amount || 0), 0);
+  const totalInvestmentAmount = Math.max(invSum, depSum);
 
   // 3) Calculate total ROI paid
   let totalRoiPaid = 0;

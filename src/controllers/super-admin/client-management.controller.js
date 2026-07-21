@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const User = require('../../models/User.model');
 const ClientProfile = require('../../models/ClientProfile.model');
 const Investment = require('../../models/Investment.model');
+const Transaction = require('../../models/Transaction.model');
 const { deleteFromCloudinary, processDocumentUploadsInBackground, uploadDocumentsToCloudinaryParallelBackground } = require('../../services/cloudinary.service');
 const { sendWelcomeEmail, sendKycVerificationNotification } = require('../../services/email.service');
 const { calculateDashboardData } = require('../client/client-dashboard.controller');
@@ -35,15 +36,13 @@ const cleanupLocalFiles = (files) => {
  * Cleanup helper to remove uploaded files from Cloudinary storage in case of db rollback
  */
 const deleteCloudinaryFiles = async (urls) => {
-  for (const url of urls) {
-    if (url) {
-      try {
-        await deleteFromCloudinary(url);
-      } catch (err) {
-        console.error(`[Cleanup] Failed to purge file ${url} from Cloudinary:`, err.message);
-      }
-    }
-  }
+  await Promise.all(
+    urls.filter(Boolean).map(url =>
+      deleteFromCloudinary(url).catch(err =>
+        console.error(`[Cleanup] Failed to purge file ${url} from Cloudinary:`, err.message)
+      )
+    )
+  );
 };
 
 /**
@@ -133,19 +132,21 @@ const createClient = asyncHandler(async (req, res, next) => {
     return next(new AppError('Email address is already in use by another account.', 400));
   }
 
-  // 3) Generate a sequential client code starting from KFPL-1001
-  const clients = await User.find({ clientCode: /^KFPL-\d+$/ }, { clientCode: 1 });
+  // 3) Generate a sequential client code starting from KFPL-CL-1001
+  const clients = await User.find({ role: ROLES.CLIENT }, { clientCode: 1 });
   let maxSeq = 1000;
   clients.forEach(c => {
     if (c.clientCode) {
-      const parts = c.clientCode.split('-');
-      const seq = parseInt(parts[1], 10);
-      if (!isNaN(seq) && seq > maxSeq) {
-        maxSeq = seq;
+      const digits = c.clientCode.match(/\d+/);
+      if (digits) {
+        const seq = parseInt(digits[0], 10);
+        if (!isNaN(seq) && seq > maxSeq) {
+          maxSeq = seq;
+        }
       }
     }
   });
-  const clientCode = `KFPL-${maxSeq + 1}`;
+  const clientCode = `KFPL-CL-${maxSeq + 1}`;
 
   // 4) Use provided custom password or generate a secure temporary password
   const tempPassword = password || portalPassword || generateTempPassword();
@@ -181,7 +182,7 @@ const createClient = asyncHandler(async (req, res, next) => {
       emergencyContact: emergencyContact || '',
       riskProfile,
       residencyStatus: residencyStatus || 'National (Domestic)',
-      monthlyRoi: monthlyRoi !== undefined ? Number(monthlyRoi) : 1.2,
+      monthlyRoi: monthlyRoi !== undefined ? Number(monthlyRoi) : 0,
       panNumber,
       aadhaarNumber,
       bankName,
@@ -305,34 +306,80 @@ const getAllClients = asyncHandler(async (req, res, next) => {
   }
 
   const userIds = users.map(u => u._id);
-  const profiles = await ClientProfile.find({ userId: { $in: userIds } }).lean();
+  const clientCodes = users.map(u => u.clientCode).filter(Boolean);
+
+  const profiles = await ClientProfile.find({
+    $or: [
+      { userId: { $in: userIds } },
+      { email: { $in: users.map(u => u.email).filter(Boolean) } }
+    ]
+  }).lean();
   
   const profileMap = {};
   profiles.forEach(p => {
-    profileMap[p.userId.toString()] = p;
+    if (p.userId) profileMap[p.userId.toString()] = p;
+    if (p.email) profileMap[p.email.toLowerCase()] = p;
   });
 
-  // Fetch all active investments for these users to calculate totalInvestment
-  const activeInvestments = await Investment.find({
-    clientId: { $in: userIds },
-    status: 'active'
-  }).lean();
+  // Fetch active investments and approved deposit transactions matching by user ID or client code
+  const [activeInvestments, approvedDeposits] = await Promise.all([
+    Investment.find({
+      $or: [
+        { clientId: { $in: userIds } },
+        { clientCode: { $in: clientCodes } }
+      ],
+      status: 'active'
+    }).lean(),
+    Transaction.find({
+      $or: [
+        { clientId: { $in: userIds } },
+        { clientCode: { $in: clientCodes } }
+      ],
+      type: 'deposit',
+      status: 'approved'
+    }).lean()
+  ]);
 
   const investmentMap = {};
   activeInvestments.forEach(inv => {
-    const cid = inv.clientId.toString();
-    investmentMap[cid] = (investmentMap[cid] || 0) + inv.investmentAmount;
+    const amt = inv.investmentAmount || inv.amount || 0;
+    const idKey = inv.clientId ? inv.clientId.toString() : '';
+    const codeKey = inv.clientCode || '';
+    if (idKey) investmentMap[idKey] = (investmentMap[idKey] || 0) + amt;
+    if (codeKey) investmentMap[codeKey] = (investmentMap[codeKey] || 0) + amt;
+  });
+
+  const depositMap = {};
+  approvedDeposits.forEach(tx => {
+    const amt = tx.amount || 0;
+    const idKey = tx.clientId ? tx.clientId.toString() : '';
+    const codeKey = tx.clientCode || '';
+    if (idKey) depositMap[idKey] = (depositMap[idKey] || 0) + amt;
+    if (codeKey) depositMap[codeKey] = (depositMap[codeKey] || 0) + amt;
   });
 
   const clientRecords = users.map(user => {
-    const profile = profileMap[user._id.toString()] || null;
-    const totalInv = investmentMap[user._id.toString()] || 0;
+    const userIdStr = user._id.toString();
+    const codeStr = user.clientCode || '';
+    const emailStr = (user.email || '').toLowerCase();
+    
+    const profile = profileMap[userIdStr] || profileMap[emailStr] || null;
+    const invAmt = Math.max(investmentMap[userIdStr] || 0, investmentMap[codeStr] || 0);
+    const depAmt = Math.max(depositMap[userIdStr] || 0, depositMap[codeStr] || 0);
+    const totalInv = Math.max(invAmt, depAmt);
+
+    const monthlyRoi = profile && profile.monthlyRoi !== undefined ? (parseFloat(profile.monthlyRoi) || 0) : 0;
+
     return {
       _id: user._id,
       clientId: user.clientCode || (profile && profile.clientCode) || '',
       name: user.name || (profile && profile.fullName) || '',
+      email: user.email,
       status: (profile && profile.status) || 'active',
       totalInvestment: totalInv,
+      monthlyRoi,
+      roi: monthlyRoi,
+      roiPercentage: monthlyRoi,
       user,
       profile
     };
@@ -399,9 +446,9 @@ const updateClient = asyncHandler(async (req, res, next) => {
 
     const TIER_LIMITS = {
       SILVER: 0,
-      GOLD: 2500000,      // 25 Lakh
-      PLATINUM: 10000000,  // 1 Crore
-      DIAMOND: 30000000    // 3 Crore
+      GOLD: 500000,       // 5 Lakh
+      PLATINUM: 1500000,  // 15 Lakh
+      DIAMOND: 5000000    // 50 Lakh
     };
 
     const minRequired = TIER_LIMITS[normalizedTier];
@@ -413,9 +460,9 @@ const updateClient = asyncHandler(async (req, res, next) => {
     if (totalInvestment < minRequired) {
       cleanupLocalFiles(req.files);
       
-      const minRequiredStr = normalizedTier === 'GOLD' ? '₹25 Lakh' : 
-                             normalizedTier === 'PLATINUM' ? '₹1 Crore' : 
-                             normalizedTier === 'DIAMOND' ? '₹3 Crore' : '₹0';
+      const minRequiredStr = normalizedTier === 'GOLD' ? '₹5 Lakh' : 
+                             normalizedTier === 'PLATINUM' ? '₹15 Lakh' : 
+                             normalizedTier === 'DIAMOND' ? '₹50 Lakh' : '₹0';
                              
       const formatter = new Intl.NumberFormat('en-IN', {
         style: 'currency',
@@ -581,12 +628,20 @@ const deleteClient = asyncHandler(async (req, res, next) => {
     await ClientProfile.findByIdAndDelete(profile._id);
   }
 
-  // 2) Delete User document from Mongo
+  // 2) Purge associated Investment and Transaction records so deleted client amounts are never calculated
+  const Investment = require('../../models/Investment.model');
+  const Transaction = require('../../models/Transaction.model');
+  await Promise.all([
+    Investment.deleteMany({ $or: [{ clientId: userId }, { clientCode: user.clientCode }] }),
+    Transaction.deleteMany({ $or: [{ clientId: userId }, { clientCode: user.clientCode }] })
+  ]);
+
+  // 3) Delete User document from Mongo
   await User.findByIdAndDelete(userId);
 
   res.status(200).json({
     success: true,
-    message: 'Client account and associated profile/documents deleted successfully.',
+    message: 'Client account and associated investments/transactions deleted successfully.',
   });
 });
 
@@ -697,8 +752,8 @@ const verifyDocument = asyncHandler(async (req, res, next) => {
     (documentField === 'panDocument' ? true : profile.panDocumentVerified) &&
     (documentField === 'aadhaarDocument' ? true : profile.aadhaarDocumentVerified) &&
     (documentField === 'bankProofDocument' ? true : profile.bankProofDocumentVerified) &&
-    (documentField === 'agreementDocument' ? true : profile.agreementDocumentVerified) &&
-    (documentField === 'nomineeProofDocument' ? true : profile.nomineeProofDocumentVerified);
+    (!profile.agreementDocument || documentField === 'agreementDocument' ? true : profile.agreementDocumentVerified) &&
+    (!profile.nomineeProofDocument || documentField === 'nomineeProofDocument' ? true : profile.nomineeProofDocumentVerified);
 
   // Auto-update KYC status to VERIFIED when all documents are verified
   if (allVerified) {
@@ -777,14 +832,20 @@ const clearAllClients = asyncHandler(async (req, res, next) => {
     await deleteCloudinaryFiles(documentUrls);
   }
 
-  // Delete profiles and user accounts
-  await ClientProfile.deleteMany({ userId: { $in: clientIds } });
-  const deleteResult = await User.deleteMany({ _id: { $in: clientIds } });
+  // Delete profiles, user accounts, investments, and transactions
+  const Investment = require('../../models/Investment.model');
+  const Transaction = require('../../models/Transaction.model');
+  await Promise.all([
+    ClientProfile.deleteMany({ userId: { $in: clientIds } }),
+    User.deleteMany({ _id: { $in: clientIds } }),
+    Investment.deleteMany({}),
+    Transaction.deleteMany({})
+  ]);
 
   res.status(200).json({
     success: true,
-    message: `All client accounts (${deleteResult.deletedCount}) and profiles cleared successfully.`,
-    count: deleteResult.deletedCount
+    message: `All client accounts (${clientIds.length}), profiles, investments, and transaction logs cleared successfully.`,
+    count: clientIds.length
   });
 });
 

@@ -26,8 +26,10 @@ const activeServer = server.listen(port, () => {
   try {
     const { startScheduledEmailCheck } = require('./controllers/super-admin/notification.controller');
     startScheduledEmailCheck();
+    const { runInvestmentBackfill } = require('./controllers/super-admin/transaction.controller');
+    runInvestmentBackfill();
   } catch (err) {
-    console.error('Failed to start scheduled email check:', err.message);
+    console.error('Failed to start scheduled services:', err.message);
   }
 });
 module.exports = server;
