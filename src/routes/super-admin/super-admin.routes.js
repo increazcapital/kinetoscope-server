@@ -1,6 +1,6 @@
 const express = require('express');
 const { getAdminDashboard } = require('../../controllers/super-admin/dashboard.controller');
-const { protect, restrictTo } = require('../../middlewares/auth.middleware');
+const { protect, restrictTo, requirePermission } = require('../../middlewares/auth.middleware');
 const { ROLES } = require('../../constants/roles');
 const {
   recordPayout,
@@ -257,82 +257,82 @@ const router = express.Router();
 // Apply Auth and Role Guard to all Super Admin endpoints
 router.use(protect);
 
-// Shared routes accessible by both Super Admin and Agent
-router.get('/clients/:id', restrictTo(ROLES.SUPER_ADMIN, ROLES.AGENT), getClientById);
-router.get('/clients/:id/documents', restrictTo(ROLES.SUPER_ADMIN, ROLES.AGENT), getClientDocumentsTab);
-router.get('/clients/:id/investments', restrictTo(ROLES.SUPER_ADMIN, ROLES.AGENT), getClientInvestmentsTab);
-router.get('/clients/:id/roi', restrictTo(ROLES.SUPER_ADMIN, ROLES.AGENT), getClientRoiTab);
-router.get('/clients/:id/perks', restrictTo(ROLES.SUPER_ADMIN, ROLES.AGENT), getClientPerksTab);
-router.get('/roi/payouts', restrictTo(ROLES.SUPER_ADMIN, ROLES.AGENT), getPayouts);
+// Shared routes accessible by Super Admin, Sub Admin, and Agent
+router.get('/clients/:id', restrictTo(ROLES.SUPER_ADMIN, ROLES.SUB_ADMIN, ROLES.AGENT), getClientById);
+router.get('/clients/:id/documents', restrictTo(ROLES.SUPER_ADMIN, ROLES.SUB_ADMIN, ROLES.AGENT), getClientDocumentsTab);
+router.get('/clients/:id/investments', restrictTo(ROLES.SUPER_ADMIN, ROLES.SUB_ADMIN, ROLES.AGENT), getClientInvestmentsTab);
+router.get('/clients/:id/roi', restrictTo(ROLES.SUPER_ADMIN, ROLES.SUB_ADMIN, ROLES.AGENT), getClientRoiTab);
+router.get('/clients/:id/perks', restrictTo(ROLES.SUPER_ADMIN, ROLES.SUB_ADMIN, ROLES.AGENT), getClientPerksTab);
+router.get('/roi/payouts', restrictTo(ROLES.SUPER_ADMIN, ROLES.SUB_ADMIN, ROLES.AGENT), getPayouts);
 
-router.use(restrictTo(ROLES.SUPER_ADMIN));
+router.use(restrictTo(ROLES.SUPER_ADMIN, ROLES.SUB_ADMIN));
 
 // 1. Dashboard Analytics
 router.get('/dashboard', getAdminDashboard);
 
 // 2. Client / Investor Management
 router.route('/clients')
-  .get(getAllClients)
-  .post(memoryClientOnboardingUpload, createClientValidationRules, createClient);
+  .get(requirePermission('manageClients', 'view'), getAllClients)
+  .post(requirePermission('manageClients', 'create'), memoryClientOnboardingUpload, createClientValidationRules, createClient);
 
-router.get('/clients/manage', getManageClients);
-router.get('/clients/manage/export', exportClientsCSV);
+router.get('/clients/manage', requirePermission('manageClients', 'view'), getManageClients);
+router.get('/clients/manage/export', requirePermission('manageClients', 'view'), exportClientsCSV);
 
-router.delete('/clients/clear', clearAllClients);
+router.delete('/clients/clear', requirePermission('manageClients', 'delete'), clearAllClients);
 
 router.route('/clients/:id')
-  .patch(memoryClientOnboardingUpload, updateClientRulesByAdmin, updateClient)
-  .delete(deleteClient);
+  .patch(requirePermission('manageClients', 'edit'), memoryClientOnboardingUpload, updateClientRulesByAdmin, updateClient)
+  .delete(requirePermission('manageClients', 'delete'), deleteClient);
 
-router.patch('/clients/:id/roi/:payoutId/pay', markRoiPaid);
-router.patch('/clients/:id/roi-rate', updateClientRoiRate);
-router.patch('/clients/:id/verify-document', verifyDocument);
+router.patch('/clients/:id/roi/:payoutId/pay', requirePermission('manageClients', 'edit'), markRoiPaid);
+router.patch('/clients/:id/roi-rate', requirePermission('manageClients', 'edit'), updateClientRoiRate);
+router.patch('/clients/:id/verify-document', requirePermission('manageClients', 'edit'), verifyDocument);
 
 // Client dashboard preview
-router.get('/client-dashboard/:clientId', previewClientDashboard);
+router.get('/client-dashboard/:clientId', requirePermission('manageClients', 'view'), previewClientDashboard);
 
 // 3. Investment Management — Read-only after assignment (immutable financial records)
 router.route('/investments')
-  .get(getAllInvestments)
-  .post(createInvestmentValidationRules, createInvestment);
+  .get(requirePermission('manageInvestments', 'view'), getAllInvestments)
+  .post(requirePermission('manageInvestments', 'create'), createInvestmentValidationRules, createInvestment);
 
-router.delete('/investments/clear', clearAllInvestments);
+router.delete('/investments/clear', requirePermission('manageInvestments', 'delete'), clearAllInvestments);
 
 router.route('/investments/:id')
-  .get(getInvestmentById)
-  .delete(deleteInvestment);
+  .get(requirePermission('manageInvestments', 'view'), getInvestmentById)
+  .delete(requirePermission('manageInvestments', 'delete'), deleteInvestment);
 
-router.patch('/investments/:id/extend', extendContractValidationRules, extendInvestmentContract);
+router.patch('/investments/:id/extend', requirePermission('manageInvestments', 'edit'), extendContractValidationRules, extendInvestmentContract);
 
 // 4. ROI & Payouts Management (Complete Transaction Details)
 
 router.route('/roi/payouts')
-  .post(recordPayout);
+  .post(requirePermission('transactionDetails', 'create'), recordPayout);
 
-router.delete('/roi/payouts/clear', clearAllPayouts);
-router.delete('/roi/payouts/:id', deletePayout);
+router.delete('/roi/payouts/clear', requirePermission('transactionDetails', 'delete'), clearAllPayouts);
+router.delete('/roi/payouts/:id', requirePermission('transactionDetails', 'delete'), deletePayout);
 
-router.post('/roi/payouts/bulk', memoryUpload.single('file'), bulkUploadPayouts);
+router.post('/roi/payouts/bulk', requirePermission('transactionDetails', 'create'), memoryUpload.single('file'), bulkUploadPayouts);
 
-router.patch('/roi/payouts/:id/pay', markPayoutPaid);
+router.patch('/roi/payouts/:id/pay', requirePermission('transactionDetails', 'edit'), markRoiPaid);
 
 // 5. Agent Management
-router.delete('/agents/clear', clearAllAgents);
+router.delete('/agents/clear', requirePermission('manageAgents', 'delete'), clearAllAgents);
 
 router.route('/agents')
-  .get(getAllAgents)
-  .post(memoryAgentOnboardingUpload, createAgentValidationRules, createAgent);
+  .get(requirePermission('manageAgents', 'view'), getAllAgents)
+  .post(requirePermission('manageAgents', 'create'), memoryAgentOnboardingUpload, createAgentValidationRules, createAgent);
 
 router.route('/agents/:id')
-  .get(getAgentById)
-  .patch(memoryAgentOnboardingUpload, updateAgentRulesByAdmin, updateAgent)
-  .delete(deleteAgent);
+  .get(requirePermission('manageAgents', 'view'), getAgentById)
+  .patch(requirePermission('manageAgents', 'edit'), memoryAgentOnboardingUpload, updateAgentRulesByAdmin, updateAgent)
+  .delete(requirePermission('manageAgents', 'delete'), deleteAgent);
 
-router.get('/agents/:id/clients', getAgentClients);
-router.get('/agents/:id/commissions', getAgentCommissions);
-router.patch('/agents/commissions/:commissionId/pay', payAgentCommission);
-router.patch('/agents/:id/status', updateAgentStatus);
-router.patch('/agents/:id/verify-document', verifyAgentDocument);
+router.get('/agents/:id/clients', requirePermission('manageAgents', 'view'), getAgentClients);
+router.get('/agents/:id/commissions', requirePermission('manageAgents', 'view'), getAgentCommissions);
+router.patch('/agents/commissions/:commissionId/pay', requirePermission('manageAgents', 'edit'), payAgentCommission);
+router.patch('/agents/:id/status', requirePermission('manageAgents', 'edit'), updateAgentStatus);
+router.patch('/agents/:id/verify-document', requirePermission('manageAgents', 'edit'), verifyAgentDocument);
 
 // 6. Deposit & Withdrawal Approvals
 const {
@@ -345,41 +345,41 @@ const {
 } = require('../../controllers/super-admin/transaction.controller');
 
 router.route('/transactions/approvals')
-  .get(getPendingApprovals);
+  .get(requirePermission('depositWithdrawal', 'view'), getPendingApprovals);
 
-router.get('/transactions/history', getApprovalsHistory);
-router.delete('/transactions/history/clear', clearAllHistory);
-router.post('/transactions/backfill-investments', backfillApprovedDeposits);
-router.get('/transactions/:id', getTransactionById);
-router.patch('/transactions/:id/action', approveRejectTransaction);
-router.patch('/transactions/:id/approve', approveRejectTransaction);
+router.get('/transactions/history', requirePermission('depositWithdrawal', 'view'), getApprovalsHistory);
+router.delete('/transactions/history/clear', requirePermission('depositWithdrawal', 'delete'), clearAllHistory);
+router.post('/transactions/backfill-investments', requirePermission('depositWithdrawal', 'edit'), backfillApprovedDeposits);
+router.get('/transactions/:id', requirePermission('depositWithdrawal', 'view'), getTransactionById);
+router.patch('/transactions/:id/action', requirePermission('depositWithdrawal', 'edit'), approveRejectTransaction);
+router.patch('/transactions/:id/approve', requirePermission('depositWithdrawal', 'edit'), approveRejectTransaction);
 
 // 7. Perks & Recognition Management
 router.route('/perks')
-  .get(getAllPerks)
-  .post(createPerkValidationRules, createPerk);
+  .get(requirePermission('perksRecognition', 'view'), getAllPerks)
+  .post(requirePermission('perksRecognition', 'create'), createPerkValidationRules, createPerk);
 
 router.route('/perks/assign')
-  .post(assignPerkValidationRules, assignPerkToClients);
+  .post(requirePermission('perksRecognition', 'create'), assignPerkValidationRules, assignPerkToClients);
 
 router.route('/perks/assignments')
-  .get(getAssignedPerks)
-  .post(assignPerkValidationRules, assignPerkToClients);
+  .get(requirePermission('perksRecognition', 'view'), getAssignedPerks)
+  .post(requirePermission('perksRecognition', 'create'), assignPerkValidationRules, assignPerkToClients);
 
 router.route('/perks/assignments/:id')
-  .delete(unassignPerk);
+  .delete(requirePermission('perksRecognition', 'delete'), unassignPerk);
 
 router.route('/perks/assigned')
-  .get(getAssignedPerks)
-  .post(assignPerkValidationRules, assignPerkToClients);
+  .get(requirePermission('perksRecognition', 'view'), getAssignedPerks)
+  .post(requirePermission('perksRecognition', 'create'), assignPerkValidationRules, assignPerkToClients);
 
 router.route('/perks/assigned/:id')
-  .delete(unassignPerk);
+  .delete(requirePermission('perksRecognition', 'delete'), unassignPerk);
 
 router.route('/perks/:id')
-  .patch(updatePerkValidationRules, updatePerk)
-  .put(updatePerkValidationRules, updatePerk)
-  .delete(deletePerk);
+  .patch(requirePermission('perksRecognition', 'edit'), updatePerkValidationRules, updatePerk)
+  .put(requirePermission('perksRecognition', 'edit'), updatePerkValidationRules, updatePerk)
+  .delete(requirePermission('perksRecognition', 'delete'), deletePerk);
 
 // 8. Activity Logs
 router.get('/activity-logs', (req, res) => {
@@ -400,22 +400,22 @@ const {
   getMetrics
 } = require('../../controllers/super-admin/notification.controller');
 
-router.post('/notifications/send-email', anyUpload.any(), sendDirectEmail);
-router.post('/notifications/process-scheduled', triggerScheduledEmailsProcess);
+router.post('/notifications/send-email', requirePermission('emailNotifications', 'create'), anyUpload.any(), sendDirectEmail);
+router.post('/notifications/process-scheduled', requirePermission('emailNotifications', 'create'), triggerScheduledEmailsProcess);
 
 // Custom Templates CRUD
-router.get('/notifications/templates', getTemplates);
-router.post('/notifications/templates', createTemplate);
-router.patch('/notifications/templates/:id', updateTemplate);
-router.delete('/notifications/templates/:id', deleteTemplate);
+router.get('/notifications/templates', requirePermission('emailNotifications', 'view'), getTemplates);
+router.post('/notifications/templates', requirePermission('emailNotifications', 'create'), createTemplate);
+router.patch('/notifications/templates/:id', requirePermission('emailNotifications', 'edit'), updateTemplate);
+router.delete('/notifications/templates/:id', requirePermission('emailNotifications', 'delete'), deleteTemplate);
 
 // Auto Trigger Config
-router.get('/notifications/triggers', getTriggers);
-router.patch('/notifications/triggers/:id/toggle', toggleTrigger);
+router.get('/notifications/triggers', requirePermission('emailNotifications', 'view'), getTriggers);
+router.patch('/notifications/triggers/:id/toggle', requirePermission('emailNotifications', 'edit'), toggleTrigger);
 
 // History Logs & Dashboard Metrics
-router.get('/notifications/logs', getLogs);
-router.get('/notifications/metrics', getMetrics);
+router.get('/notifications/logs', requirePermission('emailNotifications', 'view'), getLogs);
+router.get('/notifications/metrics', requirePermission('emailNotifications', 'view'), getMetrics);
 
 // 9. Agreement Uploads
 router.route('/agreements')
@@ -448,7 +448,7 @@ router.route('/agreements')
         </div>
         <p style="color: #4b5563; font-size: 14px;">Please log in to the Client Portal to review, sign, or download your agreement.</p>
         <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
-        <p style="color: #94a3b8; font-size: 11px; text-align: center;">Kross Film Productions Ltd. (KFPL)</p>
+        <p style="color: #94a3b8; font-size: 11px; text-align: center;">Kinetoscope Film Productions Ltd. (KFPL)</p>
       </div>
     `;
 
@@ -469,75 +469,75 @@ router.route('/agreements')
     res.status(201).json({ status: 'success', message: 'Agreement uploaded successfully and notification sent.' });
   }));
 // 10. Settings — 2FA and profile preferences
-router.get('/settings', getSettings);
-router.patch('/settings/2fa', toggle2FA);
-router.patch('/settings/client-2fa', toggleClient2FA);
-router.patch('/settings/agent-2fa', toggleAgent2FA);
+router.get('/settings', requirePermission('settings', 'view'), getSettings);
+router.patch('/settings/2fa', requirePermission('settings', 'edit'), toggle2FA);
+router.patch('/settings/client-2fa', requirePermission('settings', 'edit'), toggleClient2FA);
+router.patch('/settings/agent-2fa', requirePermission('settings', 'edit'), toggleAgent2FA);
 
 // 11. Settings — Change Email Address (OTP-based)
-router.post('/settings/change-email/send-otp', sendChangeEmailOtpRules, sendChangeEmailOtpHandler);
-router.post('/settings/change-email/verify-otp', verifyChangeEmailOtpRules, verifyChangeEmailOtp);
+router.post('/settings/change-email/send-otp', requirePermission('settings', 'edit'), sendChangeEmailOtpRules, sendChangeEmailOtpHandler);
+router.post('/settings/change-email/verify-otp', requirePermission('settings', 'edit'), verifyChangeEmailOtpRules, verifyChangeEmailOtp);
 
 // 12. Settings — Change Password (OTP-based)
-router.post('/settings/change-password/send-otp', sendChangePasswordOtpRules, sendChangePasswordOtpHandler);
-router.post('/settings/change-password/verify-otp', verifyChangePasswordOtpRules, verifyChangePasswordOtp);
+router.post('/settings/change-password/send-otp', requirePermission('settings', 'edit'), sendChangePasswordOtpRules, sendChangePasswordOtpHandler);
+router.post('/settings/change-password/verify-otp', requirePermission('settings', 'edit'), verifyChangePasswordOtpRules, verifyChangePasswordOtp);
 
 // 13. Client Portal Management — Account listing, details, status
-router.get('/client-portal', listClientAccounts);
-router.get('/client-portal/:clientId', getClientAccountDetails);
-router.patch('/client-portal/:clientId/status', updateClientStatusRules, updateClientStatus);
+router.get('/client-portal', requirePermission('manageClients', 'view'), listClientAccounts);
+router.get('/client-portal/:clientId', requirePermission('manageClients', 'view'), getClientAccountDetails);
+router.patch('/client-portal/:clientId/status', requirePermission('manageClients', 'edit'), updateClientStatusRules, updateClientStatus);
 
 // 14. News & Media Articles Management
 router.route('/articles')
-  .get(getAllArticles)
-  .post(memoryUpload.single('featuredImage'), createArticleValidationRules, createArticle);
+  .get(requirePermission('newsMedia', 'view'), getAllArticles)
+  .post(requirePermission('newsMedia', 'create'), memoryUpload.single('featuredImage'), createArticleValidationRules, createArticle);
 
 router.route('/articles/:id')
-  .get(getArticleById)
-  .patch(memoryUpload.single('featuredImage'), updateArticleValidationRules, updateArticle)
-  .delete(deleteArticle);
+  .get(requirePermission('newsMedia', 'view'), getArticleById)
+  .patch(requirePermission('newsMedia', 'edit'), memoryUpload.single('featuredImage'), updateArticleValidationRules, updateArticle)
+  .delete(requirePermission('newsMedia', 'delete'), deleteArticle);
 
 // 15. Portfolio Management (Project Catalog)
 router.route('/projects')
-  .get(getAllProjects)
-  .post(memoryUpload.single('bannerImage'), createProjectValidationRules, createProject);
+  .get(requirePermission('portfolio', 'view'), getAllProjects)
+  .post(requirePermission('portfolio', 'create'), memoryUpload.single('bannerImage'), createProjectValidationRules, createProject);
 
 router.route('/projects/:id')
-  .get(getProjectById)
-  .patch(memoryUpload.single('bannerImage'), updateProjectValidationRules, updateProject)
-  .delete(deleteProject);
+  .get(requirePermission('portfolio', 'view'), getProjectById)
+  .patch(requirePermission('portfolio', 'edit'), memoryUpload.single('bannerImage'), updateProjectValidationRules, updateProject)
+  .delete(requirePermission('portfolio', 'delete'), deleteProject);
 
 router.route('/projects/:id/media')
-  .post(memoryUpload.any(), uploadProjectMedia)
-  .delete(deleteProjectMedia);
+  .post(requirePermission('portfolio', 'create'), memoryUpload.any(), uploadProjectMedia)
+  .delete(requirePermission('portfolio', 'delete'), deleteProjectMedia);
 
 // 15b. Project Update History & Status Updates (Investment Status views)
 const { publishProjectUpdate, getUpdateHistory, uploadUpdateAttachment } = require('../../controllers/super-admin/project-update.controller');
 const { publishUpdateValidationRules } = require('../../validations/super-admin/project-update.validation');
 
-router.get('/projects/updates/history', getUpdateHistory);
-router.post('/projects/:id/updates', publishUpdateValidationRules, publishProjectUpdate);
-router.post('/projects/:id/updates/attachments', memoryUpload.single('file'), uploadUpdateAttachment);
+router.get('/projects/updates/history', requirePermission('portfolio', 'view'), getUpdateHistory);
+router.post('/projects/:id/updates', requirePermission('portfolio', 'create'), publishUpdateValidationRules, publishProjectUpdate);
+router.post('/projects/:id/updates/attachments', requirePermission('portfolio', 'create'), memoryUpload.single('file'), uploadUpdateAttachment);
 
 // 16. Segment & Status Management
 router.route('/segments')
-  .get(getAllSegments)
-  .post(createSegmentValidationRules, createSegment);
+  .get(requirePermission('settings', 'view'), getAllSegments)
+  .post(requirePermission('settings', 'create'), createSegmentValidationRules, createSegment);
 
 router.route('/segments/:id')
-  .patch(updateSegmentValidationRules, updateSegment)
-  .delete(deleteSegment);
+  .patch(requirePermission('settings', 'edit'), updateSegmentValidationRules, updateSegment)
+  .delete(requirePermission('settings', 'delete'), deleteSegment);
 
 // 17. Dividend Pool & Allotment Ledger Management
-router.get('/dividends/stats', getDividendStats);
-router.get('/dividends/allotments', getAllAllotments);
-router.post('/dividends/pools', createPoolValidationRules, createPool);
-router.post('/dividends/allotments', createAllotmentValidationRules, createAllotment);
+router.get('/dividends/stats', requirePermission('manageInvestments', 'view'), getDividendStats);
+router.get('/dividends/allotments', requirePermission('manageInvestments', 'view'), getAllAllotments);
+router.post('/dividends/pools', requirePermission('manageInvestments', 'create'), createPoolValidationRules, createPool);
+router.post('/dividends/allotments', requirePermission('manageInvestments', 'create'), createAllotmentValidationRules, createAllotment);
 
 // 18. Rewards & Withdrawal Configuration
 router.route('/rewards-config')
-  .get(getRewardsConfig)
-  .patch(updateRewardsConfigRules, updateRewardsConfig);
+  .get(requirePermission('rewardsConfig', 'view'), getRewardsConfig)
+  .patch(requirePermission('rewardsConfig', 'edit'), updateRewardsConfigRules, updateRewardsConfig);
 
 // Configure Multer fields parsing for performance reward media uploads
 const rewardMediaUpload = rewardsUpload.fields([
@@ -547,31 +547,31 @@ const rewardMediaUpload = rewardsUpload.fields([
 
 // 19. Performance Reward Catalog Management
 router.route('/rewards')
-  .get(getAllPerformanceRewards)
-  .post(rewardMediaUpload, createRewardValidationRules, createPerformanceReward);
+  .get(requirePermission('rewardsConfig', 'view'), getAllPerformanceRewards)
+  .post(requirePermission('rewardsConfig', 'create'), rewardMediaUpload, createRewardValidationRules, createPerformanceReward);
 
 router.route('/rewards/:id')
-  .get(getPerformanceRewardById)
-  .patch(rewardMediaUpload, updateRewardValidationRules, updatePerformanceReward)
-  .delete(deletePerformanceReward);
+  .get(requirePermission('rewardsConfig', 'view'), getPerformanceRewardById)
+  .patch(requirePermission('rewardsConfig', 'edit'), rewardMediaUpload, updateRewardValidationRules, updatePerformanceReward)
+  .delete(requirePermission('rewardsConfig', 'delete'), deletePerformanceReward);
 
 // 20. Commission Slab & Override Configurations
 router.route('/commission-slabs')
-  .get(getAllSlabs)
-  .post(slabValidationRules, createSlab);
+  .get(requirePermission('commissionSlabs', 'view'), getAllSlabs)
+  .post(requirePermission('commissionSlabs', 'create'), slabValidationRules, createSlab);
 
 router.route('/commission-slabs/overrides')
-  .get(getAllOverrides)
-  .post(overrideValidationRules, createOverride);
+  .get(requirePermission('commissionSlabs', 'view'), getAllOverrides)
+  .post(requirePermission('commissionSlabs', 'create'), overrideValidationRules, createOverride);
 
-router.post('/commission-slabs/calculate', calculateCommission);
+router.post('/commission-slabs/calculate', requirePermission('commissionSlabs', 'view'), calculateCommission);
 
 router.route('/commission-slabs/overrides/:id')
-  .patch(updateOverrideValidationRules, updateOverride)
-  .delete(deleteOverride);
+  .patch(requirePermission('commissionSlabs', 'edit'), updateOverrideValidationRules, updateOverride)
+  .delete(requirePermission('commissionSlabs', 'delete'), deleteOverride);
 
 router.route('/commission-slabs/:id')
-  .patch(updateSlabValidationRules, updateSlab)
+  .patch(requirePermission('commissionSlabs', 'edit'), updateSlabValidationRules, updateSlab)
   .delete(deleteSlab);
 
 // 21. Service Requests Management (Super Admin view)
@@ -579,25 +579,47 @@ const { updateRequestStatusRules } = require('../../validations/super-admin/serv
 const { getAllServiceRequests, getServiceRequestById, updateServiceRequestStatus, deleteServiceRequest } = require('../../controllers/super-admin/service-request.controller');
 
 router.route('/service-requests')
-  .get(getAllServiceRequests);
+  .get(requirePermission('serviceRequests', 'view'), getAllServiceRequests);
 
 router.route('/service-requests/:id/status')
-  .patch(updateRequestStatusRules, updateServiceRequestStatus);
+  .patch(requirePermission('serviceRequests', 'edit'), updateRequestStatusRules, updateServiceRequestStatus);
 
 router.route('/service-requests/:id')
-  .get(getServiceRequestById)
-  .delete(deleteServiceRequest);
+  .get(requirePermission('serviceRequests', 'view'), getServiceRequestById)
+  .delete(requirePermission('serviceRequests', 'delete'), deleteServiceRequest);
 
 // 22. FAQ Management
 const { createFaq, getAllFaqs, updateFaq, deleteFaq } = require('../../controllers/super-admin/faq.controller');
 
 router.route('/faqs')
-  .get(getAllFaqs)
-  .post(createFaq);
+  .get(requirePermission('faqManagement', 'view'), getAllFaqs)
+  .post(requirePermission('faqManagement', 'create'), createFaq);
 
 router.route('/faqs/:id')
-  .patch(updateFaq)
-  .delete(deleteFaq);
+  .patch(requirePermission('faqManagement', 'edit'), updateFaq)
+  .delete(requirePermission('faqManagement', 'delete'), deleteFaq);
+
+// 23. Sub Admin Management
+const {
+  createSubAdmin,
+  getAllSubAdmins,
+  getSubAdminById,
+  updateSubAdmin,
+  deleteSubAdmin,
+  toggleSubAdminStatus,
+} = require('../../controllers/super-admin/sub-admin.controller');
+
+router.route('/sub-admins')
+  .get(requirePermission('subAdmins', 'view'), getAllSubAdmins)
+  .post(requirePermission('subAdmins', 'create'), createSubAdmin);
+
+router.route('/sub-admins/:id')
+  .get(requirePermission('subAdmins', 'view'), getSubAdminById)
+  .patch(requirePermission('subAdmins', 'edit'), updateSubAdmin)
+  .delete(requirePermission('subAdmins', 'delete'), deleteSubAdmin);
+
+router.route('/sub-admins/:id/status')
+  .patch(requirePermission('subAdmins', 'edit'), toggleSubAdminStatus);
 
 
 module.exports = router;

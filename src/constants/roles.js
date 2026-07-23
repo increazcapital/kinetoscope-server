@@ -1,7 +1,8 @@
 const ROLES = {
   SUPER_ADMIN: 'super-admin',
+  SUB_ADMIN: 'sub-admin',
   CLIENT: 'client',
-  AGENT: 'agent'
+  AGENT: 'agent',
 };
 
 const ALL_ROLES = Object.values(ROLES);

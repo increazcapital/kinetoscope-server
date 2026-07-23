@@ -68,7 +68,7 @@ const getEmailHtml = (templateType, body, customHtml) => {
       <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 30px 0;" />
       <p style="color: #94a3b8; font-size: 11px; text-align: center; line-height: 1.4;">
         This is an authorized administrative notification from the Kinetoscope Super Admin Panel.<br/>
-        Kross Film Productions Ltd. (KFPL)
+        Kinetoscope Film Productions Ltd. (KFPL)
       </p>
     </div>
   `;

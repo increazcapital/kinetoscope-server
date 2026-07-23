@@ -9,7 +9,9 @@ const {
   logout,
   getMe,
   registerClient,
+  toggleClientSelf2FA,
 } = require('../../controllers/client/client-auth.controller');
+
 
 const {
   getClientDashboard,
@@ -81,6 +83,8 @@ router.use(restrictTo(ROLES.CLIENT));
 
 // 1. Session Information
 router.get('/auth/me', getMe);
+router.patch('/profile/2fa', toggleClientSelf2FA);
+
 
 // 2. Client Dashboard Stats
 router.get('/dashboard', getClientDashboard);
@@ -105,6 +109,7 @@ router.post('/settings/change-password/verify-otp', verifyChangePasswordOtpRules
 // 7. News & Articles (Reader)
 router.get('/articles', getPublishedArticles);
 router.get('/articles/:id', getPublishedArticleById);
+router.get('/news/:id', getPublishedArticleById);
 router.post('/articles/subscribe', subscribeToNewsletter);
 
 // 8. Assigned Perks (Client view)
@@ -131,8 +136,10 @@ router.route('/transactions')
   .post(memoryUpload.single('file'), requestTransaction);
 
 // 12. Client direct messaging/notifications
-const { sendClientNotificationEmail } = require('../../controllers/client/notification.controller');
+const { sendClientNotificationEmail, getClientNotifications } = require('../../controllers/client/notification.controller');
+router.get('/notifications', getClientNotifications);
 router.post('/notifications/send-email', sendClientNotificationEmail);
+
 
 // 13. Service Requests (Client view)
 const { createRequestRules } = require('../../validations/super-admin/service-request.validation');

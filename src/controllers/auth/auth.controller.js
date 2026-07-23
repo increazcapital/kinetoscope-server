@@ -1,4 +1,5 @@
 const User = require('../../models/User.model');
+const SubAdmin = require('../../models/SubAdmin.model');
 const OtpRecord = require('../../models/OtpRecord.model');
 const AppError = require('../../utils/AppError');
 const asyncHandler = require('../../utils/asyncHandler');
@@ -50,12 +51,22 @@ const setupAdmin = asyncHandler(async (req, res, next) => {
  * Authentication Login Handler
  * POST /api/v1/auth/login
  */
-// Trigger rebuild: Ensure all portals can authenticate via general login
 const login = asyncHandler(async (req, res, next) => {
   const { email, password } = req.body;
 
-  // 1) Find user by email and select password field
-  const user = await User.findOne({ email }).select('+password');
+  // 1) Find user by email — check User model first, then SubAdmin model
+  let user = await User.findOne({ email }).select('+password');
+  let isSubAdmin = false;
+
+  if (!user) {
+    // Check SubAdmin model as fallback
+    const subAdmin = await SubAdmin.findOne({ email: email.toLowerCase().trim() }).select('+password');
+    if (subAdmin) {
+      user = subAdmin;
+      isSubAdmin = true;
+    }
+  }
+
   if (!user) {
     return next(new AppError('Invalid email address or password', 401));
   }
@@ -66,7 +77,33 @@ const login = asyncHandler(async (req, res, next) => {
     return next(new AppError('Invalid email address or password', 401));
   }
 
-  // 3) Enforce dynamic role restriction based on origin/referer headers to prevent cross-portal authentication
+  // 3) Sub Admin login — bypass 2FA and role portal check, just validate isActive
+  if (isSubAdmin) {
+    if (!user.isActive) {
+      return next(new AppError('Your sub-admin account has been deactivated. Please contact the Super Admin.', 403));
+    }
+    const token = signToken(user._id, ROLES.SUB_ADMIN);
+    const cookieOptions = getCookieOptions();
+    res.cookie('jwt', token, cookieOptions);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Logged in successfully',
+      token,
+      data: {
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          role: ROLES.SUB_ADMIN,
+          permissions: user.permissions,
+          isActive: user.isActive,
+        },
+      },
+    });
+  }
+
+  // 4) Enforce dynamic role restriction based on origin/referer headers to prevent cross-portal authentication
   const origin = req.headers.origin || req.headers.referer || '';
   let expectedRole = ROLES.SUPER_ADMIN;
 
@@ -90,12 +127,12 @@ const login = asyncHandler(async (req, res, next) => {
     }
   }
 
-  // 4) Verify account is active
+  // 5) Verify account is active
   if (!user.isActive) {
     return next(new AppError('Your account has been deactivated. Please contact support.', 403));
   }
 
-  // 4) Check if 2FA (OTP Verification) is enabled
+  // 6) Check if 2FA (OTP Verification) is enabled
   if (user.is2FAEnabled) {
     // 1) Invalidate any existing login-2fa OTPs for this user
     await OtpRecord.deleteMany({ userId: user._id, purpose: 'login-2fa' });
@@ -143,7 +180,7 @@ const login = asyncHandler(async (req, res, next) => {
     });
   }
 
-  // 5) Regular login without 2FA: sign token and update lastLogin
+  // 7) Regular login without 2FA: sign token and update lastLogin
   user.lastLogin = new Date();
   await user.save({ validateBeforeSave: false });
 

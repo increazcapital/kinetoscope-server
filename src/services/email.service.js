@@ -165,7 +165,7 @@ Kinetoscope Team
 
       <p style="color: #94a3b8; font-size: 12px; line-height: 1.5;">For security, we recommend that you change this temporary password immediately after logging in for the first time.</p>
       <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
-      <p style="color: #94a3b8; font-size: 11px; text-align: center;">Kross Film Productions Ltd. (KFPL)</p>
+      <p style="color: #94a3b8; font-size: 11px; text-align: center;">Kinetoscope Film Productions Ltd. (KFPL)</p>
     </div>
   `;
 
@@ -247,7 +247,7 @@ Kinetoscope Team
       <p style="color: #94a3b8; font-size: 12px; line-height: 1.5;">For security, we recommend that you change this password immediately after logging in.</p>
       <p style="color: #94a3b8; font-size: 12px; line-height: 1.5;">If you did not request this change, please contact your account administrator immediately.</p>
       <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
-      <p style="color: #94a3b8; font-size: 11px; text-align: center;">Kross Film Productions Ltd. (KFPL)</p>
+      <p style="color: #94a3b8; font-size: 11px; text-align: center;">Kinetoscope Film Productions Ltd. (KFPL)</p>
     </div>
   `;
 
@@ -311,7 +311,7 @@ Please log in to the Super Admin Panel to review and action this request.
       
       <p style="color: #4b5563; font-size: 14px; margin-top: 16px;">Please open the Super Admin portal and navigate to <strong>Deposit & Withdrawal Approvals</strong> to authorize or decline this transaction.</p>
       <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
-      <p style="color: #94a3b8; font-size: 11px; text-align: center;">Kross Film Productions Ltd. (KFPL)</p>
+      <p style="color: #94a3b8; font-size: 11px; text-align: center;">Kinetoscope Film Productions Ltd. (KFPL)</p>
     </div>
   `;
 
@@ -380,7 +380,7 @@ Kinetoscope Team
       
       <p style="color: #4b5563; font-size: 14px; margin-top: 16px;">If you did not expect this update or have further questions, please contact your account advisor immediately.</p>
       <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
-      <p style="color: #94a3b8; font-size: 11px; text-align: center;">Kross Film Productions Ltd. (KFPL)</p>
+      <p style="color: #94a3b8; font-size: 11px; text-align: center;">Kinetoscope Film Productions Ltd. (KFPL)</p>
     </div>
   `;
 
@@ -431,7 +431,7 @@ const sendKycVerificationNotification = async (clientEmail, clientName, agentEma
       `}
       
       <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
-      <p style="color: #94a3b8; font-size: 11px; text-align: center;">Kross Film Productions Ltd. (KFPL)</p>
+      <p style="color: #94a3b8; font-size: 11px; text-align: center;">Kinetoscope Film Productions Ltd. (KFPL)</p>
     </div>
   `;
 
@@ -495,7 +495,7 @@ Kinetoscope Team
       </div>
       
       <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
-      <p style="color: #94a3b8; font-size: 11px; text-align: center;">Kross Film Productions Ltd. (KFPL)</p>
+      <p style="color: #94a3b8; font-size: 11px; text-align: center;">Kinetoscope Film Productions Ltd. (KFPL)</p>
     </div>
   `;
 
@@ -557,7 +557,7 @@ Kinetoscope Team
       </div>
       
       <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
-      <p style="color: #94a3b8; font-size: 11px; text-align: center;">Kross Film Productions Ltd. (KFPL)</p>
+      <p style="color: #94a3b8; font-size: 11px; text-align: center;">Kinetoscope Film Productions Ltd. (KFPL)</p>
     </div>
   `;
 
@@ -651,7 +651,7 @@ const trackAndSendSystemEmail = async (triggerKey, sendOptions) => {
 
 const sendNewArticleNotification = async (recipientEmail, article) => {
   const subject = `KFPL Insights: New Article Released – ${article.title}`;
-  const text = `Hello,\n\nA new article has been published on KFPL Insights.\n\nTitle: ${article.title}\nCategory: ${article.category}\nExcerpt: ${article.excerpt}\n\nRead more details in your portal feed.\n\nBest regards,\nKross Film Productions Ltd. (KFPL)`;
+  const text = `Hello,\n\nA new article has been published on KFPL Insights.\n\nTitle: ${article.title}\nCategory: ${article.category}\nExcerpt: ${article.excerpt}\n\nRead more details in your portal feed.\n\nBest regards,\nKinetoscope Film Productions Ltd. (KFPL)`;
   
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 580px; margin: auto; padding: 32px; border: 1px solid #e5e7eb; border-radius: 8px; background-color: #ffffff;">
@@ -684,7 +684,36 @@ const sendNewArticleNotification = async (recipientEmail, article) => {
       <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 30px 0;" />
       <p style="color: #94a3b8; font-size: 11px; text-align: center; line-height: 1.4;">
         You received this email because you subscribed to updates on KFPL Insights.<br/>
-        Kross Film Productions Ltd. (KFPL)
+        Kinetoscope Film Productions Ltd. (KFPL)
+      </p>
+    </div>
+  `;
+
+  return sendEmail({ to: recipientEmail, subject, text, html });
+};
+
+const sendSubscriptionConfirmationEmail = async (recipientEmail) => {
+  const subject = `Welcome to KFPL Insights - Subscription Confirmed`;
+  const text = `Hello,\n\nThank you for subscribing to KFPL Insights.\n\nYou will now receive automatic email notifications whenever new media releases, production announcements, and investor articles are published.\n\nBest regards,\nKinetoscope Film Productions Ltd. (KFPL)`;
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 580px; margin: auto; padding: 32px; border: 1px solid #e5e7eb; border-radius: 8px; background-color: #ffffff;">
+      <div style="text-align: center; margin-bottom: 24px;">
+        <span style="font-size: 12px; font-weight: bold; color: #10b981; text-transform: uppercase; letter-spacing: 1.5px;">KFPL Insights</span>
+      </div>
+      <h2 style="color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 12px; margin-bottom: 20px; font-size: 20px; font-weight: bold;">
+        Subscription Confirmed!
+      </h2>
+      <p style="color: #334155; font-size: 15px; line-height: 1.6;">
+        Thank you for subscribing to <strong>KFPL Insights</strong>.
+      </p>
+      <p style="color: #334155; font-size: 14px; line-height: 1.6; background-color: #f8fafc; padding: 16px; border-radius: 6px; border-left: 4px solid #10b981;">
+        You will now automatically receive email notifications directly in your inbox whenever new media releases, quarterly fiscal summaries, or entertainment pipeline articles are published by Kinetoscope.
+      </p>
+      <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 30px 0;" />
+      <p style="color: #94a3b8; font-size: 11px; text-align: center; line-height: 1.4;">
+        You received this email because <strong>${recipientEmail}</strong> was subscribed to KFPL Insights.<br/>
+        Kinetoscope Film Productions Ltd. (KFPL)
       </p>
     </div>
   `;
@@ -705,4 +734,5 @@ module.exports = {
   sendRoiPayoutNotification,
   trackAndSendSystemEmail,
   sendNewArticleNotification,
+  sendSubscriptionConfirmationEmail,
 };

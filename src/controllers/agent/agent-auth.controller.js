@@ -365,10 +365,36 @@ const registerAgent = asyncHandler(async (req, res, next) => {
   });
 });
 
+/**
+ * Agent self toggle 2FA
+ * PATCH /api/agent/profile/2fa
+ */
+const toggleAgentSelf2FA = asyncHandler(async (req, res, next) => {
+  const { is2FAEnabled } = req.body;
+  if (typeof is2FAEnabled !== 'boolean') {
+    return next(new AppError('is2FAEnabled must be a boolean value', 400));
+  }
+  const user = await User.findByIdAndUpdate(
+    req.user._id,
+    { is2FAEnabled },
+    { new: true, runValidators: true }
+  );
+  if (!user) {
+    return next(new AppError('User not found', 404));
+  }
+  res.status(200).json({
+    status: 'success',
+    message: `2FA ${is2FAEnabled ? 'enabled' : 'disabled'} successfully`,
+    is2FAEnabled: user.is2FAEnabled,
+  });
+});
+
 module.exports = {
   login,
   verify2FA,
   logout,
   getMe,
   registerAgent,
+  toggleAgentSelf2FA,
 };
+

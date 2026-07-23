@@ -2,6 +2,7 @@ const DividendPool = require('../../models/DividendPool.model');
 const DividendAllotment = require('../../models/DividendAllotment.model');
 const User = require('../../models/User.model');
 const Project = require('../../models/Project.model');
+const ClientProfile = require('../../models/ClientProfile.model');
 const AppError = require('../../utils/AppError');
 const asyncHandler = require('../../utils/asyncHandler');
 
@@ -202,11 +203,54 @@ const getAllAllotments = asyncHandler(async (req, res, next) => {
     .sort({ allotmentDate: -1 })
     .lean();
 
+  // Fetch ClientProfiles to resolve real fullName (User.name may differ from display name)
+  const mongoose = require('mongoose');
+  const rawClientIds = allotments
+    .map(a => a.clientId?._id || a.clientId)
+    .filter(Boolean);
+
+  const clientUserObjectIds = rawClientIds
+    .map(id => {
+      try { return new mongoose.Types.ObjectId(String(id)); } catch { return null; }
+    })
+    .filter(Boolean);
+
+  const clientProfiles = clientUserObjectIds.length > 0
+    ? await ClientProfile.find({ userId: { $in: clientUserObjectIds } }).select('userId fullName email').lean()
+    : [];
+
+  // Also fetch User emails for fallback
+  const clientUsers = clientUserObjectIds.length > 0
+    ? await require('../../models/User.model').find({ _id: { $in: clientUserObjectIds } }).select('_id name email').lean()
+    : [];
+
+  const userEmailMap = {};
+  clientUsers.forEach(u => {
+    userEmailMap[String(u._id)] = u;
+  });
+
+  const profileMap = {};
+  clientProfiles.forEach(p => {
+    profileMap[String(p.userId)] = p;
+  });
+
+  // Attach resolved name to each allotment
+  allotments = allotments.map(a => {
+    const userId = String(a.clientId?._id || a.clientId || '');
+    const profile = profileMap[userId];
+    const userRecord = userEmailMap[userId];
+    return {
+      ...a,
+      _resolvedClientName: profile?.fullName || a.clientId?.name || userRecord?.name || null,
+      _resolvedClientCode: a.clientId?.clientCode || null,
+    };
+  });
+
   if (req.query.search) {
     const search = req.query.search.toLowerCase();
     allotments = allotments.filter(allot => {
-      const clientName = (allot.clientId?.name || '').toLowerCase();
-      const clientCode = (allot.clientId?.clientCode || '').toLowerCase();
+      const clientName = (allot._resolvedClientName || allot.clientId?.name || '').toLowerCase();
+      const clientCode = (allot._resolvedClientCode || allot.clientId?.clientCode || '').toLowerCase();
       const projectName = (allot.projectId?.name || '').toLowerCase();
       const projectSegment = (allot.projectId?.segment || '').toLowerCase();
       const remarks = (allot.remarks || '').toLowerCase();

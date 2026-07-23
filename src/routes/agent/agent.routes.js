@@ -9,7 +9,9 @@ const {
   logout,
   getMe,
   registerAgent,
+  toggleAgentSelf2FA,
 } = require('../../controllers/agent/agent-auth.controller');
+
 
 const {
   getAgentDashboard,
@@ -28,6 +30,7 @@ const {
 const {
   getPublishedArticles,
   getPublishedArticleById,
+  subscribeToNewsletter,
 } = require('../../controllers/super-admin/article.controller');
 
 const router = express.Router();
@@ -56,6 +59,8 @@ router.use(restrictTo(ROLES.AGENT));
 
 // 1. Session Information
 router.get('/auth/me', getMe);
+router.patch('/profile/2fa', toggleAgentSelf2FA);
+
 
 // 2. Agent Dashboard Stats
 router.get('/dashboard', getAgentDashboard);
@@ -102,6 +107,7 @@ router.post('/settings/change-password/verify-otp', verifyChangePasswordOtpRules
 router.get('/articles', getPublishedArticles);
 router.get('/articles/:id', getPublishedArticleById);
 router.get('/news/:id', getPublishedArticleById);
+router.post('/articles/subscribe', subscribeToNewsletter);
 
 // 9. Transaction requests (deposit / withdrawal on behalf of assigned client)
 const {
@@ -121,8 +127,10 @@ router.route('/withdrawal')
 router.get('/withdrawals', getAgentWithdrawals);
 
 // 10. Agent direct messaging/notifications
-const { sendAgentNotificationEmail } = require('../../controllers/agent/notification.controller');
+const { sendAgentNotificationEmail, getAgentNotifications } = require('../../controllers/agent/notification.controller');
+router.get('/notifications', getAgentNotifications);
 router.post('/notifications/send-email', sendAgentNotificationEmail);
+
 
 // 11. Performance Rewards Catalog (Agent view)
 router.get('/rewards', getAgentPerformanceRewards);

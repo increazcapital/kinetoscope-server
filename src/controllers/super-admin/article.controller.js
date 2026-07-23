@@ -282,7 +282,11 @@ const getPublishedArticles = asyncHandler(async (req, res, next) => {
  * Get a single Published Article by ID (Client/Agent facing)
  */
 const getPublishedArticleById = asyncHandler(async (req, res, next) => {
-  const article = await Article.findOne({ _id: req.params.id, status: 'Published' }).populate('createdBy', 'name email');
+  let article = null;
+  if (req.params.id && req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
+    article = await Article.findById(req.params.id).populate('createdBy', 'name email');
+  }
+
   if (!article) {
     return next(new AppError('Article not found', 404));
   }
@@ -290,6 +294,7 @@ const getPublishedArticleById = asyncHandler(async (req, res, next) => {
   res.status(200).json({
     success: true,
     data: article,
+    article: article,
   });
 });
 
@@ -310,19 +315,36 @@ const subscribeToNewsletter = asyncHandler(async (req, res, next) => {
     return next(new AppError('Please provide a valid email address.', 400));
   }
 
-  const existing = await NewsletterSubscription.findOne({ email: email.trim().toLowerCase() });
+  const cleanEmail = email.trim().toLowerCase();
+  const existing = await NewsletterSubscription.findOne({ email: cleanEmail });
+  
   if (existing) {
     if (!existing.active) {
       existing.active = true;
       await existing.save();
     }
+
+    try {
+      const { sendSubscriptionConfirmationEmail } = require('../../services/email.service');
+      sendSubscriptionConfirmationEmail(cleanEmail).catch(err => {
+        console.error('Failed to send subscription confirmation email:', err.message);
+      });
+    } catch (_) {}
+
     return res.status(200).json({
       success: true,
       message: 'You have successfully subscribed to KFPL Insights.',
     });
   }
 
-  await NewsletterSubscription.create({ email: email.trim().toLowerCase() });
+  await NewsletterSubscription.create({ email: cleanEmail });
+
+  try {
+    const { sendSubscriptionConfirmationEmail } = require('../../services/email.service');
+    sendSubscriptionConfirmationEmail(cleanEmail).catch(err => {
+      console.error('Failed to send subscription confirmation email:', err.message);
+    });
+  } catch (_) {}
 
   res.status(201).json({
     success: true,
