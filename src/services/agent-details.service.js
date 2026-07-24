@@ -35,11 +35,18 @@ const getAgentDetailsData = async (agentId) => {
 
   const profObj = profile.toObject ? profile.toObject({ getters: true }) : profile;
 
+  // Auto-align KYC status if core 3 documents are verified
+  let computedKycStatus = (profile.kycStatus || 'PENDING').toUpperCase();
+  if (profile.panDocumentVerified && profile.idProofDocumentVerified && profile.bankProofDocumentVerified) {
+    computedKycStatus = 'VERIFIED';
+  }
+
   return {
     header: {
       agentName: user.name,
       agentCode: user.clientCode || '',
       status: profile.status ? profile.status.toUpperCase() : 'ACTIVE',
+      kycStatus: computedKycStatus,
     },
     summaryCards: {
       clientsCount,
@@ -47,6 +54,7 @@ const getAgentDetailsData = async (agentId) => {
       oneTimeCommission: profile.oneTimeCommission || 0,
       monthlySlab: profile.monthlySlab || '',
       specialCommission: profile.specialCommission || 0,
+      kycStatus: computedKycStatus,
     },
     profile: {
       fullName: profObj.fullName || user.name,
@@ -74,7 +82,7 @@ const getAgentDetailsData = async (agentId) => {
       idProofDocumentVerified: profile.idProofDocumentVerified || false,
       bankProofDocumentVerified: profile.bankProofDocumentVerified || false,
       nomineeProofDocumentVerified: profile.nomineeProofDocumentVerified || false,
-      kycStatus: profile.kycStatus || 'PENDING',
+      kycStatus: computedKycStatus,
       agentCode: user.clientCode || '',
       clientCode: user.clientCode || '',
       status: profile.status || 'active',
@@ -126,17 +134,31 @@ const getAgentDocumentsData = async (agentId) => {
       description: 'Cancelled Cheque or Bank Statement',
       fileSize: '1.8 MB',
     },
-    {
+  ];
+
+  // Only include Nominee ID Proof box IF a document file URL actually exists!
+  if (profile.nomineeProofDocument && profile.nomineeProofDocument.trim() !== '') {
+    docTypes.push({
       name: isNomineeInternational ? 'Nominee International Passport / National ID Card Upload' : 'Nominee ID Proof (Aadhaar / Driving License / Passport)',
       key: 'nomineeProofDocument',
       description: isNomineeInternational ? 'Proof of Nominee International Passport or National ID' : 'Proof of Nominee Identity (Aadhaar / Driving License / Passport)',
       fileSize: '1.5 MB',
-    },
-  ];
+    });
+  }
 
   const safeName = user.name.replace(/\s+/g, '_');
 
-  const kycStatusVal = profile.kycStatus || 'PENDING';
+  // Auto-verify KYC if core 3 documents are verified
+  const coreVerified = profile.panDocumentVerified === true && profile.idProofDocumentVerified === true && profile.bankProofDocumentVerified === true;
+  let kycStatusVal = profile.kycStatus || 'PENDING';
+
+  if (coreVerified && kycStatusVal !== 'VERIFIED') {
+    kycStatusVal = 'VERIFIED';
+    profile.kycStatus = 'VERIFIED';
+    profile.status = 'active';
+    await profile.save();
+    await User.findByIdAndUpdate(profile.userId, { isActive: true });
+  }
 
   const documents = docTypes.map(doc => {
     const url = profile[doc.key] || '';
