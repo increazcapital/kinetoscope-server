@@ -262,8 +262,8 @@ const updateAgentRulesByAdmin = [
     .optional()
     .custom(val => {
       const lower = val.toLowerCase();
-      if (!['active', 'inactive', 'suspended', 'blocked', 'hold'].includes(lower)) {
-        throw new Error('Status must be active, inactive, suspended, blocked, or hold');
+      if (!['active', 'inactive', 'suspended', 'blocked', 'hold', 'pending'].includes(lower)) {
+        throw new Error('Status must be active, inactive, suspended, blocked, hold, or pending');
       }
       return true;
     }),
