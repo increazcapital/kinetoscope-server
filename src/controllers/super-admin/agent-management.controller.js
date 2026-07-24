@@ -479,8 +479,11 @@ const updateAgent = asyncHandler(async (req, res, next) => {
     'nomineeResidency',
     'status',
     'kycStatus',
+    'panDocumentVerified',
+    'idProofDocumentVerified',
+    'bankProofDocumentVerified',
+    'nomineeProofDocumentVerified',
   ];
-
 
   profileFields.forEach(field => {
     if (req.body[field] !== undefined) {
@@ -488,8 +491,12 @@ const updateAgent = asyncHandler(async (req, res, next) => {
     }
   });
 
-  // Align status and isActive when kycStatus is updated to VERIFIED
-  if (req.body.kycStatus === 'VERIFIED') {
+  // Align status and isActive when kycStatus is updated to VERIFIED or core docs are verified
+  const panVerified = profileUpdates.panDocumentVerified !== undefined ? profileUpdates.panDocumentVerified : profile.panDocumentVerified;
+  const idVerified = profileUpdates.idProofDocumentVerified !== undefined ? profileUpdates.idProofDocumentVerified : profile.idProofDocumentVerified;
+  const bankVerified = profileUpdates.bankProofDocumentVerified !== undefined ? profileUpdates.bankProofDocumentVerified : profile.bankProofDocumentVerified;
+
+  if (req.body.kycStatus === 'VERIFIED' || (panVerified && idVerified && bankVerified)) {
     profileUpdates.kycStatus = 'VERIFIED';
     profileUpdates.status = 'active';
     userUpdates.isActive = true;
