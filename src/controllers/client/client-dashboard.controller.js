@@ -279,14 +279,30 @@ const getClientDashboard = asyncHandler(async (req, res, next) => {
  * GET /api/client/investments
  */
 const getClientInvestments = asyncHandler(async (req, res, next) => {
-  const investments = await Investment.find({ clientId: req.user.id }).sort({ investmentDate: -1 });
+  const [investments, profile, user] = await Promise.all([
+    Investment.find({ clientId: req.user.id }).sort({ investmentDate: -1 }).lean(),
+    ClientProfile.findOne({ userId: req.user.id }).lean(),
+    User.findById(req.user.id).select('name email clientCode').lean(),
+  ]);
+
+  const clientInfo = profile ? {
+    ...profile,
+    name: user?.name || '',
+    email: user?.email || '',
+    clientCode: user?.clientCode || '',
+    roiPercent: parseFloat(profile.monthlyRoi) || 0,
+    roiPercentage: parseFloat(profile.monthlyRoi) || 0,
+    monthlyRoi: parseFloat(profile.monthlyRoi) || 0,
+  } : null;
 
   res.status(200).json({
     success: true,
     count: investments.length,
     data: {
       investments,
+      client: clientInfo,
     },
+    client: clientInfo,
   });
 });
 
