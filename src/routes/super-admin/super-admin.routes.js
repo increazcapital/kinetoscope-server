@@ -27,6 +27,8 @@ const {
   toggle2FA,
   toggleClient2FA,
   toggleAgent2FA,
+  getSupportSettings,
+  updateSupportSettings,
 } = require('../../controllers/super-admin/settings.controller');
 const {
   sendChangeEmailOtpHandler,
@@ -257,13 +259,14 @@ const router = express.Router();
 // Apply Auth and Role Guard to all Super Admin endpoints
 router.use(protect);
 
-// Shared routes accessible by Super Admin, Sub Admin, and Agent
-router.get('/clients/:id', restrictTo(ROLES.SUPER_ADMIN, ROLES.SUB_ADMIN, ROLES.AGENT), getClientById);
-router.get('/clients/:id/documents', restrictTo(ROLES.SUPER_ADMIN, ROLES.SUB_ADMIN, ROLES.AGENT), getClientDocumentsTab);
-router.get('/clients/:id/investments', restrictTo(ROLES.SUPER_ADMIN, ROLES.SUB_ADMIN, ROLES.AGENT), getClientInvestmentsTab);
-router.get('/clients/:id/roi', restrictTo(ROLES.SUPER_ADMIN, ROLES.SUB_ADMIN, ROLES.AGENT), getClientRoiTab);
-router.get('/clients/:id/perks', restrictTo(ROLES.SUPER_ADMIN, ROLES.SUB_ADMIN, ROLES.AGENT), getClientPerksTab);
-router.get('/roi/payouts', restrictTo(ROLES.SUPER_ADMIN, ROLES.SUB_ADMIN, ROLES.AGENT), getPayouts);
+// Shared routes accessible by Super Admin, Sub Admin, Agent, and Client
+router.get('/clients/:id', restrictTo(ROLES.SUPER_ADMIN, ROLES.SUB_ADMIN, ROLES.AGENT, ROLES.CLIENT), getClientById);
+router.get('/clients/:id/documents', restrictTo(ROLES.SUPER_ADMIN, ROLES.SUB_ADMIN, ROLES.AGENT, ROLES.CLIENT), getClientDocumentsTab);
+router.get('/clients/:id/investments', restrictTo(ROLES.SUPER_ADMIN, ROLES.SUB_ADMIN, ROLES.AGENT, ROLES.CLIENT), getClientInvestmentsTab);
+router.get('/clients/:id/roi', restrictTo(ROLES.SUPER_ADMIN, ROLES.SUB_ADMIN, ROLES.AGENT, ROLES.CLIENT), getClientRoiTab);
+router.get('/clients/:id/perks', restrictTo(ROLES.SUPER_ADMIN, ROLES.SUB_ADMIN, ROLES.AGENT, ROLES.CLIENT), getClientPerksTab);
+router.get('/roi/payouts', restrictTo(ROLES.SUPER_ADMIN, ROLES.SUB_ADMIN, ROLES.AGENT, ROLES.CLIENT), getPayouts);
+router.get('/settings/support', restrictTo(ROLES.SUPER_ADMIN, ROLES.SUB_ADMIN, ROLES.AGENT, ROLES.CLIENT), getSupportSettings);
 
 router.use(restrictTo(ROLES.SUPER_ADMIN, ROLES.SUB_ADMIN));
 
@@ -473,6 +476,8 @@ router.get('/settings', requirePermission('settings', 'view'), getSettings);
 router.patch('/settings/2fa', requirePermission('settings', 'edit'), toggle2FA);
 router.patch('/settings/client-2fa', requirePermission('settings', 'edit'), toggleClient2FA);
 router.patch('/settings/agent-2fa', requirePermission('settings', 'edit'), toggleAgent2FA);
+router.get('/settings/support', requirePermission('settings', 'view'), getSupportSettings);
+router.put('/settings/support', requirePermission('settings', 'edit'), updateSupportSettings);
 
 // 11. Settings — Change Email Address (OTP-based)
 router.post('/settings/change-email/send-otp', requirePermission('settings', 'edit'), sendChangeEmailOtpRules, sendChangeEmailOtpHandler);

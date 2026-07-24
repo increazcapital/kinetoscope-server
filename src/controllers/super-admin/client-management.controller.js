@@ -4,6 +4,7 @@ const User = require('../../models/User.model');
 const ClientProfile = require('../../models/ClientProfile.model');
 const Investment = require('../../models/Investment.model');
 const Transaction = require('../../models/Transaction.model');
+const AgentProfile = require('../../models/AgentProfile.model');
 const { deleteFromCloudinary, processDocumentUploadsInBackground, uploadDocumentsToCloudinaryParallelBackground } = require('../../services/cloudinary.service');
 const { sendWelcomeEmail, sendKycVerificationNotification } = require('../../services/email.service');
 const { calculateDashboardData } = require('../client/client-dashboard.controller');
@@ -321,8 +322,9 @@ const getAllClients = asyncHandler(async (req, res, next) => {
     if (p.email) profileMap[p.email.toLowerCase()] = p;
   });
 
-  // Fetch active investments and approved deposit transactions matching by user ID or client code
-  const [activeInvestments, approvedDeposits] = await Promise.all([
+  // Fetch active investments, approved deposit transactions, and assigned Agent profiles
+  const agentUserIds = users.map(u => u.assignedAgent?._id || u.assignedAgent).filter(Boolean);
+  const [activeInvestments, approvedDeposits, agentProfiles] = await Promise.all([
     Investment.find({
       $or: [
         { clientId: { $in: userIds } },
@@ -337,8 +339,20 @@ const getAllClients = asyncHandler(async (req, res, next) => {
       ],
       type: 'deposit',
       status: 'approved'
+    }).lean(),
+    AgentProfile.find({
+      $or: [
+        { userId: { $in: agentUserIds } },
+        { _id: { $in: agentUserIds } }
+      ]
     }).lean()
   ]);
+
+  const agentProfileMap = {};
+  agentProfiles.forEach(ap => {
+    if (ap.userId) agentProfileMap[ap.userId.toString()] = ap;
+    if (ap._id) agentProfileMap[ap._id.toString()] = ap;
+  });
 
   const investmentMap = {};
   activeInvestments.forEach(inv => {
@@ -370,6 +384,20 @@ const getAllClients = asyncHandler(async (req, res, next) => {
 
     const monthlyRoi = profile && profile.monthlyRoi !== undefined ? (parseFloat(profile.monthlyRoi) || 0) : 0;
 
+    const assignedAgentObj = user.assignedAgent;
+    let agentCommissionStr = '—';
+    if (assignedAgentObj) {
+      const agId = (assignedAgentObj._id || assignedAgentObj).toString();
+      const agProf = agentProfileMap[agId];
+      if (agProf) {
+        agentCommissionStr = 'Automatic (Slab)';
+      } else if (profile && profile.agentCommission) {
+        agentCommissionStr = 'Automatic (Slab)';
+      } else {
+        agentCommissionStr = 'Automatic (Slab)';
+      }
+    }
+
     return {
       _id: user._id,
       clientId: user.clientCode || (profile && profile.clientCode) || '',
@@ -380,6 +408,10 @@ const getAllClients = asyncHandler(async (req, res, next) => {
       monthlyRoi,
       roi: monthlyRoi,
       roiPercentage: monthlyRoi,
+      assignedAgent: assignedAgentObj,
+      assignedAgentName: assignedAgentObj?.name || '',
+      agentCommissionMonthly: agentCommissionStr,
+      agentCommission: agentCommissionStr,
       user,
       profile
     };
@@ -485,6 +517,12 @@ const updateClient = asyncHandler(async (req, res, next) => {
   if (req.body.status) {
     req.body.status = req.body.status.toLowerCase();
     userUpdates.isActive = req.body.status === 'active';
+  }
+  if (req.body.kycStatus) {
+    const normKyc = String(req.body.kycStatus).toUpperCase();
+    if (['VERIFIED', 'APPROVED'].includes(normKyc)) {
+      userUpdates.isActive = true;
+    }
   }
   if (req.body.email) {
     const newEmail = req.body.email.toLowerCase().trim();

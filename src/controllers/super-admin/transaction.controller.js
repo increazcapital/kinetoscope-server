@@ -157,7 +157,7 @@ const approveRejectTransaction = asyncHandler(async (req, res, next) => {
           status: 'active',
           createdBy: req.user.id || req.user._id,
           remarks: `Auto-created from approved deposit transaction #${transaction._id}`,
-          segment: 'Trading & Syndication',
+          segment: transaction.segment || transaction.category || (transaction.projectId ? 'Project Allocated' : 'Unallocated'),
           sourceTransactionId: transaction._id
         });
 
@@ -170,6 +170,90 @@ const approveRejectTransaction = asyncHandler(async (req, res, next) => {
     } catch (investmentError) {
       // Log but don't block the approval response
       console.error('[Investment Creation Error] Failed to auto-create investment on deposit approval:', investmentError.message);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // AUTO-CREATE AGENT COMMISSION: Calculate from slab config when client
+    // has an assigned agent. Commission is created as PENDING — Super Admin
+    // must explicitly pay it.
+    // ═══════════════════════════════════════════════════════════════════════
+    try {
+      const commClient = await User.findById(transaction.clientId).lean();
+      if (commClient && commClient.assignedAgent) {
+        const CommissionSlab = require('../../models/CommissionSlab.model');
+        const AgentCommission = require('../../models/AgentCommission.model');
+        const AgentOverride = require('../../models/AgentOverride.model');
+
+        const depositAmount = transaction.amount;
+        const agentUserId = commClient.assignedAgent;
+        const periodStr = new Date().toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+
+        // Fetch slabs and agent override in parallel
+        const [allSlabs, agentOverride] = await Promise.all([
+          CommissionSlab.find({}).sort({ minAmount: 1 }).lean(),
+          AgentOverride.findOne({ agentId: agentUserId }).lean()
+        ]);
+
+        const findMatchingSlab = (type) => {
+          const typeSlabs = allSlabs.filter(s => s.type === type);
+          for (const slab of typeSlabs) {
+            const max = slab.maxAmount === null || slab.maxAmount === undefined ? Infinity : slab.maxAmount;
+            if (depositAmount >= slab.minAmount && depositAmount <= max) {
+              return slab;
+            }
+          }
+          return null;
+        };
+
+        // 1st Month (Deposit Approval): Generate ONE TIME commission as PENDING.
+        // Monthly commission starts from 2nd Month onwards.
+        const slabTypes = ['one-time'];
+        const commissionsToCreate = [];
+
+        for (const slabType of slabTypes) {
+          // Idempotency: check if commission for this deposit + type already exists
+          const existing = await AgentCommission.findOne({
+            sourceTransactionId: transaction._id,
+            slabType: slabType
+          }).lean();
+          if (existing) continue;
+
+          const matchedSlab = findMatchingSlab(slabType);
+          if (!matchedSlab) continue;
+
+          // Use agent override if exists, otherwise use slab percentage
+          let pct = matchedSlab.commissionPercentage;
+          if (agentOverride && agentOverride.commissionOverride !== undefined) {
+            pct = agentOverride.commissionOverride;
+          }
+
+          const commAmount = Math.round(depositAmount * (pct / 100));
+          if (commAmount <= 0) continue;
+
+          commissionsToCreate.push({
+            agentId: agentUserId,
+            clientId: transaction.clientId,
+            period: periodStr,
+            date: new Date(),
+            type: slabType === 'one-time' ? 'ONE TIME' : 'MONTHLY',
+            amount: commAmount,
+            status: 'PENDING',
+            remarks: `Auto-calculated from deposit ₹${depositAmount.toLocaleString('en-IN')} at ${pct}% (${slabType} slab)`,
+            sourceTransactionId: transaction._id,
+            investmentAmount: depositAmount,
+            slabPercentage: pct,
+            slabType: slabType
+          });
+        }
+
+        if (commissionsToCreate.length > 0) {
+          await AgentCommission.insertMany(commissionsToCreate);
+          console.log(`[Commission Auto-Created] ${commissionsToCreate.length} PENDING commission(s) for agent ${agentUserId} from deposit TXN ${transaction._id}`);
+        }
+      }
+    } catch (commError) {
+      // Log but don't block the approval response
+      console.error('[Commission Auto-Create Error] Failed to auto-create agent commission:', commError.message);
     }
   }
 
@@ -414,7 +498,7 @@ const runInvestmentBackfill = async () => {
           status: 'active',
           createdBy: tx.actionBy || tx.clientId,
           remarks: `Auto-synced from approved deposit transaction #${tx._id}`,
-          segment: 'Trading & Syndication',
+          segment: tx.segment || tx.category || (tx.projectId ? 'Project Allocated' : 'Unallocated'),
           sourceTransactionId: tx._id,
         });
 

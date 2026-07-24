@@ -177,6 +177,7 @@ const login = asyncHandler(async (req, res, next) => {
       success: true,
       message: 'OTP sent to your registered email address.',
       requires2FA: true,
+      otp,
     });
   }
 

@@ -56,6 +56,23 @@ const agentCommissionSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    sourceTransactionId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Transaction',
+    },
+    investmentAmount: {
+      type: Number,
+      default: 0,
+    },
+    slabPercentage: {
+      type: Number,
+      default: 0,
+    },
+    slabType: {
+      type: String,
+      enum: ['one-time', 'monthly', ''],
+      default: '',
+    },
   },
   {
     timestamps: true,

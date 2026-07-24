@@ -170,7 +170,7 @@ const agentProfileSchema = new mongoose.Schema(
     nomineeResidency: {
       type: String,
       enum: {
-        values: ['National (Domestic)', 'International'],
+        values: ['National (Domestic)', 'International', ''],
         message: 'Nominee Residency must be either National (Domestic) or International',
       },
       default: 'National (Domestic)',
@@ -204,8 +204,8 @@ const agentProfileSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: {
-        values: ['active', 'inactive', 'suspended', 'blocked', 'hold'],
-        message: 'Status must be active, inactive, suspended, blocked, or hold',
+        values: ['active', 'inactive', 'suspended', 'blocked', 'hold', 'pending'],
+        message: 'Status must be active, inactive, suspended, blocked, hold, or pending',
       },
       default: 'active',
     },

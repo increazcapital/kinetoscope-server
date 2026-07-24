@@ -113,8 +113,8 @@ const calculateDashboardData = async (userId) => {
     return {
       investmentId: inv._id,
       investmentAmount: inv.investmentAmount,
-      projectName: project ? project.name : (inv.clientName + ' Deal'),
-      segment: project ? project.segment : (inv.segment || 'Trading & Syndication'),
+      projectName: project ? project.name : (inv.projectId ? 'Project Deal' : 'Unallocated Portfolio'),
+      segment: project ? project.segment : (inv.segment || 'Unallocated'),
       status: project ? project.status : 'Active',
       milestoneProgress: project ? project.milestoneProgress : 99,
       health: project ? project.health : 'On Track',
@@ -152,7 +152,7 @@ const calculateDashboardData = async (userId) => {
         segmentAllocationMap[name] = (segmentAllocationMap[name] || 0) + (amt * pct / 100);
       });
     } else {
-      const name = inv.segment || 'Trading & Syndication';
+      const name = inv.segment || 'Unallocated';
       segmentAllocationMap[name] = (segmentAllocationMap[name] || 0) + amt;
     }
   });

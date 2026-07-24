@@ -5,6 +5,7 @@ const perksService = require('../../services/perks.service');
 const ClientProfile = require('../../models/ClientProfile.model');
 const User = require('../../models/User.model');
 const Investment = require('../../models/Investment.model');
+const Transaction = require('../../models/Transaction.model');
 const ClientPerk = require('../../models/ClientPerk.model');
 const Perk = require('../../models/Perk.model');
 const { sendRoiPayoutNotification } = require('../../services/email.service');

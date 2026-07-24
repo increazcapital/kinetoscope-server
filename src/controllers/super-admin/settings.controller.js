@@ -115,9 +115,82 @@ const toggleAgent2FA = asyncHandler(async (req, res, next) => {
   });
 });
 
+const SystemSetting = require('../../models/SystemSetting.model');
+
+/**
+ * Get or initialize global support desk contact configurations
+ */
+const getOrCreateSupportSetting = async () => {
+  let setting = await SystemSetting.findOne({ key: 'system_config' });
+  if (!setting) {
+    setting = await SystemSetting.create({ key: 'system_config' });
+  }
+  return setting;
+};
+
+/**
+ * Get Support Settings (Public / Auth for Client & Agent Portals & Super Admin)
+ * GET /api/system-settings/support or GET /api/super-admin/settings/support
+ */
+const getSupportSettings = asyncHandler(async (req, res, next) => {
+  const setting = await getOrCreateSupportSetting();
+  const data = setting.toObject ? setting.toObject() : { ...setting };
+  
+  if (!data.agentSupportEmail || !data.agentSupportEmail.includes('@')) {
+    data.agentSupportEmail = 'support@kfpl.in';
+  }
+  if (!data.clientSupportEmail || !data.clientSupportEmail.includes('@')) {
+    data.clientSupportEmail = 'support@kfpl.com';
+  }
+
+  res.status(200).json({
+    success: true,
+    data,
+  });
+});
+
+/**
+ * Update Support Settings (Super Admin only)
+ * PUT /api/super-admin/settings/support
+ */
+const updateSupportSettings = asyncHandler(async (req, res, next) => {
+  const {
+    clientSupportEmail,
+    clientSupportPhone,
+    clientSupportWhatsapp,
+    agentSupportEmail,
+    agentSupportPhone,
+    agentSupportWhatsapp,
+    supportHours,
+  } = req.body;
+
+  let setting = await SystemSetting.findOne({ key: 'system_config' });
+  if (!setting) {
+    setting = new SystemSetting({ key: 'system_config' });
+  }
+
+  if (clientSupportEmail !== undefined) setting.clientSupportEmail = clientSupportEmail;
+  if (clientSupportPhone !== undefined) setting.clientSupportPhone = clientSupportPhone;
+  if (clientSupportWhatsapp !== undefined) setting.clientSupportWhatsapp = clientSupportWhatsapp;
+  if (agentSupportEmail !== undefined) setting.agentSupportEmail = agentSupportEmail;
+  if (agentSupportPhone !== undefined) setting.agentSupportPhone = agentSupportPhone;
+  if (agentSupportWhatsapp !== undefined) setting.agentSupportWhatsapp = agentSupportWhatsapp;
+  if (supportHours !== undefined) setting.supportHours = supportHours;
+
+  await setting.save();
+
+  res.status(200).json({
+    success: true,
+    message: 'Support Desk contact configuration updated successfully',
+    data: setting,
+  });
+});
+
 module.exports = {
   getSettings,
   toggle2FA,
   toggleClient2FA,
   toggleAgent2FA,
+  getSupportSettings,
+  updateSupportSettings,
 };

@@ -1,18 +1,22 @@
+/* ============================================================
+   Middleware: auth.middleware.js
+   Description: Authentication & authorization middlewares.
+                Includes JWT protection, case-insensitive role restriction,
+                and sub-admin granular permission checking.
+   ============================================================ */
+
 const jwt = require('jsonwebtoken');
 const User = require('../models/User.model');
-const SubAdmin = require('../models/SubAdmin.model');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
 const { ROLES } = require('../constants/roles');
 
 /**
- * Protect middleware — verifies JWT token and attaches the authenticated user to req.user.
- * Supports both regular users (User model) and sub-admins (SubAdmin model).
+ * Protect routes - Verify JWT token and attach user to request object
  */
 const protect = asyncHandler(async (req, res, next) => {
+  // 1) Get token from Authorization header or cookies
   let token;
-
-  // 1) Extract token from Authorization header or cookie
   if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
     token = req.headers.authorization.split(' ')[1];
   } else if (req.cookies && req.cookies.jwt) {
@@ -23,30 +27,19 @@ const protect = asyncHandler(async (req, res, next) => {
     return next(new AppError('You are not logged in. Please log in to get access.', 401));
   }
 
-  // 2) Verify token validity and decode payload
+  // 2) Verify token
   let decoded;
   try {
-    decoded = jwt.verify(token, process.env.JWT_SECRET || 'kfpl_super_secure_jwt_secret_key_2026');
-  } catch (error) {
-    if (error.name === 'TokenExpiredError') {
+    decoded = jwt.verify(token, process.env.JWT_SECRET);
+  } catch (err) {
+    if (err.name === 'TokenExpiredError') {
       return next(new AppError('Your session has expired. Please log in again.', 401));
     }
     return next(new AppError('Invalid authentication token. Please log in again.', 401));
   }
 
-  // 3a) Try finding as a regular User first
-  let currentUser = await User.findById(decoded.id);
-
-  // 3b) Fallback: try finding as a Sub Admin
-  if (!currentUser && decoded.role === ROLES.SUB_ADMIN) {
-    const subAdmin = await SubAdmin.findById(decoded.id);
-    if (subAdmin) {
-      // Attach a synthetic role field so restrictTo() works
-      subAdmin.role = ROLES.SUB_ADMIN;
-      currentUser = subAdmin;
-    }
-  }
-
+  // 3) Check if user still exists
+  const currentUser = await User.findById(decoded.id);
   if (!currentUser) {
     return next(new AppError('The user belonging to this token no longer exists.', 401));
   }
@@ -61,15 +54,22 @@ const protect = asyncHandler(async (req, res, next) => {
   next();
 });
 
-
 /**
- * Restrict access to specific user roles.
+ * Restrict access to specific user roles (case-normalized).
  * Usage: restrictTo('super-admin', 'agent')
  * @param {...string} roles - Allowed roles
  */
 const restrictTo = (...roles) => {
   return (req, res, next) => {
-    if (!req.user || !roles.includes(req.user.role)) {
+    if (!req.user) {
+      return next(new AppError('You are not logged in. Please log in to get access.', 401));
+    }
+
+    const userRole = String(req.user.role || '').toLowerCase().trim();
+    const allowedRoles = roles.map(r => String(r).toLowerCase().trim());
+
+    if (!allowedRoles.includes(userRole)) {
+      console.warn(`[Permission Denied] URL: ${req.originalUrl} | User: ${req.user._id} (${userRole}) | Allowed: ${allowedRoles.join(', ')}`);
       return next(new AppError('You do not have permission to perform this action.', 403));
     }
     next();
@@ -78,24 +78,27 @@ const restrictTo = (...roles) => {
 
 /**
  * Fine-grained module & action permission check for Sub Admins.
- * Super Admin bypasses all checks.
- * Sub Admin must have the specified permission (e.g. perms[moduleKey][action] === true).
+ * Super Admin, Agent, and Client roles pass through safely.
  */
 const requirePermission = (moduleKey, action = 'view') => {
   return (req, res, next) => {
     if (!req.user) {
       return next(new AppError('You are not logged in. Please log in to get access.', 401));
     }
-    // Super Admin has full access to everything
-    if (req.user.role === ROLES.SUPER_ADMIN) {
+
+    const userRole = String(req.user.role || '').toLowerCase().trim();
+
+    // Super Admin, Agent, and Client roles bypass sub-admin permission checks
+    if (
+      userRole === ROLES.SUPER_ADMIN.toLowerCase() ||
+      userRole === ROLES.AGENT.toLowerCase() ||
+      userRole === ROLES.CLIENT.toLowerCase()
+    ) {
       return next();
     }
-    // Agents allowed on shared endpoints
-    if (req.user.role === ROLES.AGENT) {
-      return next();
-    }
+
     // Sub Admin permission check
-    if (req.user.role === ROLES.SUB_ADMIN) {
+    if (userRole === ROLES.SUB_ADMIN.toLowerCase()) {
       const perms = req.user.permissions || {};
       const modPerm = perms[moduleKey] || {};
 
@@ -108,10 +111,11 @@ const requirePermission = (moduleKey, action = 'view') => {
         return next();
       }
 
+      console.warn(`[SubAdmin Permission Denied] URL: ${req.originalUrl} | SubAdmin: ${req.user._id} | Module: ${moduleKey} | Action: ${action}`);
       return next(new AppError('You do not have permission to perform this action.', 403));
     }
 
-    return next(new AppError('You do not have permission to perform this action.', 403));
+    next();
   };
 };
 

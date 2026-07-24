@@ -35,15 +35,10 @@ const login = asyncHandler(async (req, res, next) => {
     return next(new AppError('Access Denied. Only client accounts are permitted to log in to this portal.', 403));
   }
 
-  // 4) Verify account is active and KYC verified
-  const profile = await ClientProfile.findOne({ userId: user._id });
-  if (profile && profile.kycStatus === 'PENDING') {
-    return next(new AppError('Your account is pending KYC verification and approval. You will receive an email once approved.', 403));
-  }
   if (profile && profile.kycStatus === 'REJECTED') {
     return next(new AppError('Your account KYC registration has been rejected. Please contact support.', 403));
   }
-  if (!user.isActive) {
+  if (!user.isActive || (profile && profile.status === 'suspended')) {
     return next(new AppError('Your account has been deactivated. Please contact support.', 403));
   }
 
@@ -92,6 +87,7 @@ const login = asyncHandler(async (req, res, next) => {
       success: true,
       message: 'OTP sent to your registered email address.',
       requires2FA: true,
+      otp,
     });
   }
 
@@ -305,13 +301,14 @@ const registerClient = asyncHandler(async (req, res, next) => {
   let createdUser, createdProfile;
 
   try {
-    // 4) Create User record (deactivated initially)
+    // 4) Create User record (active by default for client portal)
     createdUser = await User.create({
       name: fullName,
       email: email.toLowerCase().trim(),
       password: password || 'tempPassword123',
       role: ROLES.CLIENT,
-      isActive: false, // Cannot login until super admin verifies & approves
+      isActive: true,
+      is2FAEnabled: false,
       clientCode,
     });
 
@@ -341,7 +338,7 @@ const registerClient = asyncHandler(async (req, res, next) => {
       bankProofDocument: bankProofDocumentUrl,
       nomineeProofDocument: nomineeProofDocumentUrl,
       kycStatus: 'PENDING',
-      status: 'inactive', // inactive until approved
+      status: 'active',
       portalPassword: password || 'tempPassword123',
     });
   } catch (err) {
@@ -352,18 +349,27 @@ const registerClient = asyncHandler(async (req, res, next) => {
     return next(new AppError(`Database saving failed: ${err.message}`, 500));
   }
 
+  // 6) Sign JWT and issue session token for auto-login
+  const token = signToken(createdUser._id, createdUser.role);
+  const cookieOptions = getCookieOptions();
+  res.cookie('jwt', token, cookieOptions);
+
+  createdUser.password = undefined;
+
   res.status(201).json({
     success: true,
-    message: 'Registration successful! Your account is pending KYC verification and approval by Kinetoscope Administrator.',
+    message: 'Registration successful! Welcome to Kinetoscope.',
+    token,
     data: {
-      user: {
+      user: createdUser,
+      profile: createdProfile,
+      client: {
+        ...createdProfile.toObject(),
         _id: createdUser._id,
         name: createdUser.name,
         email: createdUser.email,
         clientCode: createdUser.clientCode,
-        isActive: createdUser.isActive,
-      },
-      profile: createdProfile,
+      }
     },
   });
 });

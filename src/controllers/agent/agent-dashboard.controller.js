@@ -170,7 +170,7 @@ const getAgentDashboard = asyncHandler(async (req, res, next) => {
         segmentAllocationMap[name] = (segmentAllocationMap[name] || 0) + (amt * pct / 100);
       });
     } else {
-      const name = inv.segment || 'Trading & Syndication';
+      const name = inv.segment || 'Unallocated';
       segmentAllocationMap[name] = (segmentAllocationMap[name] || 0) + amt;
     }
   });
@@ -442,8 +442,9 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
     .populate('clientId', 'name email clientCode')
     .sort({ date: -1, createdAt: -1 });
 
-  // Calculate stats
   let totalCommissionEarned = 0;
+  let totalCommissionPaid = 0;
+  let totalCommissionPending = 0;
   let oneTimeAmount = 0;
   let monthlyAmount = 0;
   let specialAmount = 0;
@@ -453,18 +454,22 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
   let specialBonusCount = 0;
 
   commissions.forEach(c => {
+    totalCommissionEarned += c.amount;
     if (c.status === 'PAID') {
-      totalCommissionEarned += c.amount;
-      if (c.type === 'ONE TIME') {
-        oneTimeAmount += c.amount;
-        if (c.clientId) uniqueOneTimeClients.add(c.clientId._id.toString());
-      } else if (c.type === 'MONTHLY') {
-        monthlyAmount += c.amount;
-        recurringPayoutCount++;
-      } else if (c.type === 'SPECIAL') {
-        specialAmount += c.amount;
-        specialBonusCount++;
-      }
+      totalCommissionPaid += c.amount;
+    } else {
+      totalCommissionPending += c.amount;
+    }
+
+    if (c.type === 'ONE TIME') {
+      oneTimeAmount += c.amount;
+      if (c.clientId) uniqueOneTimeClients.add(c.clientId._id.toString());
+    } else if (c.type === 'MONTHLY') {
+      monthlyAmount += c.amount;
+      recurringPayoutCount++;
+    } else if (c.type === 'SPECIAL') {
+      specialAmount += c.amount;
+      specialBonusCount++;
     }
   });
 
@@ -514,6 +519,8 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
     data: {
       stats: {
         totalCommissionEarned,
+        totalCommissionPaid,
+        totalCommissionPending,
         oneTime: {
           amount: oneTimeAmount,
           clientCount: uniqueOneTimeClients.size,

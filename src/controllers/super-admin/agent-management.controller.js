@@ -1,9 +1,11 @@
 const fs = require('fs');
+const mongoose = require('mongoose');
 const User = require('../../models/User.model');
 const AgentProfile = require('../../models/AgentProfile.model');
 const ClientProfile = require('../../models/ClientProfile.model');
 const Investment = require('../../models/Investment.model');
 const AgentCommission = require('../../models/AgentCommission.model');
+const Transaction = require('../../models/Transaction.model');
 const { deleteFromCloudinary, processDocumentUploadsInBackground, uploadDocumentsToCloudinaryParallelBackground } = require('../../services/cloudinary.service');
 const { sendWelcomeEmail } = require('../../services/email.service');
 const AppError = require('../../utils/AppError');
@@ -100,14 +102,15 @@ const createAgent = asyncHandler(async (req, res, next) => {
     return next(new AppError('Email address is already in use by another account.', 400));
   }
 
-  // 3) Generate a sequential agent code starting from KFPL-AG-1001
+  // 3) Generate a sequential unique agent code starting from KFPL-AG-1001
   const agents = await User.find({ role: ROLES.AGENT }, { clientCode: 1 });
   let maxSeq = 1000;
   agents.forEach(a => {
     if (a.clientCode) {
       const digits = a.clientCode.match(/\d+/);
       if (digits) {
-        const seq = parseInt(digits[0], 10);
+        let seq = parseInt(digits[0], 10);
+        if (seq < 1000 && seq > 0) seq = 1000 + seq;
         if (!isNaN(seq) && seq > maxSeq) {
           maxSeq = seq;
         }
@@ -207,10 +210,50 @@ const createAgent = asyncHandler(async (req, res, next) => {
 });
 
 /**
+ * Auto-fix helper to ensure all agent accounts have unique, non-duplicate sequential KFPL-AG-100X codes.
+ */
+const deduplicateAgentCodes = async () => {
+  try {
+    const agents = await User.find({ role: ROLES.AGENT }).sort({ createdAt: 1 });
+    const seenCodes = new Set();
+    let maxSeq = 1000;
+
+    agents.forEach(a => {
+      if (a.clientCode) {
+        const digits = a.clientCode.match(/\d+/);
+        if (digits) {
+          let seq = parseInt(digits[0], 10);
+          if (seq < 1000 && seq > 0) seq = 1000 + seq;
+          if (seq > maxSeq) maxSeq = seq;
+        }
+      }
+    });
+
+    for (const agent of agents) {
+      const code = agent.clientCode ? agent.clientCode.toUpperCase().trim() : '';
+      if (!code || seenCodes.has(code)) {
+        maxSeq += 1;
+        const newCode = `KFPL-AG-${maxSeq}`;
+        console.log(`[DeduplicateAgents] Fixing duplicate/missing code for agent ${agent.name} (${agent._id}) from "${code}" -> "${newCode}"`);
+        await User.updateOne({ _id: agent._id }, { clientCode: newCode });
+        seenCodes.add(newCode);
+      } else {
+        seenCodes.add(code);
+      }
+    }
+  } catch (err) {
+    console.error('[DeduplicateAgents Error]:', err.message);
+  }
+};
+
+/**
  * Get all Agents (Supports Search, Status Filter, and Pagination)
  * GET /api/super-admin/agents
  */
 const getAllAgents = asyncHandler(async (req, res, next) => {
+  // Ensure agent codes are strictly deduplicated
+  await deduplicateAgentCodes();
+
   const { search, status, page, limit } = req.query;
 
   // Build user query targeting role=agent
@@ -551,8 +594,6 @@ const deleteAgent = asyncHandler(async (req, res, next) => {
   );
 
   // 3) Delete AgentCommissions and Agent Withdrawals so deleted agent commissions are never calculated
-  const AgentCommission = require('../../models/AgentCommission.model');
-  const Transaction = require('../../models/Transaction.model');
   await Promise.all([
     AgentCommission.deleteMany({ agentId: userId }),
     Transaction.deleteMany({ agentId: userId, isAgentWithdrawal: true })
@@ -574,20 +615,66 @@ const deleteAgent = asyncHandler(async (req, res, next) => {
 const getAgentClients = asyncHandler(async (req, res, next) => {
   const agentId = req.params.id;
 
-  // 1) Verify agent exists
-  const agent = await User.findById(agentId);
-  if (!agent || agent.role !== ROLES.AGENT) {
+  // 1) Verify agent exists (check by User ID, AgentProfile ID, or agentCode)
+  let agentUser = await User.findById(agentId);
+  let agentProfile = null;
+
+  if (!agentUser) {
+    agentProfile = await AgentProfile.findById(agentId);
+    if (agentProfile) {
+      agentUser = await User.findById(agentProfile.userId);
+    }
+  } else {
+    agentProfile = await AgentProfile.findOne({ userId: agentUser._id });
+  }
+
+  if (!agentUser && !agentProfile) {
     return next(new AppError('Agent account not found.', 404));
   }
 
-  // Fetch agent profile once outside the loop
-  const agentProfile = await AgentProfile.findOne({ userId: agentId });
-  const monthlySlabStr = (agentProfile && agentProfile.monthlySlab) ? agentProfile.monthlySlab.replace('%', '') : '0.5';
+  const targetUserId = agentUser ? agentUser._id : agentProfile.userId;
+  const targetProfileId = agentProfile ? agentProfile._id : null;
+  const rawCodes = [agentUser?.clientCode, agentProfile?.agentId, agentUser?.name, agentProfile?.fullName].filter(Boolean);
+
+  const extraCodes = [];
+  rawCodes.forEach(code => {
+    if (typeof code === 'string') {
+      if (code.startsWith('KFPL-AG-')) extraCodes.push(code.replace('KFPL-AG-', 'KFPL-AGT-'));
+      if (code.startsWith('KFPL-AGT-')) extraCodes.push(code.replace('KFPL-AGT-', 'KFPL-AG-'));
+    }
+  });
+
+  const allAgentIdentifiers = [...new Set([
+    agentId,
+    targetUserId ? targetUserId.toString() : null,
+    targetProfileId ? targetProfileId.toString() : null,
+    ...rawCodes,
+    ...extraCodes
+  ].filter(Boolean))];
+
+  const objectIds = allAgentIdentifiers.filter(id => mongoose.Types.ObjectId.isValid(id)).map(id => new mongoose.Types.ObjectId(id));
+
+  const monthlySlabStr = (agentProfile && agentProfile.monthlySlab) ? String(agentProfile.monthlySlab).replace('%', '') : '0.5';
   const monthlySlabPct = parseFloat(monthlySlabStr) || 0.5;
   const months = 3;
 
-  // 2) Find all clients assigned to this agent
-  const clients = await User.find({ role: ROLES.CLIENT, assignedAgent: agentId }).sort({ createdAt: -1 });
+  const formattedAgentCommission = 'Automatic (Slab)';
+
+  // 2) Find all clients assigned to this agent via User.assignedAgent (ObjectId ref)
+  const matchingUsers = objectIds.length > 0
+    ? await User.find({
+        role: ROLES.CLIENT,
+        assignedAgent: { $in: objectIds }
+      }).lean()
+    : [];
+
+  const clientUserIds = matchingUsers.map(u => u._id);
+
+  const clients = await User.find({
+    role: ROLES.CLIENT,
+    _id: { $in: clientUserIds }
+  }).sort({ createdAt: -1 });
+
   const clientIds = clients.map(c => c._id);
 
   // Bulk fetch profiles, investments, and approved deposit transactions
@@ -641,9 +728,15 @@ const getAgentClients = asyncHandler(async (req, res, next) => {
       email: client.email,
       phone: profile ? profile.phone : '',
       joinDate: client.createdAt,
+      contractStartDate: profile ? profile.contractStartDate : client.createdAt,
+      contractEndDate: profile ? profile.contractEndDate : '',
+      extendContractDate: profile ? profile.extendContractDate : '',
       totalInvestment,
-      roi: profile ? profile.monthlyRoi : 1.2,
+      roi: profile ? profile.monthlyRoi : 0,
+      monthlyRoi: profile ? profile.monthlyRoi : 0,
       commissionPaid: Math.round(commissionPaid),
+      agentCommission: formattedAgentCommission,
+      agentCommissionMonthly: formattedAgentCommission,
       status: profile ? profile.status : 'active',
       
       // Dual-compatibility nested structure
@@ -906,8 +999,6 @@ const clearAllAgents = asyncHandler(async (req, res, next) => {
   }
 
   // Delete profiles, user accounts, agent commissions, and agent transactions
-  const AgentCommission = require('../../models/AgentCommission.model');
-  const Transaction = require('../../models/Transaction.model');
   await Promise.all([
     AgentProfile.deleteMany({ userId: { $in: agentIds } }),
     AgentCommission.deleteMany({ agentId: { $in: agentIds } }),

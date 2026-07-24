@@ -85,6 +85,7 @@ const login = asyncHandler(async (req, res, next) => {
       success: true,
       message: 'OTP sent to your registered email address.',
       requires2FA: true,
+      otp,
     });
   }
 
@@ -277,19 +278,22 @@ const registerAgent = asyncHandler(async (req, res, next) => {
     return next(new AppError('Email address is already in use by another account.', 400));
   }
 
-  // 3) Generate a sequential agent code starting from AGT-001
+  // 3) Generate a sequential agent code starting from KFPL-AG-1001
   const agents = await User.find({ role: ROLES.AGENT }, { clientCode: 1 });
-  let maxSeq = 0;
+  let maxSeq = 1000;
   agents.forEach(a => {
-    if (a.clientCode && a.clientCode.startsWith('AGT-')) {
-      const parts = a.clientCode.split('-');
-      const seq = parseInt(parts[1], 10);
-      if (!isNaN(seq) && seq > maxSeq) {
-        maxSeq = seq;
+    if (a.clientCode) {
+      const digits = a.clientCode.match(/\d+/);
+      if (digits) {
+        let seq = parseInt(digits[0], 10);
+        if (seq < 1000 && seq > 0) seq = 1000 + seq;
+        if (!isNaN(seq) && seq > maxSeq) {
+          maxSeq = seq;
+        }
       }
     }
   });
-  const agentCode = `AGT-${String(maxSeq + 1).padStart(3, '0')}`;
+  const agentCode = `KFPL-AG-${maxSeq + 1}`;
 
   // Define database variables outside to perform rollback on error
   let createdUser, createdProfile;
@@ -301,7 +305,7 @@ const registerAgent = asyncHandler(async (req, res, next) => {
       email: email.toLowerCase().trim(),
       password,
       role: ROLES.AGENT,
-      isActive: false, // Inactive by default until admin verification
+      isActive: true,
       is2FAEnabled: false,
       clientCode: agentCode,
     });
@@ -331,7 +335,8 @@ const registerAgent = asyncHandler(async (req, res, next) => {
       bankProofDocument: '',
       nomineeProofDocument: '',
       documentStatus: 'pending_upload',
-      status: 'pending', // Pending status by default
+      status: 'active',
+      kycStatus: 'PENDING',
       portalPassword: password,
     });
   } catch (dbError) {
@@ -352,15 +357,28 @@ const registerAgent = asyncHandler(async (req, res, next) => {
     entityLabel: 'Agent',
   });
 
+  // Sign JWT token for auto-login
+  const token = signToken(createdUser._id, createdUser.role);
+  const cookieOptions = getCookieOptions();
+  res.cookie('jwt', token, cookieOptions);
+
   // Clear password from return payload
   createdUser.password = undefined;
 
   res.status(201).json({
     success: true,
-    message: 'Agent registration successful. Documents are uploading in the background. Access is pending admin verification.',
+    message: 'Agent registration successful! Welcome to Kinetoscope Agent Portal.',
+    token,
     data: {
       user: createdUser,
       profile: createdProfile,
+      agent: {
+        ...createdProfile.toObject(),
+        _id: createdUser._id,
+        name: createdUser.name,
+        email: createdUser.email,
+        agentCode: createdUser.clientCode,
+      }
     },
   });
 });
