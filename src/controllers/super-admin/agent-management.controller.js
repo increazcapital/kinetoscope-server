@@ -53,19 +53,18 @@ const deleteCloudinaryFiles = async (urls) => {
  * POST /api/super-admin/agents
  */
 const createAgent = asyncHandler(async (req, res, next) => {
-  const fileFields = [
+  const requiredFileFields = [
     'panDocument',
     'idProofDocument',
     'bankProofDocument',
-    'nomineeProofDocument',
   ];
 
-  // 1) Validate that all 4 files are present in the request
+  // 1) Validate that required files are present in the request
   if (!req.files) {
-    return next(new AppError('No documents were uploaded. Please upload all 4 required documents.', 400));
+    return next(new AppError('No documents were uploaded. Please upload required documents.', 400));
   }
 
-  for (const field of fileFields) {
+  for (const field of requiredFileFields) {
     if (!req.files[field] || req.files[field].length === 0) {
       return next(new AppError(`Required document missing: ${field}`, 400));
     }
@@ -842,11 +841,13 @@ const updateAgentStatus = asyncHandler(async (req, res, next) => {
 /**
  * Verify a single KYC document for an agent (Super Admin only)
  * PATCH /api/super-admin/agents/:id/verify-document
- * Body: { documentField: "panDocument" | "idProofDocument" | "bankProofDocument" | "nomineeProofDocument" }
+/**
+ * Verify an Agent Document (Super Admin only)
+ * PATCH /api/super-admin/agents/:id/verify-document
  */
 const verifyAgentDocument = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
-  const { documentField } = req.body;
+  const targetField = req.body.documentField || req.body.fieldName || req.body.field || req.body.docField;
 
   const allowedFields = [
     'panDocument',
@@ -855,41 +856,42 @@ const verifyAgentDocument = asyncHandler(async (req, res, next) => {
     'nomineeProofDocument',
   ];
 
-  if (!documentField || !allowedFields.includes(documentField)) {
+  if (!targetField || !allowedFields.includes(targetField)) {
     return next(new AppError(`Invalid document field. Must be one of: ${allowedFields.join(', ')}`, 400));
   }
 
-  const profile = await AgentProfile.findOne({ userId: id });
+  let profile = await AgentProfile.findOne({ userId: id });
+  if (!profile && mongoose.Types.ObjectId.isValid(id)) {
+    profile = await AgentProfile.findById(id);
+  }
+
   if (!profile) {
     return next(new AppError('Agent profile not found.', 404));
   }
 
-  if (!profile[documentField]) {
-    return next(new AppError(`Document "${documentField}" has not been uploaded yet.`, 400));
-  }
-
-  const verifiedField = `${documentField}Verified`;
+  const verifiedField = `${targetField}Verified`;
   profile[verifiedField] = true;
 
-  const allVerified =
-    (documentField === 'panDocument' ? true : profile.panDocumentVerified) &&
-    (documentField === 'idProofDocument' ? true : profile.idProofDocumentVerified) &&
-    (documentField === 'bankProofDocument' ? true : profile.bankProofDocumentVerified) &&
-    (!profile.nomineeProofDocument || documentField === 'nomineeProofDocument' ? true : profile.nomineeProofDocumentVerified);
+  // Check if core required documents (pan, idProof, bankProof) are verified
+  const panOk = targetField === 'panDocument' ? true : !!profile.panDocumentVerified;
+  const idOk = targetField === 'idProofDocument' ? true : !!profile.idProofDocumentVerified;
+  const bankOk = targetField === 'bankProofDocument' ? true : !!profile.bankProofDocumentVerified;
 
-  if (allVerified) {
+  if (panOk && idOk && bankOk) {
     profile.kycStatus = 'VERIFIED';
+    profile.status = 'active';
+    await User.findByIdAndUpdate(profile.userId, { isActive: true });
   }
 
   await profile.save();
 
   res.status(200).json({
     success: true,
-    message: allVerified
-      ? 'All documents verified. Agent KYC status updated to VERIFIED.'
-      : `Document "${documentField}" verified successfully.`,
+    message: profile.kycStatus === 'VERIFIED'
+      ? 'All required documents verified. Agent KYC status updated to VERIFIED.'
+      : `Document "${targetField}" verified successfully.`,
     data: {
-      documentField,
+      documentField: targetField,
       verified: true,
       kycStatus: profile.kycStatus,
       verificationStatus: {
@@ -898,6 +900,49 @@ const verifyAgentDocument = asyncHandler(async (req, res, next) => {
         bankProofDocumentVerified: profile.bankProofDocumentVerified,
         nomineeProofDocumentVerified: profile.nomineeProofDocumentVerified,
       },
+    },
+  });
+});
+
+/**
+ * Directly update Agent KYC status (Super Admin only)
+ * PATCH /api/super-admin/agents/:id/kyc
+ * PATCH /api/super-admin/agents/:id/verify-kyc
+ * PATCH /api/super-admin/agents/:id/kyc-status
+ */
+const updateAgentKycStatus = asyncHandler(async (req, res, next) => {
+  const { id } = req.params;
+  const newKycStatus = (req.body.kycStatus || req.body.kyc || req.body.status || 'VERIFIED').toUpperCase();
+
+  let profile = await AgentProfile.findOne({ userId: id });
+  if (!profile && mongoose.Types.ObjectId.isValid(id)) {
+    profile = await AgentProfile.findById(id);
+  }
+
+  if (!profile) {
+    return next(new AppError('Agent profile not found.', 404));
+  }
+
+  profile.kycStatus = newKycStatus;
+  if (newKycStatus === 'VERIFIED') {
+    profile.status = 'active';
+    profile.panDocumentVerified = true;
+    profile.idProofDocumentVerified = true;
+    profile.bankProofDocumentVerified = true;
+    if (profile.nomineeProofDocument) {
+      profile.nomineeProofDocumentVerified = true;
+    }
+    await User.findByIdAndUpdate(profile.userId, { isActive: true });
+  }
+
+  await profile.save();
+
+  res.status(200).json({
+    success: true,
+    message: `Agent KYC status updated to ${newKycStatus}`,
+    data: {
+      kycStatus: profile.kycStatus,
+      status: profile.status,
     },
   });
 });
@@ -1025,6 +1070,7 @@ module.exports = {
   getAgentCommissions,
   updateAgentStatus,
   verifyAgentDocument,
+  updateAgentKycStatus,
   payAgentCommission,
 };
 

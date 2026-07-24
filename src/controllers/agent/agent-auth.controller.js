@@ -217,7 +217,7 @@ const getMe = asyncHandler(async (req, res, next) => {
 const registerAgent = asyncHandler(async (req, res, next) => {
   // 1) Normalize files mapping to accommodate various frontend naming conventions
   if (!req.files) {
-    return next(new AppError('No documents were uploaded. Please upload all 4 required documents.', 400));
+    return next(new AppError('No documents were uploaded. Please upload the required documents.', 400));
   }
 
   const filesMap = {
@@ -227,26 +227,31 @@ const registerAgent = asyncHandler(async (req, res, next) => {
     nomineeProofDocument: req.files.nomineeProofDocument?.[0] || req.files.nomineeProof?.[0]
   };
 
-  const fileFields = [
+  const requiredFileFields = [
     'panDocument',
     'idProofDocument',
     'bankProofDocument',
-    'nomineeProofDocument',
   ];
 
-  for (const field of fileFields) {
+  for (const field of requiredFileFields) {
     if (!filesMap[field]) {
       return next(new AppError(`Required document missing: ${field}`, 400));
     }
   }
 
   // Override req.files with normalized keys for background Cloudinary uploader
-  req.files = {
+  const normalizedFiles = {
     panDocument: [filesMap.panDocument],
     idProofDocument: [filesMap.idProofDocument],
     bankProofDocument: [filesMap.bankProofDocument],
-    nomineeProofDocument: [filesMap.nomineeProofDocument]
   };
+
+  if (filesMap.nomineeProofDocument) {
+    normalizedFiles.nomineeProofDocument = [filesMap.nomineeProofDocument];
+  }
+
+  req.files = normalizedFiles;
+  const uploadFileFields = Object.keys(normalizedFiles);
 
   const {
     fullName,
@@ -351,7 +356,7 @@ const registerAgent = asyncHandler(async (req, res, next) => {
   const { uploadDocumentsToCloudinaryParallelBackground } = require('../../services/cloudinary.service');
   uploadDocumentsToCloudinaryParallelBackground({
     files: req.files,
-    fileFields,
+    fileFields: uploadFileFields,
     Model: AgentProfile,
     filter: { userId: createdUser._id },
     entityLabel: 'Agent',

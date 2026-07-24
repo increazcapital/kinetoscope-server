@@ -97,23 +97,27 @@ const createAgentValidationRules = [
     .isNumeric().withMessage('Special commission must be a number')
     .isFloat({ min: 0 }).withMessage('Special commission must be a non-negative number'),
   body('nomineeName')
-    .trim()
-    .notEmpty().withMessage('Nominee name is required'),
+    .optional({ checkFalsy: true })
+    .trim(),
   body('nomineeRelation')
-    .trim()
-    .notEmpty().withMessage('Nominee relation is required'),
+    .optional({ checkFalsy: true })
+    .trim(),
   body('nomineePhone')
-    .trim()
-    .notEmpty().withMessage('Nominee phone number is required'),
+    .optional({ checkFalsy: true })
+    .trim(),
   body('nomineeEmail')
+    .optional({ checkFalsy: true })
     .trim()
-    .notEmpty().withMessage('Nominee email address is required')
-    .isEmail().withMessage('Please provide a valid nominee email address')
-    .normalizeEmail(),
+    .custom((val) => {
+      if (val && !/^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/.test(val)) {
+        throw new Error('Please provide a valid nominee email address');
+      }
+      return true;
+    }),
   body('nomineeResidency')
+    .optional({ checkFalsy: true })
     .trim()
-    .notEmpty().withMessage('Nominee Residency / Citizenship is required')
-    .isIn(['National (Domestic)', 'International']).withMessage('Nominee Residency must be either National (Domestic) or International'),
+    .isIn(['National (Domestic)', 'International', '']).withMessage('Nominee Residency must be either National (Domestic) or International'),
   body('password')
     .optional({ checkFalsy: true })
     .isLength({ min: 8 }).withMessage('Password must be at least 8 characters long'),
@@ -128,23 +132,23 @@ const createAgentValidationRules = [
  */
 const updateAgentRulesByAdmin = [
   body('fullName')
-    .optional()
+    .optional({ checkFalsy: true })
     .trim()
     .notEmpty().withMessage('Full name cannot be empty'),
   body('email')
-    .optional()
+    .optional({ checkFalsy: true })
     .trim()
     .isEmail().withMessage('Please provide a valid email address')
     .normalizeEmail(),
   body('phone')
-    .optional()
+    .optional({ checkFalsy: true })
     .trim()
     .notEmpty().withMessage('Phone number cannot be empty'),
   body('residencyStatus')
-    .optional()
+    .optional({ checkFalsy: true })
     .isIn(['National (Domestic)', 'International']).withMessage('Residency must be either National (Domestic) or International'),
   body('panNumber')
-    .optional()
+    .optional({ checkFalsy: true })
     .trim()
     .custom(async (value, { req }) => {
       let resStatus = req.body.residencyStatus;
@@ -162,7 +166,7 @@ const updateAgentRulesByAdmin = [
       return true;
     }),
   body('aadhaarNumber')
-    .optional()
+    .optional({ checkFalsy: true })
     .trim()
     .custom(async (value, { req }) => {
       let resStatus = req.body.residencyStatus;
@@ -181,11 +185,11 @@ const updateAgentRulesByAdmin = [
     }),
 
   body('bankName')
-    .optional()
+    .optional({ checkFalsy: true })
     .trim()
     .notEmpty().withMessage('Bank name cannot be empty'),
   body('accountNumber')
-    .optional()
+    .optional({ checkFalsy: true })
     .trim()
     .notEmpty().withMessage('Account number cannot be empty')
     .custom((value, { req }) => {
@@ -195,7 +199,7 @@ const updateAgentRulesByAdmin = [
       return true;
     }),
   body('confirmAccountNumber')
-    .optional()
+    .optional({ checkFalsy: true })
     .trim()
     .custom((value, { req }) => {
       if (req.body.accountNumber && value !== req.body.accountNumber) {
@@ -204,7 +208,7 @@ const updateAgentRulesByAdmin = [
       return true;
     }),
   body('ifscCode')
-    .optional()
+    .optional({ checkFalsy: true })
     .trim()
     .custom(async (value, { req }) => {
       let resStatus = req.body.residencyStatus;
@@ -233,25 +237,27 @@ const updateAgentRulesByAdmin = [
     .isNumeric().withMessage('Special commission must be a number')
     .isFloat({ min: 0 }).withMessage('Special commission must be a non-negative number'),
   body('nomineeName')
-    .optional()
-    .trim()
-    .notEmpty().withMessage('Nominee name cannot be empty'),
+    .optional({ checkFalsy: true })
+    .trim(),
   body('nomineeRelation')
-    .optional()
-    .trim()
-    .notEmpty().withMessage('Nominee relation cannot be empty'),
+    .optional({ checkFalsy: true })
+    .trim(),
   body('nomineePhone')
-    .optional()
-    .trim()
-    .notEmpty().withMessage('Nominee phone number cannot be empty'),
+    .optional({ checkFalsy: true })
+    .trim(),
   body('nomineeEmail')
-    .optional()
+    .optional({ checkFalsy: true })
     .trim()
-    .isEmail().withMessage('Please provide a valid nominee email address')
-    .normalizeEmail(),
+    .custom((val) => {
+      if (val && !/^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/.test(val)) {
+        throw new Error('Please provide a valid nominee email address');
+      }
+      return true;
+    }),
   body('nomineeResidency')
-    .optional()
-    .isIn(['National (Domestic)', 'International']).withMessage('Nominee Residency must be either National (Domestic) or International'),
+    .optional({ checkFalsy: true })
+    .trim()
+    .isIn(['National (Domestic)', 'International', '']).withMessage('Nominee Residency must be either National (Domestic) or International'),
   body('status')
     .optional()
     .custom(val => {

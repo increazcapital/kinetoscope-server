@@ -72,6 +72,7 @@ const {
   getAgentCommissions,
   updateAgentStatus,
   verifyAgentDocument,
+  updateAgentKycStatus,
   payAgentCommission,
 } = require('../../controllers/super-admin/agent-management.controller');
 
@@ -336,6 +337,9 @@ router.get('/agents/:id/commissions', requirePermission('manageAgents', 'view'),
 router.patch('/agents/commissions/:commissionId/pay', requirePermission('manageAgents', 'edit'), payAgentCommission);
 router.patch('/agents/:id/status', requirePermission('manageAgents', 'edit'), updateAgentStatus);
 router.patch('/agents/:id/verify-document', requirePermission('manageAgents', 'edit'), verifyAgentDocument);
+router.patch('/agents/:id/kyc', requirePermission('manageAgents', 'edit'), updateAgentKycStatus);
+router.patch('/agents/:id/verify-kyc', requirePermission('manageAgents', 'edit'), updateAgentKycStatus);
+router.patch('/agents/:id/kyc-status', requirePermission('manageAgents', 'edit'), updateAgentKycStatus);
 
 // 6. Deposit & Withdrawal Approvals
 const {
