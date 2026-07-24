@@ -53,10 +53,12 @@ const agentProfileSchema = new mongoose.Schema(
       validate: {
         validator: function(v) {
           const decryptedVal = decrypt(v);
+          if (!decryptedVal) return false;
+          const cleanPan = decryptedVal.replace(/\s/g, '').toUpperCase();
           if (this.residencyStatus === 'International') {
-            return decryptedVal && decryptedVal.trim().length > 0;
+            return cleanPan.trim().length > 0;
           }
-          return /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(decryptedVal);
+          return /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(cleanPan);
         },
         message: 'Please provide a valid PAN number',
       },
@@ -70,10 +72,12 @@ const agentProfileSchema = new mongoose.Schema(
       validate: {
         validator: function(v) {
           const decryptedVal = decrypt(v);
+          if (!decryptedVal) return false;
+          const cleanDigits = decryptedVal.replace(/\s/g, '');
           if (this.residencyStatus === 'International') {
-            return decryptedVal && decryptedVal.trim().length > 0;
+            return cleanDigits.trim().length > 0;
           }
-          return /^\d{12}$/.test(decryptedVal);
+          return /^\d{12}$/.test(cleanDigits);
         },
         message: 'Please provide a valid 12-digit Aadhaar number',
       },
@@ -98,10 +102,12 @@ const agentProfileSchema = new mongoose.Schema(
       uppercase: true,
       validate: {
         validator: function(v) {
+          if (!v) return false;
+          const cleanIfsc = v.replace(/\s/g, '').toUpperCase();
           if (this.residencyStatus === 'International') {
-            return v && v.trim().length > 0;
+            return cleanIfsc.trim().length > 0;
           }
-          return /^[A-Z]{4}0[A-Z0-9]{6}$/.test(v);
+          return /^[A-Z]{4}0[A-Z0-9]{6}$/.test(cleanIfsc);
         },
         message: 'Please provide a valid IFSC code',
       },

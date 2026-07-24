@@ -877,35 +877,43 @@ const verifyAgentDocument = asyncHandler(async (req, res, next) => {
   }
 
   const verifiedField = `${targetField}Verified`;
-  profile[verifiedField] = true;
 
   // Check if core required documents (pan, idProof, bankProof) are verified
   const panOk = targetField === 'panDocument' ? true : !!profile.panDocumentVerified;
   const idOk = targetField === 'idProofDocument' ? true : !!profile.idProofDocumentVerified;
   const bankOk = targetField === 'bankProofDocument' ? true : !!profile.bankProofDocumentVerified;
+  const isCoreVerified = panOk && idOk && bankOk;
 
-  if (panOk && idOk && bankOk) {
-    profile.kycStatus = 'VERIFIED';
-    profile.status = 'active';
+  const updateFields = {
+    [verifiedField]: true,
+  };
+
+  if (isCoreVerified) {
+    updateFields.kycStatus = 'VERIFIED';
+    updateFields.status = 'active';
     await User.findByIdAndUpdate(profile.userId, { isActive: true });
   }
 
-  await profile.save();
+  const updatedProfile = await AgentProfile.findByIdAndUpdate(
+    profile._id,
+    { $set: updateFields },
+    { new: true, runValidators: false }
+  );
 
   res.status(200).json({
     success: true,
-    message: profile.kycStatus === 'VERIFIED'
+    message: isCoreVerified
       ? 'All required documents verified. Agent KYC status updated to VERIFIED.'
       : `Document "${targetField}" verified successfully.`,
     data: {
       documentField: targetField,
       verified: true,
-      kycStatus: profile.kycStatus,
+      kycStatus: updatedProfile.kycStatus,
       verificationStatus: {
-        panDocumentVerified: profile.panDocumentVerified,
-        idProofDocumentVerified: profile.idProofDocumentVerified,
-        bankProofDocumentVerified: profile.bankProofDocumentVerified,
-        nomineeProofDocumentVerified: profile.nomineeProofDocumentVerified,
+        panDocumentVerified: updatedProfile.panDocumentVerified,
+        idProofDocumentVerified: updatedProfile.idProofDocumentVerified,
+        bankProofDocumentVerified: updatedProfile.bankProofDocumentVerified,
+        nomineeProofDocumentVerified: updatedProfile.nomineeProofDocumentVerified,
       },
     },
   });
@@ -930,26 +938,33 @@ const updateAgentKycStatus = asyncHandler(async (req, res, next) => {
     return next(new AppError('Agent profile not found.', 404));
   }
 
-  profile.kycStatus = newKycStatus;
+  const updateFields = {
+    kycStatus: newKycStatus
+  };
+
   if (newKycStatus === 'VERIFIED') {
-    profile.status = 'active';
-    profile.panDocumentVerified = true;
-    profile.idProofDocumentVerified = true;
-    profile.bankProofDocumentVerified = true;
+    updateFields.status = 'active';
+    updateFields.panDocumentVerified = true;
+    updateFields.idProofDocumentVerified = true;
+    updateFields.bankProofDocumentVerified = true;
     if (profile.nomineeProofDocument) {
-      profile.nomineeProofDocumentVerified = true;
+      updateFields.nomineeProofDocumentVerified = true;
     }
     await User.findByIdAndUpdate(profile.userId, { isActive: true });
   }
 
-  await profile.save();
+  const updatedProfile = await AgentProfile.findByIdAndUpdate(
+    profile._id,
+    { $set: updateFields },
+    { new: true, runValidators: false }
+  );
 
   res.status(200).json({
     success: true,
     message: `Agent KYC status updated to ${newKycStatus}`,
     data: {
-      kycStatus: profile.kycStatus,
-      status: profile.status,
+      kycStatus: updatedProfile.kycStatus,
+      status: updatedProfile.status,
     },
   });
 });
