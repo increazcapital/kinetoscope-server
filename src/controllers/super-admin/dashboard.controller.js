@@ -45,10 +45,23 @@ const getAdminDashboard = asyncHandler(async (req, res, next) => {
   const depSum = (approvedDepositsList || []).reduce((sum, tx) => sum + (tx.amount || 0), 0);
   const totalInvestmentAmount = Math.max(invSum, depSum);
 
-  // 3) Calculate total ROI paid
+  // 3) Calculate total ROI paid (only for existing valid clients)
   let totalRoiPaid = 0;
-  paidRoiPayouts.forEach(p => totalRoiPaid += (p.amount || 0));
-  paidPayouts.forEach(p => totalRoiPaid += (p.amount || 0));
+  if (totalClientsCount > 0) {
+    const validClientIds = new Set(allClients.map(c => String(c._id)));
+    const validClientCodes = new Set(allClients.map(c => c.clientCode).filter(Boolean));
+
+    paidRoiPayouts.forEach(p => {
+      if (p.clientId && validClientIds.has(String(p.clientId))) {
+        totalRoiPaid += (p.amount || 0);
+      }
+    });
+    paidPayouts.forEach(p => {
+      if (p.recipientId && (validClientIds.has(String(p.recipientId)) || validClientCodes.has(String(p.recipientId)))) {
+        totalRoiPaid += (p.amount || 0);
+      }
+    });
+  }
 
   // 4) Investment by Segment (Pie Chart / Donut Chart)
   // Aggregate active allocations across the 6 main segments:
@@ -88,19 +101,18 @@ const getAdminDashboard = asyncHandler(async (req, res, next) => {
     }
   });
 
-  // Calculate percentages (no mock fallbacks, only real data)
-  const segmentsData = Object.keys(defaultSegments).map(name => {
-    const amount = defaultSegments[name];
-    let percentage = 0;
-    if (aggregatedSegmentSum > 0) {
-      percentage = Math.round((amount / aggregatedSegmentSum) * 100);
-    }
-    return {
-      segment: name,
-      amount: Math.round(amount),
-      percentage
-    };
-  });
+  // Calculate percentages (no zero fallback list when data is empty)
+  const segmentsData = aggregatedSegmentSum > 0
+    ? Object.keys(defaultSegments).map(name => {
+        const amount = defaultSegments[name];
+        let percentage = Math.round((amount / aggregatedSegmentSum) * 100);
+        return {
+          segment: name,
+          amount: Math.round(amount),
+          percentage
+        };
+      }).filter(s => s.amount > 0)
+    : [];
 
   // 5) Monthly Investment Inflow, ROI Trends, & Withdrawal flow (FY 2025 / 12-Month logs)
   const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -117,32 +129,51 @@ const getAdminDashboard = asyncHandler(async (req, res, next) => {
     monthlyInflowMap[monthIndex] += (inv.investmentAmount || 0);
   });
 
-  // Group paid ROI payouts by month
-  paidRoiPayouts.forEach(p => {
-    // Expected format "Jan 2025" or parsed Date
-    let monthIndex = new Date().getMonth();
-    if (p.payoutMonth) {
-      const part = p.payoutMonth.split(' ')[0];
-      const idx = monthNames.indexOf(part);
-      if (idx !== -1) monthIndex = idx;
-    } else if (p.processedDate) {
-      monthIndex = new Date(p.processedDate).getMonth();
-    }
-    monthlyRoiMap[monthIndex] += (p.amount || 0);
-  });
-  paidPayouts.forEach(p => {
-    if (p.payoutDate) {
-      const parts = p.payoutDate.split('-');
-      if (parts.length === 3) {
-        const monthIndex = parseInt(parts[1], 10) - 1;
+  // Group paid ROI payouts by month ONLY for valid existing clients
+  if (totalClientsCount > 0) {
+    const validClientIds = new Set(allClients.map(c => String(c._id)));
+    const validClientCodes = new Set(allClients.map(c => c.clientCode).filter(Boolean));
+
+    paidRoiPayouts.forEach(p => {
+      if (p.clientId && validClientIds.has(String(p.clientId))) {
+        let monthIndex = -1;
+        if (p.payoutMonth) {
+          const part = p.payoutMonth.split(' ')[0];
+          monthIndex = monthNames.indexOf(part);
+        }
+        if (monthIndex === -1 && p.processedDate) {
+          const d = new Date(p.processedDate);
+          if (!isNaN(d.getTime())) monthIndex = d.getMonth();
+        }
+        if (monthIndex === -1 && p.createdAt) {
+          const d = new Date(p.createdAt);
+          if (!isNaN(d.getTime())) monthIndex = d.getMonth();
+        }
         if (monthIndex >= 0 && monthIndex < 12) {
           monthlyRoiMap[monthIndex] += (p.amount || 0);
         }
       }
-    } else if (p.paidAt) {
-      monthlyRoiMap[new Date(p.paidAt).getMonth()] += (p.amount || 0);
-    }
-  });
+    });
+
+    paidPayouts.forEach(p => {
+      if (p.recipientId && (validClientIds.has(String(p.recipientId)) || validClientCodes.has(String(p.recipientId)))) {
+        let monthIndex = -1;
+        if (p.payoutDate) {
+          const parts = p.payoutDate.split('-');
+          if (parts.length === 3) {
+            monthIndex = parseInt(parts[1], 10) - 1;
+          }
+        }
+        if (monthIndex === -1 && p.paidAt) {
+          const d = new Date(p.paidAt);
+          if (!isNaN(d.getTime())) monthIndex = d.getMonth();
+        }
+        if (monthIndex >= 0 && monthIndex < 12) {
+          monthlyRoiMap[monthIndex] += (p.amount || 0);
+        }
+      }
+    });
+  }
 
   // Group approved withdrawals by month
   allTransactions.forEach(tx => {
@@ -285,17 +316,28 @@ const getAdminDashboard = asyncHandler(async (req, res, next) => {
     });
   });
 
-  // Track recent approved ROI payouts
-  const allPaidRois = [...paidRoiPayouts, ...paidPayouts]
-    .sort((a, b) => new Date(b.createdAt || b.paidAt) - new Date(a.createdAt || a.paidAt))
-    .slice(0, 5);
-  allPaidRois.forEach(roi => {
-    recentActivities.push({
-      type: 'roi_payment',
-      message: `ROI payment of ₹${roi.amount.toLocaleString('en-IN')} marked as paid`,
-      timestamp: roi.createdAt || roi.paidAt
+  // Track recent approved ROI payouts (only for valid existing clients)
+  if (totalClientsCount > 0) {
+    const validClientIds = new Set(allClients.map(c => String(c._id)));
+    const validClientCodes = new Set(allClients.map(c => c.clientCode).filter(Boolean));
+
+    const validPaidRois = [...paidRoiPayouts, ...paidPayouts].filter(p => {
+      const cId = String(p.clientId || p.recipientId || '');
+      return validClientIds.has(cId) || validClientCodes.has(cId);
     });
-  });
+
+    const allPaidRois = validPaidRois
+      .sort((a, b) => new Date(b.createdAt || b.paidAt) - new Date(a.createdAt || a.paidAt))
+      .slice(0, 5);
+
+    allPaidRois.forEach(roi => {
+      recentActivities.push({
+        type: 'roi_payment',
+        message: `ROI payment of ₹${(roi.amount || 0).toLocaleString('en-IN')} marked as paid`,
+        timestamp: roi.createdAt || roi.paidAt
+      });
+    });
+  }
 
   // Track recent pending / approved / rejected transactions
   allTransactions.slice(0, 5).forEach(tx => {
