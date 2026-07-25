@@ -64,21 +64,17 @@ const login = asyncHandler(async (req, res, next) => {
       lastSentAt: new Date(),
     });
 
-    // Send OTP to user's email
+    const { buildOtpEmailHtml } = require('../../services/email.service');
     await transporter.sendMail({
-      from: process.env.EMAIL_USER || process.env.SMTP_FROM || 'noreply@krossfilmproductions.com',
+      from: process.env.EMAIL_USER || process.env.SMTP_FROM || 'noreply@kinetoscopefilmproduction.com',
       to: user.email,
       subject: 'Your Kinetoscope Client Login OTP',
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px; border: 1px solid #e5e7eb; border-radius: 8px;">
-          <h2 style="color: #1a1a2e; margin-bottom: 16px;">Client Portal Login Verification</h2>
-          <p>Hello ${user.name},</p>
-          <p>Your one-time password (OTP) for logging into your Kinetoscope Client dashboard is:</p>
-          <div style="font-size: 36px; font-weight: bold; letter-spacing: 8px; color: #1e3a8a; margin: 24px 0; text-align: center; background: #f8fafc; padding: 12px; border-radius: 6px;">${otp}</div>
-          <p>This code is valid for <strong>10 minutes</strong>. Do not share this code with anyone.</p>
-          <p style="color: #94a3b8; font-size: 11px; margin-top: 24px;">If you did not attempt to log in, please secure your account immediately.</p>
-        </div>
-      `,
+      html: buildOtpEmailHtml({
+        title: 'Client Portal Login Verification',
+        subtitle: `Hello <strong>${user.name}</strong>, enter the OTP below to complete your Client Portal sign-in.`,
+        otp,
+        expiryMinutes: 10
+      }),
     });
 
     console.log(`[Client 2FA OTP] Code sent to ${user.email}`);

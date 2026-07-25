@@ -1073,7 +1073,7 @@ const payAgentCommission = asyncHandler(async (req, res, next) => {
             </table>
           </div>
           <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
-          <p style="color: #94a3b8; font-size: 11px; text-align: center;">Kinetoscope Film Productions Ltd. (KFPL)</p>
+          <p style="color: #94a3b8; font-size: 11px; text-align: center;">Kinetoscope Film Production Pvt Ltd</p>
         </div>
       `;
 

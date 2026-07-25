@@ -154,21 +154,17 @@ const login = asyncHandler(async (req, res, next) => {
       lastSentAt: new Date(),
     });
 
-    // 5) Send OTP to the user's email address stored in MongoDB
+    const { buildOtpEmailHtml } = require('../../services/email.service');
     await transporter.sendMail({
-      from: process.env.EMAIL_USER || process.env.SMTP_FROM || 'noreply@krossfilmproductions.com',
+      from: process.env.EMAIL_USER || process.env.SMTP_FROM || 'noreply@kinetoscopefilmproduction.com',
       to: user.email,
-      subject: 'Your Kinetoscope Login OTP',
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto;">
-          <h2 style="color: #1a1a2e;">Login Verification Code</h2>
-          <p>Hello ${user.name},</p>
-          <p>Your one-time password (OTP) for logging into the Kinetoscope Super Admin dashboard is:</p>
-          <div style="font-size: 36px; font-weight: bold; letter-spacing: 8px; color: #e94560; margin: 24px 0;">${otp}</div>
-          <p>This code is valid for <strong>10 minutes</strong>. Do not share it with anyone.</p>
-          <p style="color: #888; font-size: 12px;">If you did not attempt to log in, please ignore this email.</p>
-        </div>
-      `,
+      subject: 'Your Kinetoscope Super Admin Login OTP',
+      html: buildOtpEmailHtml({
+        title: 'Super Admin Login Verification',
+        subtitle: `Hello <strong>${user.name}</strong>, enter the OTP below to complete your Super Admin sign-in.`,
+        otp,
+        expiryMinutes: 10
+      }),
     });
 
     console.log(`[2FA OTP] Code sent to ${user.email}`);

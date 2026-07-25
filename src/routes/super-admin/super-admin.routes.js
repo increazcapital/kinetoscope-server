@@ -455,7 +455,7 @@ router.route('/agreements')
         </div>
         <p style="color: #4b5563; font-size: 14px;">Please log in to the Client Portal to review, sign, or download your agreement.</p>
         <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
-        <p style="color: #94a3b8; font-size: 11px; text-align: center;">Kinetoscope Film Productions Ltd. (KFPL)</p>
+        <p style="color: #94a3b8; font-size: 11px; text-align: center;">Kinetoscope Film Production Pvt Ltd</p>
       </div>
     `;
 
