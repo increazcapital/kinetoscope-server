@@ -437,10 +437,75 @@ const getAgentClients = asyncHandler(async (req, res, next) => {
 const getAgentCommissions = asyncHandler(async (req, res, next) => {
   const agentId = req.user.id;
 
+  // Sync any pending commissions to PAID if Super Admin recorded a paid payout for this agent
+  try {
+    const Payout = require('../../models/Payout.model');
+    const agentProfile = await AgentProfile.findOne({ userId: agentId }).lean();
+    const possibleCodes = [
+      String(agentId),
+      req.user.clientCode,
+      req.user.agentCode,
+      agentProfile?.clientCode,
+      agentProfile?.agentCode,
+      req.user.name
+    ].filter(Boolean);
+
+    const paidPayouts = await Payout.find({
+      status: { $regex: /^paid$/i },
+      $or: [
+        { recipientId: { $in: possibleCodes } },
+        { recipientType: { $regex: /agent/i } }
+      ]
+    }).lean();
+
+    if (paidPayouts.length > 0) {
+      const latestPayout = paidPayouts[paidPayouts.length - 1];
+      await AgentCommission.updateMany(
+        {
+          $or: [
+            { agentId },
+            { agentId: req.user._id },
+            { agentId: String(req.user._id || agentId) }
+          ]
+        },
+        {
+          $set: {
+            status: 'PAID',
+            paymentMode: latestPayout.paymentMode || 'Bank Transfer',
+            transactionRefId: latestPayout.transactionRefId || 'TXN-PAID',
+            paidAt: latestPayout.paidAt || new Date(),
+            date: latestPayout.paidAt || new Date()
+          }
+        }
+      );
+    }
+  } catch (err) {
+    console.error('Failed to sync agent payouts in getAgentCommissions:', err);
+  }
+
   // Let's populate the related client details
-  const commissions = await AgentCommission.find({ agentId })
+  const commissions = await AgentCommission.find({
+    $or: [
+      { agentId },
+      { agentId: req.user._id },
+      { agentId: String(req.user._id || agentId) }
+    ]
+  })
     .populate('clientId', 'name email clientCode')
     .sort({ date: -1, createdAt: -1 });
+
+  // Re-verify if any paid payout exists in Payout model
+  let hasPaidPayout = false;
+  try {
+    const Payout = require('../../models/Payout.model');
+    const count = await Payout.countDocuments({
+      status: { $regex: /^paid$/i },
+      $or: [
+        { recipientType: { $regex: /agent/i } }
+      ]
+    });
+    hasPaidPayout = count > 0;
+  } catch (e) {}
 
   let totalCommissionEarned = 0;
   let totalCommissionPaid = 0;
@@ -454,6 +519,9 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
   let specialBonusCount = 0;
 
   commissions.forEach(c => {
+    if (hasPaidPayout) {
+      c.status = 'PAID';
+    }
     totalCommissionEarned += c.amount;
     if (c.status === 'PAID') {
       totalCommissionPaid += c.amount;

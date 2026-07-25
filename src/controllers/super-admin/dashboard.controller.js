@@ -170,27 +170,57 @@ const getAdminDashboard = asyncHandler(async (req, res, next) => {
   const agentPerformanceList = [];
   for (const agent of allAgents) {
     // Count active clients assigned to this agent
-    const assignedClients = allClients.filter(c => String(c.assignedAgent) === String(agent._id));
+    const assignedClients = allClients.filter(c => {
+      if (!c.assignedAgent) return false;
+      const agId = c.assignedAgent._id ? String(c.assignedAgent._id) : String(c.assignedAgent);
+      return agId === String(agent._id);
+    });
     const clientIds = assignedClients.map(c => String(c._id));
 
     // Sum client investment amount
     const clientInvestments = activeInvestmentsList.filter(inv => clientIds.includes(String(inv.clientId)));
     const totalVolume = clientInvestments.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
 
+    if (assignedClients.length > 0 || totalVolume > 0) {
+      agentPerformanceList.push({
+        agentId: agent._id,
+        name: agent.name,
+        agentName: agent.name,
+        code: agent.clientCode || 'AGT-XXX',
+        agentCode: agent.clientCode || 'AGT-XXX',
+        clientsCount: assignedClients.length,
+        clientCount: assignedClients.length,
+        totalClients: assignedClients.length,
+        investmentVolume: totalVolume,
+        totalInvestment: totalVolume,
+        totalVolume,
+        amount: totalVolume,
+        value: totalVolume
+      });
+    }
+  }
+
+  // Count clients without an assigned agent (Direct / Admin)
+  const directClients = allClients.filter(c => !c.assignedAgent);
+  const directClientIds = directClients.map(c => String(c._id));
+  const directInvestments = activeInvestmentsList.filter(inv => directClientIds.includes(String(inv.clientId)));
+  const directTotalVolume = directInvestments.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
+
+  if (directClients.length > 0 || directTotalVolume > 0) {
     agentPerformanceList.push({
-      agentId: agent._id,
-      name: agent.name,
-      agentName: agent.name,
-      code: agent.clientCode || 'AGT-XXX',
-      agentCode: agent.clientCode || 'AGT-XXX',
-      clientsCount: assignedClients.length,
-      clientCount: assignedClients.length,
-      totalClients: assignedClients.length,
-      investmentVolume: totalVolume,
-      totalInvestment: totalVolume,
-      totalVolume,
-      amount: totalVolume,
-      value: totalVolume
+      agentId: 'direct_admin',
+      name: 'Direct / Admin',
+      agentName: 'Direct / Admin',
+      code: 'AGT-001',
+      agentCode: 'AGT-001',
+      clientsCount: directClients.length,
+      clientCount: directClients.length,
+      totalClients: directClients.length,
+      investmentVolume: directTotalVolume,
+      totalInvestment: directTotalVolume,
+      totalVolume: directTotalVolume,
+      amount: directTotalVolume,
+      value: directTotalVolume
     });
   }
 
@@ -201,8 +231,8 @@ const getAdminDashboard = asyncHandler(async (req, res, next) => {
   const topAgentsContribution = agentPerformanceList.slice(0, 10).map(agent => ({
     name: agent.name,
     agentName: agent.name,
-    code: agent.code,
-    agentCode: agent.code,
+    code: agent.code || agent.agentCode,
+    agentCode: agent.code || agent.agentCode,
     amount: agent.investmentVolume,
     value: agent.investmentVolume,
     investmentVolume: agent.investmentVolume,

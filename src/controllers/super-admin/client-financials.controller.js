@@ -219,9 +219,7 @@ const getClientPerksTab = asyncHandler(async (req, res, next) => {
   const perkTitleSet = new Set();
   const allPerksCombined = [];
 
-  const rawList = (assignedPerkTitles.length > 0 || dbTierPerkTitles.length > 0)
-    ? [...assignedPerkTitles, ...dbTierPerkTitles]
-    : (defaultBenefitsMap[currentTier] || []);
+  const rawList = [...assignedPerkTitles, ...dbTierPerkTitles];
 
   rawList.forEach(p => {
     if (p && p.title && !perkTitleSet.has(p.title.toLowerCase())) {

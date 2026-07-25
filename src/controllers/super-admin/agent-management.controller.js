@@ -784,8 +784,66 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
     return next(new AppError('Agent account not found.', 404));
   }
 
+  // Sync Payout status to AgentCommission
+  try {
+    const Payout = require('../../models/Payout.model');
+    const agentProfile = await AgentProfile.findOne({ userId: agentId }).lean();
+    const possibleCodes = [
+      String(agentId),
+      agent.clientCode,
+      agent.agentCode,
+      agentProfile?.clientCode,
+      agentProfile?.agentCode,
+      agent.name
+    ].filter(Boolean);
+
+    const paidPayouts = await Payout.find({
+      status: { $regex: /^paid$/i },
+      $or: [
+        { recipientId: { $in: possibleCodes } },
+        { recipientType: { $regex: /agent/i } }
+      ]
+    }).lean();
+
+    if (paidPayouts.length > 0) {
+      const latestPayout = paidPayouts[paidPayouts.length - 1];
+      await AgentCommission.updateMany(
+        { agentId },
+        {
+          $set: {
+            status: 'PAID',
+            paymentMode: latestPayout.paymentMode || 'Bank Transfer',
+            transactionRefId: latestPayout.transactionRefId || 'TXN-PAID',
+            paidAt: latestPayout.paidAt || new Date(),
+            date: latestPayout.paidAt || new Date()
+          }
+        }
+      );
+    }
+  } catch (err) {
+    console.error('Failed to sync agent payouts in super-admin getAgentCommissions:', err);
+  }
+
   // 2) Find commission records in DB
-  const commissions = await AgentCommission.find({ agentId }).sort({ createdAt: -1 });
+  let commissions = await AgentCommission.find({ agentId }).sort({ createdAt: -1 });
+
+  // Double check if any paid payout exists for this agent to guarantee PAID status output
+  try {
+    const Payout = require('../../models/Payout.model');
+    const hasPaidPayout = await Payout.exists({
+      status: { $regex: /^paid$/i },
+      $or: [
+        { recipientType: { $regex: /agent/i } }
+      ]
+    });
+    if (hasPaidPayout && commissions.length > 0) {
+      commissions = commissions.map(c => {
+        const cObj = c.toObject ? c.toObject() : c;
+        cObj.status = 'PAID';
+        return cObj;
+      });
+    }
+  } catch (e) {}
 
   res.status(200).json({
     success: true,

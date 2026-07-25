@@ -261,6 +261,42 @@ const recordPayout = asyncHandler(async (req, res, next) => {
     paidAt: payoutStatus === 'paid' ? new Date() : undefined
   });
 
+  // If this is an Agent Commission payout and marked as paid, sync AgentCommission records to PAID
+  if (normalizedRecipientType === 'Agent Commission' && payoutStatus === 'paid') {
+    try {
+      const AgentCommission = require('../../models/AgentCommission.model');
+      let agentUser = await User.findOne({
+        $or: [
+          { clientCode: resolvedRecipientId },
+          { _id: mongoose.Types.ObjectId.isValid(recipientId) ? recipientId : null }
+        ],
+        role: 'agent'
+      });
+
+      if (!agentUser && resolvedRecipientId) {
+        const agProf = await AgentProfile.findOne({ clientCode: resolvedRecipientId });
+        if (agProf) agentUser = await User.findById(agProf.userId);
+      }
+
+      if (agentUser) {
+        await AgentCommission.updateMany(
+          { agentId: agentUser._id, status: 'PENDING' },
+          {
+            $set: {
+              status: 'PAID',
+              paymentMode: paymentMode || 'Bank Transfer',
+              transactionRefId: transactionRefId || 'TXN-PAID',
+              paidAt: new Date(),
+              date: new Date()
+            }
+          }
+        );
+      }
+    } catch (err) {
+      console.error('Error syncing agent commission to PAID on payout creation:', err);
+    }
+  }
+
   res.status(201).json({
     success: true,
     message: 'Payout recorded successfully.',
@@ -420,6 +456,47 @@ const markPayoutPaid = asyncHandler(async (req, res, next) => {
   payout.transactionRefId = transactionRefId;
   payout.paidAt = new Date();
   await payout.save();
+
+  // Sync AgentCommission records for this agent to PAID
+  if (String(payout.recipientType).toLowerCase().includes('agent')) {
+    try {
+      const AgentCommission = require('../../models/AgentCommission.model');
+      let agentUser = await User.findOne({
+        $or: [
+          { clientCode: payout.recipientId },
+          { _id: mongoose.Types.ObjectId.isValid(payout.recipientId) ? payout.recipientId : null }
+        ],
+        role: 'agent'
+      });
+
+      if (!agentUser && payout.recipientId) {
+        const agProf = await AgentProfile.findOne({ clientCode: payout.recipientId });
+        if (agProf) agentUser = await User.findById(agProf.userId);
+      }
+
+      if (!agentUser) {
+        const allAgents = await User.find({ role: 'agent' });
+        if (allAgents.length === 1) agentUser = allAgents[0];
+      }
+
+      if (agentUser) {
+        await AgentCommission.updateMany(
+          { agentId: agentUser._id, status: 'PENDING' },
+          {
+            $set: {
+              status: 'PAID',
+              paymentMode: paymentMode || 'Bank Transfer',
+              transactionRefId: transactionRefId || 'TXN-PAID',
+              paidAt: new Date(),
+              date: new Date()
+            }
+          }
+        );
+      }
+    } catch (err) {
+      console.error('Error syncing agent commission to PAID on markPayoutPaid:', err);
+    }
+  }
 
   res.status(200).json({
     success: true,

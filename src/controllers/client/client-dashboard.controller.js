@@ -191,14 +191,28 @@ const calculateDashboardData = async (userId) => {
     amount: monthlyRoiMap[index]
   }));
 
-  const recentPayouts = clientPayouts.slice(0, 5).map(p => ({
-    id: p._id,
-    amount: p.amount,
-    date: p.payoutDate,
-    paymentMode: p.paymentMode || 'Bank Transfer',
-    status: p.status.toUpperCase(),
-    refId: p.transactionRefId || '—'
-  }));
+  const recentPayouts = clientPayouts.slice(0, 5).map(p => {
+    const pDate = p.payoutDate ? new Date(p.payoutDate) : new Date(p.createdAt || Date.now());
+    const monthStr = !isNaN(pDate.getTime())
+      ? pDate.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })
+      : 'Jul 2026';
+    return {
+      id: p._id,
+      _id: p._id,
+      month: p.month || p.payoutMonth || p.period || monthStr,
+      payoutMonth: p.payoutMonth || p.month || monthStr,
+      period: p.period || p.month || monthStr,
+      amount: p.amount,
+      received: p.amount,
+      expected: p.amount,
+      date: p.payoutDate || p.createdAt,
+      paidAt: p.payoutDate || p.createdAt,
+      processedDate: p.payoutDate || p.createdAt,
+      paymentMode: p.paymentMode || 'Bank Transfer',
+      status: p.status ? p.status.toUpperCase() : 'PAID',
+      refId: p.transactionRefId || '—'
+    };
+  });
 
   return {
     // Flat root-level properties
@@ -240,6 +254,7 @@ const calculateDashboardData = async (userId) => {
     assetAllocation,
     monthlyRoiEarnings,
     recentPayouts,
+    roiHistory: recentPayouts,
     wealthAdvisor,
 
     // Nested stats object to cover all frontend fetch patterns

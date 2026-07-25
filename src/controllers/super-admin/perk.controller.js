@@ -440,10 +440,7 @@ const getMyPerks = asyncHandler(async (req, res, next) => {
 
   // Helper to compile dynamic tier benefits list
   const getTierBenefitsList = (tierKey) => {
-    const dbPerks = (tierDbPerks[tierKey] || []).map(b => b.title);
-    if (dbPerks.length > 0) return dbPerks;
-    const defaults = (defaultBenefitsMap[tierKey] || []).map(b => b.title);
-    return defaults;
+    return (tierDbPerks[tierKey] || []).map(b => b.title);
   };
 
   const tierPerksFromDb = tierDbPerks[currentTier] || [];
@@ -461,9 +458,7 @@ const getMyPerks = asyncHandler(async (req, res, next) => {
   const perkTitleSet = new Set();
   const allPerksCombined = [];
 
-  const rawList = (assignedPerkTitles.length > 0 || dbTierPerkTitles.length > 0)
-    ? [...assignedPerkTitles, ...dbTierPerkTitles]
-    : (defaultBenefitsMap[currentTier] || []);
+  const rawList = [...assignedPerkTitles, ...dbTierPerkTitles];
 
   rawList.forEach(p => {
     if (p && p.title && !perkTitleSet.has(p.title.toLowerCase())) {

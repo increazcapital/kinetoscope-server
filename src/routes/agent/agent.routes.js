@@ -80,8 +80,11 @@ router.get('/clients/:id/roi/payouts', getClientRoiTab);
 router.get('/clients/:id/documents', getClientDocumentsTab);
 router.get('/clients/:id/perks', getClientPerksTab);
 
+const { getAllSlabs } = require('../../controllers/super-admin/commission-slab.controller');
+
 // 4. Agent Commission History
 router.get('/commissions', getAgentCommissions);
+router.get('/commission-slabs', getAllSlabs);
 
 // 5. Agent Profile Info
 router.get('/profile', getAgentProfile);
