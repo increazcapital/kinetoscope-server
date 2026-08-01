@@ -125,18 +125,25 @@ const createClient = asyncHandler(async (req, res, next) => {
     else finalAgentCommission = '0.5% monthly';
   }
 
-  // 2) Check if email is already registered in the system
-  console.log(`[CreateClient] Checking email: "${email}" (type: ${typeof email})`);
-  const existingUser = await User.findOne({ email });
+  // 2) Check if email is already registered in the system (case-insensitive & trimmed)
+  const cleanEmail = email ? String(email).trim().toLowerCase() : '';
+  if (!cleanEmail) {
+    return next(new AppError('Email address is required.', 400));
+  }
+  const existingUser = await User.findOne({ email: { $regex: new RegExp(`^${cleanEmail.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&')}$`, 'i') } });
   if (existingUser) {
-    console.log(`[CreateClient] Duplicate email match found:`, { id: existingUser._id, name: existingUser.name, email: existingUser.email });
-    return next(new AppError('Email address is already in use by another account.', 400));
+    console.log(`[CreateClient] Duplicate email match found:`, { id: existingUser._id, name: existingUser.name, email: existingUser.email, role: existingUser.role });
+    return next(new AppError(`Email address (${cleanEmail}) is already in use by another account.`, 400));
   }
 
-  // 3) Generate a sequential client code starting from KFPL-CL-1001
-  const clients = await User.find({ role: ROLES.CLIENT }, { clientCode: 1 });
+  // 3) Generate a sequential client code starting from KFPL-CL-1001 with collision check
+  const activeClientUsers = await User.find({
+    role: { $in: [ROLES.CLIENT, 'client', 'CLIENT'] },
+    clientCode: { $regex: /^KFPL-CL-/i }
+  }, { clientCode: 1 }).lean();
+
   let maxSeq = 1000;
-  clients.forEach(c => {
+  activeClientUsers.forEach(c => {
     if (c.clientCode) {
       const digits = c.clientCode.match(/\d+/);
       if (digits) {
@@ -147,7 +154,12 @@ const createClient = asyncHandler(async (req, res, next) => {
       }
     }
   });
-  const clientCode = `KFPL-CL-${maxSeq + 1}`;
+  let nextSeq = maxSeq + 1;
+  let clientCode = `KFPL-CL-${nextSeq}`;
+  while (await User.findOne({ clientCode })) {
+    nextSeq++;
+    clientCode = `KFPL-CL-${nextSeq}`;
+  }
 
   // 4) Use provided custom password or generate a secure temporary password
   const tempPassword = password || portalPassword || generateTempPassword();
@@ -219,9 +231,17 @@ const createClient = asyncHandler(async (req, res, next) => {
   }
 
   // 8) Trigger parallel in-memory background uploads (Vercel-safe using waitUntil)
+  const uploadFileFields = [
+    'panDocument',
+    'aadhaarDocument',
+    'bankProofDocument',
+    'agreementDocument',
+    'nomineeProofDocument',
+  ];
+
   uploadDocumentsToCloudinaryParallelBackground({
     files: req.files,
-    fileFields,
+    fileFields: uploadFileFields,
     Model: ClientProfile,
     filter: { userId: createdUser._id },
     entityLabel: 'Client',
@@ -644,14 +664,39 @@ const updateClient = asyncHandler(async (req, res, next) => {
  * DELETE /api/super-admin/clients/:id
  */
 const deleteClient = asyncHandler(async (req, res, next) => {
-  const userId = req.params.id;
+  const targetId = req.params.id;
 
-  const user = await User.findById(userId);
-  if (!user || user.role !== ROLES.CLIENT) {
-    return next(new AppError('Client user record not found.', 404));
+  let user = null;
+  let profile = null;
+
+  if (mongoose.Types.ObjectId.isValid(targetId)) {
+    user = await User.findById(targetId);
+    if (!user) {
+      profile = await ClientProfile.findById(targetId);
+      if (profile && profile.userId) {
+        user = await User.findById(profile.userId);
+      }
+    }
   }
 
-  const profile = await ClientProfile.findOne({ userId });
+  if (!user) {
+    user = await User.findOne({ clientCode: targetId });
+  }
+
+  if (!profile && user) {
+    profile = await ClientProfile.findOne({ userId: user._id });
+  }
+
+  if (!profile && !user) {
+    profile = await ClientProfile.findOne({ clientCode: targetId });
+    if (profile && profile.userId) {
+      user = await User.findById(profile.userId);
+    }
+  }
+
+  if (!user && !profile) {
+    return next(new AppError('Client record not found.', 404));
+  }
 
   // 1) Purge documents from Cloudinary storage if they exist
   if (profile) {
@@ -666,20 +711,25 @@ const deleteClient = asyncHandler(async (req, res, next) => {
     await ClientProfile.findByIdAndDelete(profile._id);
   }
 
-  // 2) Purge associated Investment and Transaction records so deleted client amounts are never calculated
-  const Investment = require('../../models/Investment.model');
-  const Transaction = require('../../models/Transaction.model');
-  await Promise.all([
-    Investment.deleteMany({ $or: [{ clientId: userId }, { clientCode: user.clientCode }] }),
-    Transaction.deleteMany({ $or: [{ clientId: userId }, { clientCode: user.clientCode }] })
-  ]);
+  // 2) Purge associated Investment, Transaction, Payouts, and User records
+  if (user) {
+    const Investment = require('../../models/Investment.model');
+    const Transaction = require('../../models/Transaction.model');
+    const RoiPayout = require('../../models/RoiPayout.model');
+    const Payout = require('../../models/Payout.model');
 
-  // 3) Delete User document from Mongo
-  await User.findByIdAndDelete(userId);
+    await Promise.all([
+      Investment.deleteMany({ $or: [{ clientId: user._id }, { clientCode: user.clientCode }] }),
+      Transaction.deleteMany({ $or: [{ clientId: user._id }, { clientCode: user.clientCode }] }),
+      RoiPayout.deleteMany({ clientId: user._id }),
+      Payout.deleteMany({ recipientId: user.clientCode }),
+      User.findByIdAndDelete(user._id)
+    ]);
+  }
 
   res.status(200).json({
     success: true,
-    message: 'Client account and associated investments/transactions deleted successfully.',
+    message: 'Client account and associated records deleted successfully.',
   });
 });
 
@@ -850,11 +900,11 @@ const verifyDocument = asyncHandler(async (req, res, next) => {
  */
 const clearAllClients = asyncHandler(async (req, res, next) => {
   // Find all client users
-  const clients = await User.find({ role: ROLES.CLIENT });
+  const clients = await User.find({ role: { $in: [ROLES.CLIENT, 'client', 'CLIENT'] } });
   const clientIds = clients.map(c => c._id);
 
   // Fetch client profiles
-  const profiles = await ClientProfile.find({ userId: { $in: clientIds } });
+  const profiles = await ClientProfile.find({});
   
   // Purge documents from Cloudinary
   const documentUrls = [];
@@ -870,20 +920,25 @@ const clearAllClients = asyncHandler(async (req, res, next) => {
     await deleteCloudinaryFiles(documentUrls);
   }
 
-  // Delete profiles, user accounts, investments, and transactions
+  // Delete all profiles, user accounts, investments, transactions, and payouts
   const Investment = require('../../models/Investment.model');
   const Transaction = require('../../models/Transaction.model');
+  const RoiPayout = require('../../models/RoiPayout.model');
+  const Payout = require('../../models/Payout.model');
+
   await Promise.all([
-    ClientProfile.deleteMany({ userId: { $in: clientIds } }),
-    User.deleteMany({ _id: { $in: clientIds } }),
+    ClientProfile.deleteMany({}),
+    User.deleteMany({ role: { $in: [ROLES.CLIENT, 'client', 'CLIENT'] } }),
     Investment.deleteMany({}),
-    Transaction.deleteMany({})
+    Transaction.deleteMany({}),
+    RoiPayout.deleteMany({}),
+    Payout.deleteMany({})
   ]);
 
   res.status(200).json({
     success: true,
-    message: `All client accounts (${clientIds.length}), profiles, investments, and transaction logs cleared successfully.`,
-    count: clientIds.length
+    message: `All client profiles, investments, transactions, and payout records cleared successfully.`,
+    count: clients.length
   });
 });
 

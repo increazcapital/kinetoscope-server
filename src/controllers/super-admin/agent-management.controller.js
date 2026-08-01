@@ -93,18 +93,21 @@ const createAgent = asyncHandler(async (req, res, next) => {
     status,
   } = req.body;
 
-  // 2) Check if email is already registered in the system
-  console.log(`[CreateAgent] Checking email: "${email}" (type: ${typeof email})`);
-  const existingUser = await User.findOne({ email });
+  // 2) Check if email is already registered in the system (case-insensitive & trimmed)
+  const cleanEmail = email ? String(email).trim().toLowerCase() : '';
+  if (!cleanEmail) {
+    return next(new AppError('Email address is required.', 400));
+  }
+  const existingUser = await User.findOne({ email: { $regex: new RegExp(`^${cleanEmail.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&')}$`, 'i') } });
   if (existingUser) {
-    console.log(`[CreateAgent] Duplicate email match found:`, { id: existingUser._id, name: existingUser.name, email: existingUser.email });
-    return next(new AppError('Email address is already in use by another account.', 400));
+    console.log(`[CreateAgent] Duplicate email match found:`, { id: existingUser._id, name: existingUser.name, email: existingUser.email, role: existingUser.role });
+    return next(new AppError(`Email address (${cleanEmail}) is already in use by another account.`, 400));
   }
 
-  // 3) Generate a sequential unique agent code starting from KFPL-AG-1001
-  const agents = await User.find({ role: ROLES.AGENT }, { clientCode: 1 });
+  // 3) Generate a sequential unique agent code starting from KFPL-AG-1001 with collision check
+  const agentUsers = await User.find({ clientCode: { $regex: /^KFPL-AG-/i } }, { clientCode: 1 }).lean();
   let maxSeq = 1000;
-  agents.forEach(a => {
+  agentUsers.forEach(a => {
     if (a.clientCode) {
       const digits = a.clientCode.match(/\d+/);
       if (digits) {
@@ -116,7 +119,12 @@ const createAgent = asyncHandler(async (req, res, next) => {
       }
     }
   });
-  const agentCode = `KFPL-AG-${maxSeq + 1}`;
+  let nextSeq = maxSeq + 1;
+  let agentCode = `KFPL-AG-${nextSeq}`;
+  while (await User.findOne({ clientCode: agentCode })) {
+    nextSeq++;
+    agentCode = `KFPL-AG-${nextSeq}`;
+  }
 
   // 4) Use provided custom password or generate a secure temporary password
   const tempPassword = password || portalPassword || generateTempPassword();
@@ -174,9 +182,16 @@ const createAgent = asyncHandler(async (req, res, next) => {
   }
 
   // 8) Trigger parallel in-memory background uploads (Vercel-safe using waitUntil)
+  const uploadFileFields = [
+    'panDocument',
+    'idProofDocument',
+    'bankProofDocument',
+    'nomineeProofDocument',
+  ];
+
   uploadDocumentsToCloudinaryParallelBackground({
     files: req.files,
-    fileFields,
+    fileFields: uploadFileFields,
     Model: AgentProfile,
     filter: { userId: createdUser._id },
     entityLabel: 'Agent',
@@ -255,8 +270,8 @@ const getAllAgents = asyncHandler(async (req, res, next) => {
 
   const { search, status, page, limit } = req.query;
 
-  // Build user query targeting role=agent
-  const userQuery = { role: ROLES.AGENT };
+  // Build user query targeting agent role
+  const userQuery = { role: { $in: [ROLES.AGENT, 'agent', 'AGENT'] } };
 
   if (search) {
     userQuery.$or = [
@@ -270,7 +285,7 @@ const getAllAgents = asyncHandler(async (req, res, next) => {
   if (status) {
     const statusRegex = new RegExp(`^${status}$`, 'i');
     const profilesMatchingStatus = await AgentProfile.find({ status: statusRegex }, { userId: 1 });
-    const userIds = profilesMatchingStatus.map(p => p.userId);
+    const userIds = profilesMatchingStatus.map(p => p.userId).filter(Boolean);
     userQuery._id = { $in: userIds };
   }
 
@@ -299,31 +314,35 @@ const getAllAgents = asyncHandler(async (req, res, next) => {
     ]);
   }
 
-  const agentIds = users.map(u => u._id);
+  const agentIds = users.map(u => u._id).filter(Boolean);
 
   // Fetch agent profiles and assigned clients in parallel in bulk
   const [profiles, allClients] = await Promise.all([
     AgentProfile.find({ userId: { $in: agentIds } }).lean(),
     User.find(
-      { role: ROLES.CLIENT, assignedAgent: { $in: agentIds } },
+      { role: { $in: [ROLES.CLIENT, 'client', 'CLIENT'] }, assignedAgent: { $in: agentIds } },
       { _id: 1, assignedAgent: 1 }
     ).lean()
   ]);
 
   const profileMap = {};
   profiles.forEach(p => {
-    profileMap[p.userId.toString()] = p;
+    if (p && p.userId) {
+      profileMap[p.userId.toString()] = p;
+    }
   });
 
   // Map agent ID to their list of client IDs
   const agentClientsMap = {};
   agentIds.forEach(id => {
-    agentClientsMap[id.toString()] = [];
+    if (id) {
+      agentClientsMap[id.toString()] = [];
+    }
   });
   
   const allClientIds = [];
   allClients.forEach(c => {
-    if (c.assignedAgent) {
+    if (c && c.assignedAgent) {
       const agentIdStr = c.assignedAgent.toString();
       if (agentClientsMap[agentIdStr]) {
         agentClientsMap[agentIdStr].push(c._id.toString());
@@ -340,13 +359,16 @@ const getAllAgents = asyncHandler(async (req, res, next) => {
       { clientId: 1, investmentAmount: 1 }
     ).lean();
     investments.forEach(inv => {
-      const clientIdStr = inv.clientId.toString();
-      investmentMap[clientIdStr] = (investmentMap[clientIdStr] || 0) + inv.investmentAmount;
+      if (inv && inv.clientId) {
+        const clientIdStr = inv.clientId.toString();
+        investmentMap[clientIdStr] = (investmentMap[clientIdStr] || 0) + (inv.investmentAmount || 0);
+      }
     });
   }
 
   // Assemble final records
   const agentRecords = users.map(user => {
+    if (!user || !user._id) return null;
     const userIdStr = user._id.toString();
     const profile = profileMap[userIdStr] || null;
     const clientIdsForAgent = agentClientsMap[userIdStr] || [];
@@ -371,7 +393,7 @@ const getAllAgents = asyncHandler(async (req, res, next) => {
       clientsCount,
       totalInvestment,
     };
-  });
+  }).filter(Boolean);
 
   res.status(200).json({
     success: true,
@@ -572,14 +594,39 @@ const updateAgent = asyncHandler(async (req, res, next) => {
  * DELETE /api/super-admin/agents/:id
  */
 const deleteAgent = asyncHandler(async (req, res, next) => {
-  const userId = req.params.id;
+  const targetId = req.params.id;
 
-  const user = await User.findById(userId);
-  if (!user || user.role !== ROLES.AGENT) {
-    return next(new AppError('Agent user record not found.', 404));
+  let user = null;
+  let profile = null;
+
+  if (mongoose.Types.ObjectId.isValid(targetId)) {
+    user = await User.findById(targetId);
+    if (!user) {
+      profile = await AgentProfile.findById(targetId);
+      if (profile && profile.userId) {
+        user = await User.findById(profile.userId);
+      }
+    }
   }
 
-  const profile = await AgentProfile.findOne({ userId });
+  if (!user) {
+    user = await User.findOne({ clientCode: targetId });
+  }
+
+  if (!profile && user) {
+    profile = await AgentProfile.findOne({ userId: user._id });
+  }
+
+  if (!profile && !user) {
+    profile = await AgentProfile.findOne({ agentCode: targetId });
+    if (profile && profile.userId) {
+      user = await User.findById(profile.userId);
+    }
+  }
+
+  if (!user && !profile) {
+    return next(new AppError('Agent record not found.', 404));
+  }
 
   // 1) Purge documents from Cloudinary storage if they exist
   if (profile) {
@@ -593,24 +640,19 @@ const deleteAgent = asyncHandler(async (req, res, next) => {
     await AgentProfile.findByIdAndDelete(profile._id);
   }
 
-  // 2) Unset assignedAgent reference for all clients assigned to this agent
-  await User.updateMany(
-    { assignedAgent: userId },
-    { $unset: { assignedAgent: '' } }
-  );
-
-  // 3) Delete AgentCommissions and Agent Withdrawals so deleted agent commissions are never calculated
-  await Promise.all([
-    AgentCommission.deleteMany({ agentId: userId }),
-    Transaction.deleteMany({ agentId: userId, isAgentWithdrawal: true })
-  ]);
-
-  // 4) Delete User document from Mongo
-  await User.findByIdAndDelete(userId);
+  // 2) Delete associated AgentCommissions, Transactions, and User record
+  if (user) {
+    await Promise.all([
+      User.updateMany({ assignedAgent: user._id }, { $unset: { assignedAgent: '' } }),
+      AgentCommission.deleteMany({ agentId: user._id }),
+      Transaction.deleteMany({ agentId: user._id, isAgentWithdrawal: true }),
+      User.findByIdAndDelete(user._id)
+    ]);
+  }
 
   res.status(200).json({
     success: true,
-    message: 'Agent account, profile, documents, and associated commissions deleted successfully.',
+    message: 'Agent account, profile, documents, and associated records deleted successfully.',
   });
 });
 
@@ -1104,11 +1146,11 @@ const payAgentCommission = asyncHandler(async (req, res, next) => {
  */
 const clearAllAgents = asyncHandler(async (req, res, next) => {
   // Find all agent users
-  const agents = await User.find({ role: ROLES.AGENT });
+  const agents = await User.find({ role: { $in: [ROLES.AGENT, 'agent', 'AGENT'] } });
   const agentIds = agents.map(a => a._id);
 
   // Fetch agent profiles
-  const profiles = await AgentProfile.find({ userId: { $in: agentIds } });
+  const profiles = await AgentProfile.find({});
 
   // Purge documents from Cloudinary
   const documentUrls = [];
@@ -1123,19 +1165,19 @@ const clearAllAgents = asyncHandler(async (req, res, next) => {
     await deleteCloudinaryFiles(documentUrls);
   }
 
-  // Delete profiles, user accounts, agent commissions, and agent transactions
+  // Delete all profiles, user accounts, agent commissions, and agent transactions
   await Promise.all([
-    AgentProfile.deleteMany({ userId: { $in: agentIds } }),
-    AgentCommission.deleteMany({ agentId: { $in: agentIds } }),
-    Transaction.deleteMany({ agentId: { $in: agentIds }, isAgentWithdrawal: true }),
-    User.updateMany({ assignedAgent: { $in: agentIds } }, { $unset: { assignedAgent: '' } }),
-    User.deleteMany({ _id: { $in: agentIds } })
+    AgentProfile.deleteMany({}),
+    AgentCommission.deleteMany({}),
+    Transaction.deleteMany({ isAgentWithdrawal: true }),
+    User.updateMany({}, { $unset: { assignedAgent: '' } }),
+    User.deleteMany({ role: { $in: [ROLES.AGENT, 'agent', 'AGENT'] } })
   ]);
 
   res.status(200).json({
     success: true,
-    message: `All agent accounts (${agentIds.length}), profiles, and commission logs cleared successfully.`,
-    count: agentIds.length
+    message: `All agent accounts, profiles, and commission logs cleared successfully.`,
+    count: agents.length
   });
 });
 

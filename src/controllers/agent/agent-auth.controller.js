@@ -279,10 +279,10 @@ const registerAgent = asyncHandler(async (req, res, next) => {
     return next(new AppError('Email address is already in use by another account.', 400));
   }
 
-  // 3) Generate a sequential agent code starting from KFPL-AG-1001
-  const agents = await User.find({ role: ROLES.AGENT }, { clientCode: 1 });
+  // 3) Generate a sequential agent code starting from KFPL-AG-1001 with collision check
+  const agentUsers = await User.find({ clientCode: { $regex: /^KFPL-AG-/i } }, { clientCode: 1 }).lean();
   let maxSeq = 1000;
-  agents.forEach(a => {
+  agentUsers.forEach(a => {
     if (a.clientCode) {
       const digits = a.clientCode.match(/\d+/);
       if (digits) {
@@ -294,7 +294,12 @@ const registerAgent = asyncHandler(async (req, res, next) => {
       }
     }
   });
-  const agentCode = `KFPL-AG-${maxSeq + 1}`;
+  let nextSeq = maxSeq + 1;
+  let agentCode = `KFPL-AG-${nextSeq}`;
+  while (await User.findOne({ clientCode: agentCode })) {
+    nextSeq++;
+    agentCode = `KFPL-AG-${nextSeq}`;
+  }
 
   // Define database variables outside to perform rollback on error
   let createdUser, createdProfile;
