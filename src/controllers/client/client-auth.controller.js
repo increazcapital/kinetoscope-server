@@ -251,19 +251,28 @@ const registerClient = asyncHandler(async (req, res, next) => {
     return next(new AppError('Email address is already in use by another account.', 400));
   }
 
-  // 2) Generate sequential clientCode KFPL-XXXX
-  const clients = await User.find({ clientCode: /^KFPL-\d+$/ }, { clientCode: 1 });
+  // 2) Generate sequential clientCode KFPL-CL-XXXX
+  const clients = await User.find({
+    role: { $in: ['client', 'CLIENT'] },
+    clientCode: { $exists: true, $ne: null }
+  }, { clientCode: 1 }).lean();
   let maxSeq = 1000;
   clients.forEach(c => {
     if (c.clientCode) {
-      const parts = c.clientCode.split('-');
-      const seq = parseInt(parts[1], 10);
-      if (!isNaN(seq) && seq > maxSeq) {
-        maxSeq = seq;
+      const digits = c.clientCode.match(/(\d+)$/);
+      if (digits) {
+        const seq = parseInt(digits[1], 10);
+        if (!isNaN(seq) && seq > maxSeq) {
+          maxSeq = seq;
+        }
       }
     }
   });
-  const clientCode = `KFPL-${maxSeq + 1}`;
+  let clientCode = `KFPL-CL-${maxSeq + 1}`;
+  while (await User.findOne({ clientCode })) {
+    maxSeq++;
+    clientCode = `KFPL-CL-${maxSeq + 1}`;
+  }
 
   // 3) Process file uploads flexibly
   const panFile = req.files && (req.files['panDocument']?.[0] || req.files['panCard']?.[0] || req.files['pan']?.[0]);

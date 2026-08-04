@@ -137,17 +137,19 @@ const createClient = asyncHandler(async (req, res, next) => {
   }
 
   // 3) Generate a sequential client code starting from KFPL-CL-1001 with collision check
+  // Query ALL client users with any code to find the true max sequence (catches malformed codes too)
   const activeClientUsers = await User.find({
     role: { $in: [ROLES.CLIENT, 'client', 'CLIENT'] },
-    clientCode: { $regex: /^KFPL-CL-/i }
+    clientCode: { $exists: true, $ne: null }
   }, { clientCode: 1 }).lean();
 
   let maxSeq = 1000;
   activeClientUsers.forEach(c => {
     if (c.clientCode) {
-      const digits = c.clientCode.match(/\d+/);
+      // Extract trailing digits from the code (e.g. KFPL-CL-1005 -> 1005, KFPL-1001 -> 1001)
+      const digits = c.clientCode.match(/(\d+)$/);
       if (digits) {
-        const seq = parseInt(digits[0], 10);
+        const seq = parseInt(digits[1], 10);
         if (!isNaN(seq) && seq > maxSeq) {
           maxSeq = seq;
         }
