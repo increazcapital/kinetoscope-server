@@ -7,108 +7,7 @@ const asyncHandler = require('../../utils/asyncHandler');
  * Seed default mock projects if catalog is empty
  */
 const seedMockProjects = async (creatorId) => {
-  return; // Disabled seeder
-  const mongoose = require('mongoose');
-  const SystemConfig = mongoose.models.SystemConfig || mongoose.model('SystemConfig', new mongoose.Schema({
-    key: { type: String, unique: true },
-    value: Boolean
-  }));
-
-const config = await SystemConfig.findOne({ key: 'projects_seeded' });
-  if (config && config.value) {
-    return;
-  }
-
-  const count = await Project.countDocuments();
-  if (count > 0) {
-    await SystemConfig.findOneAndUpdate({ key: 'projects_seeded' }, { value: true }, { upsert: true });
-    return;
-  }
-
-  const mockProjects = [
-    {
-      name: 'Project Astra',
-      segment: 'Film Making',
-      status: 'In Production',
-      portfolioValue: '₹2.5 Cr',
-      monthlyRoi: '1.25%',
-      riskLevel: 'Medium',
-      milestoneProgress: 65,
-      health: 'On Track',
-      summary: 'Flagship feature slate moving through production with cast-led marketing upside.',
-      bannerImage: '',
-      createdBy: creatorId,
-    },
-    {
-      name: 'Rhythm Series',
-      segment: 'Music',
-      status: 'Recording',
-      portfolioValue: '₹1.8 Cr',
-      monthlyRoi: '0.83%',
-      riskLevel: 'Low',
-      milestoneProgress: 40,
-      health: 'On Track',
-      summary: 'Music catalogue and album pipeline with recurring streaming revenue potential.',
-      bannerImage: '',
-      createdBy: creatorId,
-    },
-    {
-      name: 'Meridian Release',
-      segment: 'Distribution',
-      status: 'Active',
-      portfolioValue: '₹3.2 Cr',
-      monthlyRoi: '1.00%',
-      riskLevel: 'Medium',
-      milestoneProgress: 80,
-      health: 'Performing',
-      summary: 'Distribution portfolio across domestic and digital channels.',
-      bannerImage: '',
-      createdBy: creatorId,
-    },
-    {
-      name: 'Vanguard Exhibition',
-      segment: 'Film Exhibition',
-      status: 'Active',
-      portfolioValue: '₹4.5 Cr',
-      monthlyRoi: '1.50%',
-      riskLevel: 'High',
-      milestoneProgress: 50,
-      health: 'Under Review',
-      summary: 'Premium screen expansion across multiple metro areas.',
-      bannerImage: '',
-      createdBy: creatorId,
-    },
-    {
-      name: 'IP Rights Library',
-      segment: 'Content IP Bank',
-      status: 'Active',
-      portfolioValue: '₹2.0 Cr',
-      monthlyRoi: '1.10%',
-      riskLevel: 'Low',
-      milestoneProgress: 30,
-      health: 'Performing',
-      summary: 'Acquisition and monetization of classic film and music IP assets.',
-      bannerImage: '',
-      createdBy: creatorId,
-    },
-    {
-      name: 'Syndication Deal A',
-      segment: 'Trading & Syndication',
-      status: 'Active',
-      portfolioValue: '₹1.5 Cr',
-      monthlyRoi: '0.95%',
-      riskLevel: 'Medium',
-      milestoneProgress: 15,
-      health: 'On Track',
-      summary: 'Regional broadcast rights syndication deal.',
-      bannerImage: '',
-      createdBy: creatorId,
-    },
-  ];
-
-  await Project.create(mockProjects);
-  await SystemConfig.findOneAndUpdate({ key: 'projects_seeded' }, { value: true }, { upsert: true });
-  console.log('[Project Seeder] Successfully seeded standard projects in Project Catalog.');
+  return; // Disabled mock project seeding
 };
 
 /**
@@ -124,6 +23,11 @@ const createProject = asyncHandler(async (req, res, next) => {
     monthlyRoi,
     riskLevel,
     milestoneProgress,
+    minInvestment,
+    targetFunding,
+    fundedAmount,
+    totalSlots,
+    slotsAvailable,
     health,
     summary,
     currentUpdate,
@@ -141,14 +45,19 @@ const createProject = asyncHandler(async (req, res, next) => {
     }
   }
 
-const project = await Project.create({
+  const project = await Project.create({
     name,
     segment,
-    status,
-    portfolioValue,
-    monthlyRoi,
+    status: status || 'Planning',
+    portfolioValue: portfolioValue || `₹${((Number(targetFunding) || 25000000) / 10000000).toFixed(1)} Cr`,
+    monthlyRoi: monthlyRoi || '1.0%',
     riskLevel: riskLevel || 'Medium',
     milestoneProgress: milestoneProgress !== undefined ? Number(milestoneProgress) : 0,
+    minInvestment: minInvestment !== undefined ? Number(minInvestment) : 200000,
+    targetFunding: targetFunding !== undefined ? Number(targetFunding) : 25000000,
+    fundedAmount: fundedAmount !== undefined ? Number(fundedAmount) : 0,
+    totalSlots: totalSlots !== undefined ? Number(totalSlots) : 20,
+    slotsAvailable: slotsAvailable !== undefined ? Number(slotsAvailable) : 20,
     health: health || 'On Track',
     summary: summary || '',
     currentUpdate: currentUpdate || '',
@@ -176,7 +85,7 @@ const getAllProjects = asyncHandler(async (req, res, next) => {
     .lean();
 
   // Compute card stats
-const totalProjects = projects.length;
+  const totalProjects = projects.length;
   let avgProgress = 0;
   if (totalProjects > 0) {
     const progressSum = projects.reduce((sum, p) => sum + (p.milestoneProgress || 0), 0);
@@ -230,6 +139,11 @@ const updateProject = asyncHandler(async (req, res, next) => {
     'monthlyRoi',
     'riskLevel',
     'milestoneProgress',
+    'minInvestment',
+    'targetFunding',
+    'fundedAmount',
+    'totalSlots',
+    'slotsAvailable',
     'health',
     'summary',
     'mediaFiles',
@@ -244,13 +158,11 @@ const updateProject = asyncHandler(async (req, res, next) => {
     }
   });
 
-  if (updates.milestoneProgress !== undefined) {
-    updates.milestoneProgress = Number(updates.milestoneProgress);
-  }
-
-  if (updates.totalDividendPool !== undefined) {
-    updates.totalDividendPool = Number(updates.totalDividendPool);
-  }
+  ['milestoneProgress', 'minInvestment', 'targetFunding', 'fundedAmount', 'totalSlots', 'slotsAvailable', 'totalDividendPool'].forEach(numField => {
+    if (updates[numField] !== undefined) {
+      updates[numField] = Number(updates[numField]);
+    }
+  });
 
   // Handle banner image removal if explicitly set to empty or null
   if (req.body.bannerImage === '' || req.body.bannerImage === null || req.body.bannerImage === 'null') {
@@ -356,7 +268,6 @@ const deleteProject = asyncHandler(async (req, res, next) => {
  * GET /api/client/projects
  */
 const getClientProjects = asyncHandler(async (req, res, next) => {
-  // Retrieve list of projects
   const projects = await Project.find()
     .sort({ createdAt: -1 })
     .select('-createdBy -createdAt -updatedAt -__v')
@@ -470,6 +381,78 @@ const deleteProjectMedia = asyncHandler(async (req, res, next) => {
   });
 });
 
+/**
+ * Client Apply for Project Investment
+ * POST /api/client/projects/:id/apply
+ */
+const applyForProjectInvestment = asyncHandler(async (req, res, next) => {
+  const { amount } = req.body;
+  const numAmount = Number(amount);
+
+  if (!numAmount || isNaN(numAmount) || numAmount <= 0) {
+    return next(new AppError('Please enter a valid investment amount', 400));
+  }
+
+  const project = await Project.findById(req.params.id);
+  if (!project) {
+    return next(new AppError('Project not found', 404));
+  }
+
+  const minInvestment = project.minInvestment || 200000;
+  if (numAmount < minInvestment) {
+    return next(new AppError(`Investment amount must be at least ₹${minInvestment.toLocaleString('en-IN')}`, 400));
+  }
+
+  if (project.slotsAvailable <= 0 || project.status === 'Slot Full') {
+    return next(new AppError('All investment slots for this project are currently full', 400));
+  }
+
+  // Update funding & slots
+  project.fundedAmount = (project.fundedAmount || 0) + numAmount;
+  if (project.slotsAvailable > 0) {
+    project.slotsAvailable = project.slotsAvailable - 1;
+  }
+  if (project.targetFunding > 0 && project.fundedAmount >= project.targetFunding) {
+    project.status = 'Slot Full';
+  } else if (project.slotsAvailable <= 0) {
+    project.status = 'Slot Full';
+  }
+  await project.save();
+
+  // Create Service Request Alert for Super Admin
+  const ServiceRequest = require('../../models/ServiceRequest.model');
+  const user = req.user;
+
+  const serviceReq = await ServiceRequest.create({
+    createdBy: user.id,
+    category: 'Investment Query',
+    subject: `New Investment Application - ${project.name}`,
+    description: `Client ${user.name} (${user.email}, Code: ${user.clientCode || 'N/A'}) applied for project "${project.name}" (${project.segment}) with investment amount ₹${numAmount.toLocaleString('en-IN')}. Target Funding: ₹${(project.targetFunding || 25000000).toLocaleString('en-IN')}, Current Total Funded: ₹${project.fundedAmount.toLocaleString('en-IN')}.`,
+    status: 'OPEN',
+  });
+
+  // Alert Super Admins via Email
+  try {
+    const { sendNewRegistrationAlertToAdmin } = require('../../services/email.service');
+    sendNewRegistrationAlertToAdmin({
+      name: user.name,
+      email: user.email,
+      clientCode: user.clientCode || 'N/A'
+    }, `Investment Application for ${project.name} (Amount: ₹${numAmount.toLocaleString('en-IN')})`).catch(e => console.error('[Email Alert Error]:', e.message));
+  } catch (emailErr) {
+    console.error('[Email Alert Exception]:', emailErr.message);
+  }
+
+  res.status(200).json({
+    success: true,
+    message: `Application for ${project.name} submitted successfully! Super Admin has been notified.`,
+    data: {
+      project,
+      serviceRequest: serviceReq,
+    },
+  });
+});
+
 module.exports = {
   createProject,
   getAllProjects,
@@ -479,4 +462,5 @@ module.exports = {
   getClientProjects,
   uploadProjectMedia,
   deleteProjectMedia,
+  applyForProjectInvestment,
 };

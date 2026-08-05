@@ -44,6 +44,31 @@ const projectSchema = new mongoose.Schema(
       min: [0, 'Milestone progress percentage cannot be below 0'],
       max: [100, 'Milestone progress percentage cannot exceed 100'],
     },
+    minInvestment: {
+      type: Number,
+      default: 200000,
+      min: [0, 'Minimum investment amount cannot be negative'],
+    },
+    targetFunding: {
+      type: Number,
+      default: 25000000,
+      min: [0, 'Target funding cannot be negative'],
+    },
+    fundedAmount: {
+      type: Number,
+      default: 0,
+      min: [0, 'Funded amount cannot be negative'],
+    },
+    totalSlots: {
+      type: Number,
+      default: 20,
+      min: [1, 'Total slots must be at least 1'],
+    },
+    slotsAvailable: {
+      type: Number,
+      default: 20,
+      min: [0, 'Slots available cannot be negative'],
+    },
     health: {
       type: String,
       enum: {

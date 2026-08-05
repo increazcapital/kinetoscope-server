@@ -44,25 +44,24 @@ const sendClientNotificationEmail = asyncHandler(async (req, res, next) => {
     targetLabel = 'Super Admins';
   }
 
-  // premium formatted email layout for client messages
-  const html = `
-    <div style="font-family: Arial, sans-serif; max-width: 580px; margin: auto; padding: 32px; border: 1px solid #e5e7eb; border-radius: 8px; background-color: #ffffff;">
-      <h2 style="color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 12px; margin-bottom: 20px; font-size: 18px; font-weight: bold;">
-        Message from Client: ${req.user.name} (${req.user.clientCode || 'No Code'})
-      </h2>
-      <div style="background: #f8fafc; border-radius: 6px; padding: 12px 16px; border-left: 4px solid #3b82f6; margin-bottom: 20px;">
-        <span style="font-size: 13px; color: #64748b; font-weight: bold;">From Client:</span><br/>
-        <strong style="color: #1e293b;">${req.user.name}</strong> (${req.user.email})
-      </div>
-      <div style="color: #334155; font-size: 15px; line-height: 1.6; white-space: pre-wrap;">
-        ${body}
-      </div>
-      <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 30px 0;" />
-      <p style="color: #94a3b8; font-size: 11px; text-align: center;">
-        Sent via Kinetoscope Client Portal
-      </p>
+  const { buildLightEmailTemplate } = require('../../services/email.service');
+
+  const contentHtml = `
+    <div style="background-color: #F8FAFC; border-radius: 8px; padding: 14px 16px; border-left: 4px solid #0284C7; margin-bottom: 20px; border: 1px solid #E2E8F0; border-left-width: 4px;">
+      <span style="font-size: 12px; color: #64748B; font-weight: 700; text-transform: uppercase;">From Client:</span><br/>
+      <strong style="color: #0F172A; font-size: 15px;">${req.user.name}</strong> <span style="color: #0284C7; font-family: monospace; font-weight: 700;">(${req.user.clientCode || req.user.email})</span>
+    </div>
+    <div style="color: #334155; font-size: 15px; line-height: 1.6; white-space: pre-wrap;">
+      ${body}
     </div>
   `;
+
+  const html = buildLightEmailTemplate({
+    title: `Client Portal Message: ${req.user.name}`,
+    subtitle: `Subject: ${subject}`,
+    contentHtml,
+    bannerAccent: '#0284C7'
+  });
 
   // Dispatch email
   await Promise.allSettled(

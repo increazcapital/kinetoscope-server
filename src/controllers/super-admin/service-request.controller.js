@@ -148,24 +148,27 @@ const updateServiceRequestStatus = asyncHandler(async (req, res, next) => {
   // Trigger real email notification if requested
   if (notifyUser && request.createdBy && request.createdBy.email) {
     try {
+      const { buildLightEmailTemplate } = require('../../services/email.service');
+      const contentHtml = `
+        <p style="font-size: 15px; color: #1E293B;">Hello <strong>${request.createdBy.name}</strong>,</p>
+        <p style="font-size: 14px; color: #475569;">Your service request <strong>${request.requestId}</strong> ("${request.subject}") has been updated.</p>
+        <div style="margin: 20px 0; padding: 16px; background-color: #F8FAFC; border-left: 4px solid #059669; border-radius: 8px; border: 1px solid #E2E8F0; border-left-width: 4px;">
+          <p style="margin: 0; color: #0F172A; font-weight: 700; font-size: 14px;">Status: <span style="color: #059669; text-transform: uppercase;">${status}</span></p>
+          <p style="margin: 8px 0 0 0; color: #334155; font-size: 13.5px;"><strong>Admin Remarks:</strong> ${adminRemarks || 'No remarks provided.'}</p>
+        </div>
+      `;
+      const html = buildLightEmailTemplate({
+        title: 'Service Request Status Updated',
+        subtitle: `Request ID: ${request.requestId}`,
+        contentHtml,
+        bannerAccent: '#059669'
+      });
+
       await sendEmail({
         to: request.createdBy.email,
         subject: `Kinetoscope – Service Request ${request.requestId} Updated`,
         text: `Hello ${request.createdBy.name},\n\nYour service request ${request.requestId} ("${request.subject}") has been updated to status: ${status}.\n\nAdmin Remarks: ${adminRemarks || 'None'}\n\n— Kinetoscope Support Team`,
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 520px; margin: auto; padding: 32px; border: 1px solid #e5e7eb; border-radius: 8px;">
-            <h2 style="color: #1a1a2e; margin-bottom: 8px;">Service Request Update</h2>
-            <p>Hello <strong>${request.createdBy.name}</strong>,</p>
-            <p>Your service request <strong>${request.requestId}</strong> ("${request.subject}") has been updated.</p>
-            <div style="margin: 20px 0; padding: 15px; background-color: #f9fafb; border-left: 4px solid #10b981;">
-              <p style="margin: 0;"><strong>New Status:</strong> ${status}</p>
-              <p style="margin: 8px 0 0 0;"><strong>Admin Remarks:</strong> ${adminRemarks || 'No remarks provided.'}</p>
-            </div>
-            <p style="color: #9ca3af; font-size: 12px; margin-top: 24px;">If you did not expect this or have further queries, feel free to contact support.</p>
-            <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 24px 0;" />
-            <p style="color: #9ca3af; font-size: 11px; text-align: center;">Kinetoscope Portal System</p>
-          </div>
-        `,
+        html,
       });
       console.log(`[Service Request Notification] Sent email successfully to ${request.createdBy.email}`);
     } catch (err) {

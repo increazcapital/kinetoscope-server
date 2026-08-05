@@ -363,6 +363,17 @@ const registerAgent = asyncHandler(async (req, res, next) => {
     entityLabel: 'Agent',
   });
 
+  // Dispatch Welcome Email to Agent & Alert to Super Admin asynchronously
+  try {
+    const { sendWelcomeEmail, sendNewRegistrationAlertToAdmin } = require('../../services/email.service');
+    const loginUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/login`;
+    const agentCode = createdUser.clientCode || 'AGT-PENDING';
+    sendWelcomeEmail(createdUser.email, createdUser.name, agentCode, password, loginUrl).catch(e => console.error('[Agent Welcome Email Error]:', e.message));
+    sendNewRegistrationAlertToAdmin(createdUser, 'Agent').catch(e => console.error('[Admin Registration Alert Error]:', e.message));
+  } catch (emailErr) {
+    console.error('[Registration Email Trigger Error]:', emailErr.message);
+  }
+
   // Sign JWT token for auto-login
   const token = signToken(createdUser._id, createdUser.role);
   const cookieOptions = getCookieOptions();

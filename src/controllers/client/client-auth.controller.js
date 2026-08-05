@@ -354,7 +354,17 @@ const registerClient = asyncHandler(async (req, res, next) => {
     return next(new AppError(`Database saving failed: ${err.message}`, 500));
   }
 
-  // 6) Sign JWT and issue session token for auto-login
+  // 6) Dispatch Welcome Email to Client & Alert to Super Admin asynchronously
+  try {
+    const { sendWelcomeEmail, sendNewRegistrationAlertToAdmin } = require('../../services/email.service');
+    const loginUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/login`;
+    sendWelcomeEmail(createdUser.email, createdUser.name, clientCode, password, loginUrl).catch(e => console.error('[Welcome Email Error]:', e.message));
+    sendNewRegistrationAlertToAdmin(createdUser, 'Client').catch(e => console.error('[Admin Registration Alert Error]:', e.message));
+  } catch (emailErr) {
+    console.error('[Registration Email Trigger Error]:', emailErr.message);
+  }
+
+  // 7) Sign JWT and issue session token for auto-login
   const token = signToken(createdUser._id, createdUser.role);
   const cookieOptions = getCookieOptions();
   res.cookie('jwt', token, cookieOptions);

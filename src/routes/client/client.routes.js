@@ -115,9 +115,13 @@ router.post('/articles/subscribe', subscribeToNewsletter);
 // 8. Assigned Perks (Client view)
 router.get('/perks', getMyPerks);
 
-// 9. Portfolio Projects (Client view)
+// 9. Portfolio Projects & Segments (Client view)
 const { getUpdateHistory } = require('../../controllers/super-admin/project-update.controller');
+const { getAllSegments } = require('../../controllers/super-admin/segment.controller');
+const { applyForProjectInvestment } = require('../../controllers/super-admin/project.controller');
 router.get('/projects', getClientProjects);
+router.post('/projects/:id/apply', applyForProjectInvestment);
+router.get('/segments', getAllSegments);
 router.get('/projects/updates/history', getUpdateHistory);
 
 // 10. Dividends & Allotment Ledger (Client view)

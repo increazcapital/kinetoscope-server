@@ -3,7 +3,7 @@ const ScheduledEmail = require('../../models/ScheduledEmail.model');
 const CustomTemplate = require('../../models/CustomTemplate.model');
 const AutoTriggerConfig = require('../../models/AutoTriggerConfig.model');
 const EmailLog = require('../../models/EmailLog.model');
-const { sendEmail } = require('../../services/email.service');
+const { sendEmail, buildLightEmailTemplate } = require('../../services/email.service');
 const { uploadBufferToCloudinary } = require('../../services/cloudinary.service');
 const AppError = require('../../utils/AppError');
 const asyncHandler = require('../../utils/asyncHandler');
@@ -29,49 +29,40 @@ const getEmailHtml = (templateType, body, customHtml) => {
   if (customHtml) return customHtml;
 
   let headerText = 'Important Announcement';
-  let headerColor = '#0f172a';
-  let accentColor = '#10b981'; // Green
+  let accentColor = '#059669';
 
   switch (templateType) {
     case 'welcome_investor':
       headerText = 'Welcome Investor Kit';
-      headerColor = '#1e3a8a'; // Dark blue
-      accentColor = '#1e3a8a';
+      accentColor = '#0284c7';
       break;
     case 'reward_perk':
       headerText = 'Perk & Reward Announcement';
-      headerColor = '#7c3aed'; // Purple
       accentColor = '#7c3aed';
       break;
     case 'quarterly_statement':
       headerText = 'Quarterly Statement Notice';
-      headerColor = '#0d9488'; // Teal
       accentColor = '#0d9488';
       break;
     case 'account_security':
       headerText = 'Account Security Alert';
-      headerColor = '#dc2626'; // Red
       accentColor = '#dc2626';
       break;
     default:
       headerText = 'Important Announcement';
   }
 
-  return `
-    <div style="font-family: Arial, sans-serif; max-width: 580px; margin: auto; padding: 32px; border: 1px solid #e5e7eb; border-radius: 8px; background-color: #ffffff;">
-      <h2 style="color: ${headerColor}; border-bottom: 2px solid ${accentColor}; padding-bottom: 12px; margin-bottom: 20px; font-size: 20px; font-weight: bold;">
-        ${headerText}
-      </h2>
-      <div style="color: #334155; font-size: 15px; line-height: 1.6; white-space: pre-wrap;">
-        ${body}
-      </div>
-      <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 30px 0;" />
-      <p style="color: #94a3b8; font-size: 11px; text-align: center; line-height: 1.4;">
-        This is an authorized administrative notification from Kinetoscope.<br/>
-        Kinetoscope Film Production Pvt Ltd
-      </p>
+  const contentHtml = `
+    <div style="color: #334155; font-size: 15px; line-height: 1.6; white-space: pre-wrap; margin: 12px 0;">
+      ${body}
     </div>
   `;
+
+  return buildLightEmailTemplate({
+    title: headerText,
+    contentHtml,
+    bannerAccent: accentColor
+  });
 };
 
 /**
