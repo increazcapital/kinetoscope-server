@@ -137,7 +137,11 @@ const updateServiceRequestStatus = asyncHandler(async (req, res, next) => {
 
   const updates = {};
   if (status !== undefined) updates.status = status.toUpperCase();
-  if (adminRemarks !== undefined) updates.adminRemarks = adminRemarks;
+  if (adminRemarks !== undefined) {
+    updates.adminRemarks = adminRemarks;
+    updates.adminNote = adminRemarks;
+    updates.remarks = adminRemarks;
+  }
 
   const updatedRequest = await ServiceRequest.findByIdAndUpdate(
     req.params.id,

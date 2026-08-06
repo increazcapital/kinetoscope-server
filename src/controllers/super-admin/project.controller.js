@@ -453,22 +453,42 @@ const deleteProjectMedia = asyncHandler(async (req, res, next) => {
  * POST /api/client/projects/:id/apply
  */
 const applyForProjectInvestment = asyncHandler(async (req, res, next) => {
-  const { amount } = req.body;
+  const { amount, paymentMethod, transactionRef, proofAttachment } = req.body;
   const project = await Project.findById(req.params.id);
   if (!project) {
     return next(new AppError('Project not found', 404));
   }
 
-  const numAmount = Number(amount) || project.minInvestment || 0;
+  const numAmount = Number(amount) || project.minInvestment || 5;
 
   if (project.slotsAvailable <= 0 || project.status === 'Slot Full') {
     return next(new AppError('All investment slots for this project are currently full', 400));
   }
 
-  // Create Investment Record in Database
-  const Investment = require('../../models/Investment.model');
-  const ServiceRequest = require('../../models/ServiceRequest.model');
+  // Deduct 1 available slot for the project selection request
+  project.slotsAvailable = Math.max(0, project.slotsAvailable - 1);
+  if (project.slotsAvailable === 0) {
+    project.status = 'Slot Full';
+  }
+  await project.save();
+
   const user = req.user;
+  const Investment = require('../../models/Investment.model');
+  const Transaction = require('../../models/Transaction.model');
+  const ServiceRequest = require('../../models/ServiceRequest.model');
+
+  // Handle payment proof file upload if provided
+  let proofAttachmentUrl = req.body.proofAttachment || proofAttachment || '';
+  if (req.file) {
+    try {
+      const { uploadBufferToCloudinary } = require('../../services/cloudinary.service');
+      const cloudUrl = await uploadBufferToCloudinary(req.file.buffer, 'payment-proofs');
+      if (cloudUrl) proofAttachmentUrl = cloudUrl;
+      console.log('[Apply Project] Successfully uploaded payment proof to Cloudinary:', proofAttachmentUrl);
+    } catch (uploadErr) {
+      console.error('[Apply Project] Failed to upload payment proof file to Cloudinary:', uploadErr.message);
+    }
+  }
 
   // Fetch full user with assignedAgent
   const clientUser = await User.findById(user.id).populate('assignedAgent');
@@ -477,40 +497,64 @@ const applyForProjectInvestment = asyncHandler(async (req, res, next) => {
   const agentCode = assignedAgent ? (assignedAgent.clientCode || assignedAgent.agentCode || 'N/A') : 'N/A';
   const clientCode = user.clientCode || (clientUser && clientUser.clientCode) || 'KFPL-CL-1001';
 
+  // 1) Create Deposit Transaction in Database (Status: Pending Super Admin Approval)
+  const newTransaction = await Transaction.create({
+    clientId: user.id,
+    clientName: user.name,
+    clientCode: clientCode,
+    type: 'deposit',
+    amount: numAmount,
+    paymentMethod: paymentMethod || 'Bank Transfer (IMPS/NEFT)',
+    referenceNumber: transactionRef || `TXN-${Date.now()}`,
+    status: 'pending',
+    projectId: project._id,
+    projectName: project.name,
+    proofAttachment: proofAttachmentUrl,
+    remarks: `Deposit request for project selection: "${project.name}" (Ref: ${transactionRef || 'N/A'})`
+  });
+
+  // 2) Create Investment Record in Database (Status: Pending Approval)
   const newInvestment = await Investment.create({
     clientId: user.id,
     clientName: user.name,
     clientCode: clientCode,
     projectId: project._id,
+    projectName: project.name,
     segment: project.segment || 'General',
     investmentAmount: numAmount,
     roiPercentage: parseFloat(project.monthlyRoi) || 1.5,
     riskLevel: project.riskLevel || 'Medium',
     riskPercentage: 20,
     durationMonths: 24,
-    status: 'active',
+    status: 'pending', // PENDING SUPER ADMIN DEPOSIT APPROVAL
     investmentDate: new Date(),
-    remarks: `Client ${user.name} selected project "${project.name}" via Client Dashboard Project Selection.`,
+    sourceTransactionId: newTransaction._id,
     createdBy: user.id,
+    remarks: `Client ${user.name} submitted deposit payment (${transactionRef || 'N/A'}) for project "${project.name}".`
   });
 
-  // Create Detailed Service Request Alert for Super Admin
+  // Link Investment to Transaction
+  newTransaction.linkedInvestmentId = newInvestment._id;
+  await newTransaction.save();
+
+  // 3) Create Detailed Service Request Alert for Super Admin
+  const amountStr = `₹${numAmount.toLocaleString('en-IN')}`;
   const serviceReqDescription =
-    `CLIENT REQUEST DETAILS:\n` +
-    `• Client: ${user.name} (${user.email}, Code: ${user.clientCode || 'N/A'})\n` +
+    `CLIENT DEPOSIT & PROJECT INVESTMENT APPLICATION:\n` +
+    `• Client: ${user.name} (${user.email}, Code: ${clientCode})\n` +
     `• Assigned Agent: ${agentName} (${agentCode})\n` +
     `• Selected Project: ${project.name}\n` +
     `• Segment: ${project.segment}\n` +
-    `• Investment Amount: ₹${numAmount.toLocaleString('en-IN')}\n` +
+    `• Capital Deposit Amount: ${amountStr}\n` +
+    `• Payment Gateway / Method: ${paymentMethod || 'Bank Transfer'}\n` +
+    `• Transaction Reference / UTR No: ${transactionRef || 'N/A'}\n` +
     `• Expected ROI Rate: ${project.monthlyRoi || '1.5%'}\n` +
-    `• Project Target Funding: ₹${(project.targetFunding || 25000000).toLocaleString('en-IN')}\n` +
-    `• Updated Total Funded: ₹${project.fundedAmount.toLocaleString('en-IN')}\n` +
-    `• Request Purpose: Client submitted project investment selection from Client Portal.`;
+    `• Request Status: PENDING SUPER ADMIN APPROVAL (See Deposit & Withdrawal Requests page).`;
 
   const serviceReq = await ServiceRequest.create({
     createdBy: user.id,
     category: 'Project Investment Request',
-    subject: `Project Investment Selection - ${project.name} (₹${numAmount.toLocaleString('en-IN')})`,
+    subject: `Deposit & Investment Request - ${project.name} (${amountStr})`,
     description: serviceReqDescription,
     status: 'OPEN',
   });
@@ -521,17 +565,20 @@ const applyForProjectInvestment = asyncHandler(async (req, res, next) => {
     sendNewRegistrationAlertToAdmin({
       name: user.name,
       email: user.email,
-      clientCode: user.clientCode || 'N/A'
-    }, `Project Investment Request for ${project.name} by ${user.name} (Amount: ₹${numAmount.toLocaleString('en-IN')})`).catch(e => console.error('[Email Alert Error]:', e.message));
+      phone: user.phone || 'N/A',
+      role: 'Client Deposit & Project Selection',
+      clientCode: clientCode,
+    });
   } catch (emailErr) {
-    console.error('[Email Alert Exception]:', emailErr.message);
+    console.error('Failed to dispatch admin email alert for deposit request:', emailErr.message);
   }
 
-  res.status(200).json({
+  res.status(201).json({
     success: true,
-    message: `Investment request for ${project.name} (₹${numAmount.toLocaleString('en-IN')}) submitted successfully! Super Admin has been notified.`,
+    message: `Payment deposit & project application submitted successfully! Pending Super Admin approval.`,
     data: {
       project,
+      transaction: newTransaction,
       investment: newInvestment,
       serviceRequest: serviceReq,
     },

@@ -39,7 +39,7 @@ const investmentSchema = new mongoose.Schema(
     investmentAmount: {
       type: Number,
       required: [true, 'Investment amount is required'],
-      min: [0.01, 'Investment amount must be a positive number'],
+      min: [0, 'Investment amount must be a non-negative number'],
     },
     roiPercentage: {
       type: Number,
@@ -70,10 +70,10 @@ const investmentSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: {
-        values: ['active', 'completed', 'cancelled'],
-        message: 'Status must be either: active, completed, or cancelled',
+        values: ['pending', 'active', 'completed', 'cancelled'],
+        message: 'Status must be either: pending, active, completed, or cancelled',
       },
-      default: 'active',
+      default: 'pending',
     },
     remarks: {
       type: String,

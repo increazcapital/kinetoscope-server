@@ -96,23 +96,37 @@ const seedMockDividends = async (creatorId) => {
 };
 
 /**
- * Configure/Create a Dividend Pool (Super Admin)
+ * Configure/Create or Clear a Dividend Pool (Super Admin)
  * POST /api/super-admin/dividends/pools
  */
 const createPool = asyncHandler(async (req, res, next) => {
   const { poolAmount, name, remarks, projectId } = req.body;
+  const amt = Number(poolAmount || 0);
 
-  const pool = await DividendPool.create({
-    poolAmount: Number(poolAmount),
-    name: name || 'General Pool',
-    remarks: remarks || '',
-    projectId: projectId || undefined,
-    createdBy: req.user.id,
-  });
+  let pool = null;
+  if (amt === 0 && projectId) {
+    // Clear all pool records for this project
+    await DividendPool.deleteMany({ projectId });
+    await Project.findByIdAndUpdate(projectId, { totalDividendPool: 0 });
+  } else {
+    pool = await DividendPool.create({
+      poolAmount: amt,
+      name: name || (amt === 0 ? 'Pool Cleared' : 'General Pool'),
+      remarks: remarks || '',
+      projectId: projectId || undefined,
+      createdBy: req.user.id,
+    });
 
-  res.status(201).json({
+    if (projectId) {
+      const allPools = await DividendPool.find({ projectId }).lean();
+      const sum = allPools.reduce((s, p) => s + (p.poolAmount || 0), 0);
+      await Project.findByIdAndUpdate(projectId, { totalDividendPool: sum });
+    }
+  }
+
+  res.status(200).json({
     success: true,
-    message: 'Dividend pool configured successfully',
+    message: amt === 0 ? 'Dividend pool cleared successfully' : 'Dividend pool configured successfully',
     data: pool,
   });
 });
@@ -326,6 +340,22 @@ const getClientDividendStats = asyncHandler(async (req, res, next) => {
   });
 });
 
+/**
+ * Delete a Dividend Allotment (Super Admin)
+ * DELETE /api/super-admin/dividends/allotments/:id
+ */
+const deleteAllotment = asyncHandler(async (req, res, next) => {
+  const allotment = await DividendAllotment.findByIdAndDelete(req.params.id);
+  if (!allotment) {
+    return next(new AppError('Target dividend allotment record not found', 404));
+  }
+
+  res.status(200).json({
+    success: true,
+    message: 'Dividend allotment entry deleted successfully',
+  });
+});
+
 module.exports = {
   createPool,
   createAllotment,
@@ -333,4 +363,5 @@ module.exports = {
   getAllAllotments,
   getClientAllotments,
   getClientDividendStats,
+  deleteAllotment,
 };

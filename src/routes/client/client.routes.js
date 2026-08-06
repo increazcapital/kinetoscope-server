@@ -122,7 +122,7 @@ const { getUpdateHistory } = require('../../controllers/super-admin/project-upda
 const { getAllSegments } = require('../../controllers/super-admin/segment.controller');
 const { applyForProjectInvestment } = require('../../controllers/super-admin/project.controller');
 router.get('/projects', getClientProjects);
-router.post('/projects/:id/apply', applyForProjectInvestment);
+router.post('/projects/:id/apply', memoryUpload.single('file'), applyForProjectInvestment);
 router.get('/segments', getAllSegments);
 router.get('/projects/updates/history', getUpdateHistory);
 

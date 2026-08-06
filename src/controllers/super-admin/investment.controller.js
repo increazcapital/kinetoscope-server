@@ -359,10 +359,125 @@ const clearAllInvestments = asyncHandler(async (req, res, next) => {
   });
 });
 
+/**
+ * Approve an Investment Selection Request (Super Admin only)
+ * PATCH /api/super-admin/investments/:id/approve
+ */
+const approveInvestment = asyncHandler(async (req, res, next) => {
+  const { investmentAmount } = req.body;
+  const investment = await Investment.findById(req.params.id);
+  if (!investment) {
+    return next(new AppError('Investment record not found.', 404));
+  }
+
+  const clientUser = await User.findById(investment.clientId);
+  if (!clientUser) {
+    return next(new AppError('Client user not found.', 404));
+  }
+
+  const approvedAmount = Number(investmentAmount) !== undefined && !isNaN(Number(investmentAmount)) && Number(investmentAmount) >= 0 
+    ? Number(investmentAmount) 
+    : (investment.investmentAmount || 0);
+
+  investment.status = 'active';
+  if (approvedAmount > 0) {
+    investment.investmentAmount = approvedAmount;
+  }
+  investment.approvedAt = new Date();
+  await investment.save();
+
+  // Also approve linked Transaction if present
+  if (investment.sourceTransactionId) {
+    try {
+      const Transaction = require('../../models/Transaction.model');
+      await Transaction.findByIdAndUpdate(investment.sourceTransactionId, {
+        $set: {
+          status: 'approved',
+          amount: approvedAmount,
+          actionBy: req.user.id || req.user._id,
+          actionAt: new Date()
+        }
+      });
+    } catch (txErr) {
+      console.error('[Approve Investment] Failed to update linked transaction:', txErr.message);
+    }
+  }
+
+  // 1) Update Project funded amount if linked
+  if (investment.projectId) {
+    const project = await Project.findById(investment.projectId);
+    if (project) {
+      const activeInvestments = await Investment.find({ projectId: project._id, status: 'active' });
+      const totalFunded = activeInvestments.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
+      project.fundedAmount = totalFunded;
+      await project.save();
+    }
+  }
+
+  // 2) Update ClientProfile totalInvestment
+  const clientInvestments = await Investment.find({ clientId: clientUser._id, status: 'active' });
+  const newClientTotal = clientInvestments.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
+  await ClientProfile.findOneAndUpdate(
+    { userId: clientUser._id },
+    { $set: { totalInvestment: newClientTotal } }
+  );
+
+  // 3) Resolve any matching open ServiceRequest for this project selection
+  try {
+    const ServiceRequest = require('../../models/ServiceRequest.model');
+    await ServiceRequest.updateMany(
+      { createdBy: clientUser._id, category: 'Project Investment Request', status: { $in: ['OPEN', 'IN PROGRESS'] } },
+      { $set: { status: 'RESOLVED', adminRemarks: `Approved investment selection for ${approvedAmount > 0 ? `₹${approvedAmount.toLocaleString('en-IN')}` : 'Project deal'}` } }
+    );
+  } catch (srErr) {
+    console.error('[Approve Investment] Failed to resolve open service requests:', srErr.message);
+  }
+
+  // 4) Send Email Notification to registered Client email
+  if (clientUser.email) {
+    try {
+      const { sendEmail, buildLightEmailTemplate } = require('../../services/email.service');
+      const contentHtml = `
+        <p style="font-size: 15px; color: #1E293B;">Hello <strong>${clientUser.name}</strong>,</p>
+        <p style="font-size: 14px; color: #475569;">Congratulations! Your project investment selection request for <strong>${investment.projectName || 'your selected project'}</strong> has been officially approved by Super Admin.</p>
+        <div style="margin: 20px 0; padding: 18px; background-color: #F0FDF4; border-left: 4px solid #10B981; border-radius: 8px; border: 1px solid #DCFCE7;">
+          <p style="margin: 0; color: #166534; font-weight: 700; font-size: 15px;">Status: APPROVED / ACTIVE</p>
+          ${approvedAmount > 0 ? `<p style="margin: 8px 0 0 0; color: #15803D; font-size: 14px;"><strong>Approved Investment Amount:</strong> ₹${approvedAmount.toLocaleString('en-IN')}</p>` : ''}
+          <p style="margin: 6px 0 0 0; color: #15803D; font-size: 13.5px;"><strong>Expected Monthly ROI:</strong> ${investment.roiPercentage || 1.5}%</p>
+        </div>
+        <p style="font-size: 14px; color: #475569;">You can view your active portfolio and performance metrics anytime in your Client Portal Dashboard.</p>
+      `;
+      const html = buildLightEmailTemplate({
+        title: '🎉 Investment Request Approved',
+        subtitle: `Project: ${investment.projectName || 'Kinetoscope Project'}`,
+        contentHtml,
+        bannerAccent: '#10B981'
+      });
+
+      await sendEmail({
+        to: clientUser.email,
+        subject: `🎉 Investment Request Approved - ${investment.projectName || 'Kinetoscope'}`,
+        text: `Hello ${clientUser.name},\n\nYour project investment selection request for ${investment.projectName || 'your selected project'} has been officially approved by Super Admin.\n\nApproved Amount: ₹${approvedAmount.toLocaleString('en-IN')}\n\n— Kinetoscope Support Team`,
+        html,
+      });
+      console.log(`[Approve Investment] Email sent successfully to ${clientUser.email}`);
+    } catch (emailErr) {
+      console.error(`[Approve Investment] Failed to send email to ${clientUser.email}:`, emailErr.message);
+    }
+  }
+
+  res.status(200).json({
+    success: true,
+    message: `Investment for ${investment.projectName || 'project'} approved successfully! Client has been notified via email & dashboard.`,
+    data: investment,
+  });
+});
+
 module.exports = {
   createInvestment,
   getAllInvestments,
   getInvestmentById,
+  approveInvestment,
   extendInvestmentContract,
   deleteInvestment,
   clearAllInvestments,

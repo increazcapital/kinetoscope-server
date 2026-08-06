@@ -151,14 +151,29 @@ const approveRejectTransaction = asyncHandler(async (req, res, next) => {
       const roiPct = projectObj?.monthlyRoi ? parseFloat(projectObj.monthlyRoi) : (clientProfile ? (clientProfile.monthlyRoi || 1.5) : 1.5);
       const riskPct = 0; // default risk %
 
-      // Check if an Investment for this exact transaction already exists (idempotent guard)
-      const existingInvestment = await Investment.findOne({ sourceTransactionId: transaction._id });
-      if (!existingInvestment) {
+      // Check if an Investment for this exact transaction already exists
+      const existingInvestment = await Investment.findOne({
+        $or: [
+          { sourceTransactionId: transaction._id },
+          ...(transaction.linkedInvestmentId ? [{ _id: transaction.linkedInvestmentId }] : [])
+        ]
+      });
+
+      let activeInvObj = null;
+      if (existingInvestment) {
+        existingInvestment.status = 'active';
+        existingInvestment.investmentAmount = transaction.amount;
+        existingInvestment.approvedAt = new Date();
+        await existingInvestment.save();
+        activeInvObj = existingInvestment;
+        console.log(`[Investment Activated] Pending Investment ${existingInvestment._id} activated on deposit approval.`);
+      } else {
         const newInvestment = await Investment.create({
           clientId: transaction.clientId,
           clientName: transaction.clientName || (clientUser ? clientUser.name : 'Unknown'),
           clientCode: transaction.clientCode || (clientUser ? clientUser.clientCode : ''),
           projectId: transaction.projectId || undefined,
+          projectName: transaction.projectName || projectObj?.name || '',
           segment: projectObj?.segment || transaction.segment || transaction.category || 'General',
           investmentAmount: transaction.amount,
           roiPercentage: roiPct,
@@ -171,14 +186,77 @@ const approveRejectTransaction = asyncHandler(async (req, res, next) => {
           sourceTransactionId: transaction._id
         });
 
-        // Link investment back to transaction
         transaction.linkedInvestmentId = newInvestment._id;
         await transaction.save();
-
+        activeInvObj = newInvestment;
         console.log(`[Investment Created] Deposit TXN ${transaction._id} approved → Investment ${newInvestment._id} created for client ${transaction.clientCode || transaction.clientName}`);
       }
+
+      // Update Project funded amount if linked to a project
+      if (transaction.projectId) {
+        const Project = require('../../models/Project.model');
+        const projToUpdate = await Project.findById(transaction.projectId);
+        if (projToUpdate) {
+          const activeProjInvs = await Investment.find({ projectId: projToUpdate._id, status: 'active' });
+          const totalProjFunded = activeProjInvs.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
+          projToUpdate.fundedAmount = totalProjFunded;
+          await projToUpdate.save();
+        }
+      }
+
+      // Recalculate ClientProfile total investment balance
+      const ClientProfile = require('../../models/ClientProfile.model');
+      const allActiveClientInvs = await Investment.find({ clientId: transaction.clientId, status: 'active' });
+      const newClientTotalInv = allActiveClientInvs.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
+      await ClientProfile.findOneAndUpdate(
+        { userId: transaction.clientId },
+        { $set: { totalInvestment: newClientTotalInv } }
+      );
+
+      // Auto-resolve any open Service Request for project investment
+      try {
+        const ServiceRequest = require('../../models/ServiceRequest.model');
+        await ServiceRequest.updateMany(
+          { createdBy: transaction.clientId, category: 'Project Investment Request', status: { $in: ['OPEN', 'IN PROGRESS'] } },
+          { $set: { status: 'RESOLVED', adminRemarks: `Deposit payment of ₹${transaction.amount.toLocaleString('en-IN')} approved by Super Admin.` } }
+        );
+      } catch (srErr) {
+        console.error('[Deposit Approval] Failed to update service requests:', srErr.message);
+      }
+
+      // Dispatch Email Notification to Client
+      if (clientUser && clientUser.email) {
+        try {
+          const { sendEmail, buildLightEmailTemplate } = require('../../services/email.service');
+          const contentHtml = `
+            <p style="font-size: 15px; color: #1E293B;">Hello <strong>${clientUser.name}</strong>,</p>
+            <p style="font-size: 14px; color: #475569;">Great news! Your capital deposit of <strong>₹${transaction.amount.toLocaleString('en-IN')}</strong> ${transaction.projectName ? `for project <strong>${transaction.projectName}</strong>` : ''} has been approved by Super Admin.</p>
+            <div style="margin: 20px 0; padding: 18px; background-color: #F0FDF4; border-left: 4px solid #10B981; border-radius: 8px; border: 1px solid #DCFCE7;">
+              <p style="margin: 0; color: #166534; font-weight: 700; font-size: 15px;">Status: APPROVED & ACTIVE</p>
+              <p style="margin: 8px 0 0 0; color: #15803D; font-size: 14px;"><strong>Approved Investment Amount:</strong> ₹${transaction.amount.toLocaleString('en-IN')}</p>
+              <p style="margin: 4px 0 0 0; color: #15803D; font-size: 13.5px;"><strong>Transaction / Reference UTR:</strong> ${transaction.referenceNumber || 'N/A'}</p>
+            </div>
+            <p style="font-size: 14px; color: #475569;">Your funds have been added to your active investment portfolio. You can view your portfolio details anytime in your Client Portal Dashboard.</p>
+          `;
+          const html = buildLightEmailTemplate({
+            title: '🎉 Payment Deposit Approved',
+            subtitle: `Transaction Ref: ${transaction.referenceNumber || transaction._id}`,
+            contentHtml,
+            bannerAccent: '#10B981'
+          });
+
+          await sendEmail({
+            to: clientUser.email,
+            subject: `🎉 Payment Deposit & Investment Approved - ${transaction.projectName || 'Kinetoscope'}`,
+            text: `Hello ${clientUser.name},\n\nYour deposit payment of ₹${transaction.amount.toLocaleString('en-IN')} has been approved by Super Admin.\n\n— Kinetoscope Support Team`,
+            html,
+          });
+          console.log(`[Deposit Approval] Email sent successfully to ${clientUser.email}`);
+        } catch (emailErr) {
+          console.error(`[Deposit Approval] Failed to send email to ${clientUser.email}:`, emailErr.message);
+        }
+      }
     } catch (investmentError) {
-      // Log but don't block the approval response
       console.error('[Investment Creation Error] Failed to auto-create investment on deposit approval:', investmentError.message);
     }
 

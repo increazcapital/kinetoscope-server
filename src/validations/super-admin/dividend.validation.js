@@ -21,7 +21,7 @@ const createPoolValidationRules = [
   body('poolAmount')
     .notEmpty().withMessage('Pool amount is required')
     .isNumeric().withMessage('Pool amount must be a number')
-    .isFloat({ min: 0.01 }).withMessage('Pool amount must be greater than 0'),
+    .isFloat({ min: 0 }).withMessage('Pool amount cannot be negative'),
 
   body('name')
     .optional()

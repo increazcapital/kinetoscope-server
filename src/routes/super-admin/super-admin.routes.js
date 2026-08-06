@@ -14,6 +14,7 @@ const {
   createInvestment,
   getAllInvestments,
   getInvestmentById,
+  approveInvestment,
   extendInvestmentContract,
   deleteInvestment,
   clearAllInvestments,
@@ -173,6 +174,7 @@ const {
   createAllotment,
   getDividendStats,
   getAllAllotments,
+  deleteAllotment,
 } = require('../../controllers/super-admin/dividend.controller');
 
 const {
@@ -306,6 +308,7 @@ router.route('/investments/:id')
   .get(requirePermission('manageInvestments', 'view'), getInvestmentById)
   .delete(requirePermission('manageInvestments', 'delete'), deleteInvestment);
 
+router.patch('/investments/:id/approve', requirePermission('manageInvestments', 'edit'), approveInvestment);
 router.patch('/investments/:id/extend', requirePermission('manageInvestments', 'edit'), extendContractValidationRules, extendInvestmentContract);
 
 // 4. ROI & Payouts Management (Complete Transaction Details)
@@ -542,6 +545,7 @@ router.get('/dividends/stats', requirePermission('manageInvestments', 'view'), g
 router.get('/dividends/allotments', requirePermission('manageInvestments', 'view'), getAllAllotments);
 router.post('/dividends/pools', requirePermission('manageInvestments', 'create'), createPoolValidationRules, createPool);
 router.post('/dividends/allotments', requirePermission('manageInvestments', 'create'), createAllotmentValidationRules, createAllotment);
+router.delete('/dividends/allotments/:id', requirePermission('manageInvestments', 'delete'), deleteAllotment);
 
 // 18. Rewards & Withdrawal Configuration
 router.route('/rewards-config')

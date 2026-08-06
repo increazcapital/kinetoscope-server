@@ -31,6 +31,7 @@ const serviceRequestSchema = new mongoose.Schema(
           'Contract Period Extended',
           'Payment Issue',
           'Document Request',
+          'Project Investment Request',
           'Other',
         ],
         message: 'Invalid request category option',
@@ -60,6 +61,16 @@ const serviceRequestSchema = new mongoose.Schema(
       default: 'OPEN',
     },
     adminRemarks: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    adminNote: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    remarks: {
       type: String,
       default: '',
       trim: true,
