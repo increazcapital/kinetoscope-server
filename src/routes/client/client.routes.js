@@ -99,8 +99,10 @@ router.get('/payouts', getClientPayouts);
 router.get('/profile', getClientProfile);
 router.patch('/profile', updateClientProfileRules, updateClientProfile);
 
-// 5. Client Documents Retrieval
+// 5. Client Documents Retrieval & Uploads
+const { uploadAgreementDocument } = require('../../controllers/client/client-dashboard.controller');
 router.get('/documents', getClientDocuments);
+router.post('/documents/agreement', memoryUpload.single('file'), uploadAgreementDocument);
 
 // 6. Settings - Change Password Flow (OTP verified)
 router.post('/settings/change-password/send-otp', sendChangePasswordOtpRules, sendChangePasswordOtpHandler);

@@ -129,6 +129,30 @@ const agentProfileSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    agreementDocument: {
+      type: String,
+      default: '',
+    },
+    panDocumentVerified: {
+      type: Boolean,
+      default: false,
+    },
+    idProofDocumentVerified: {
+      type: Boolean,
+      default: false,
+    },
+    bankProofDocumentVerified: {
+      type: Boolean,
+      default: false,
+    },
+    nomineeProofDocumentVerified: {
+      type: Boolean,
+      default: false,
+    },
+    agreementDocumentVerified: {
+      type: Boolean,
+      default: false,
+    },
     // Tracks whether background Cloudinary upload is complete
     documentStatus: {
       type: String,

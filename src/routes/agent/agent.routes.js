@@ -19,6 +19,7 @@ const {
   getAgentCommissions,
   getAgentProfile,
   getAgentDocuments,
+  uploadAgentAgreementDocument,
   getAgentClientById,
 } = require('../../controllers/agent/agent-dashboard.controller');
 
@@ -91,6 +92,8 @@ router.get('/profile', getAgentProfile);
 
 // 6. Agent Documents Retrieval
 router.get('/documents', getAgentDocuments);
+
+router.post('/documents/agreement', memoryUpload.single('file'), uploadAgentAgreementDocument);
 
 // 7. Settings - Change Password Flow (OTP verified)
 const {

@@ -114,6 +114,7 @@ const getClientDetailsData = async (clientId) => {
       aadhaarDocumentVerified: profile.aadhaarDocumentVerified || false,
       bankProofDocumentVerified: profile.bankProofDocumentVerified || false,
       agreementDocumentVerified: profile.agreementDocumentVerified || false,
+      agreementDocumentVerifiedAt: profile.agreementDocumentVerifiedAt || null,
       nomineeProofDocumentVerified: profile.nomineeProofDocumentVerified || false,
     },
   };

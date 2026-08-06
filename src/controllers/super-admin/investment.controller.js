@@ -1,6 +1,8 @@
 const Investment = require('../../models/Investment.model');
 const User = require('../../models/User.model');
 const ClientProfile = require('../../models/ClientProfile.model');
+const Transaction = require('../../models/Transaction.model');
+const Project = require('../../models/Project.model');
 const { sendInvestmentAssignmentNotification } = require('../../services/email.service');
 const { ROLES } = require('../../constants/roles');
 const AppError = require('../../utils/AppError');
@@ -168,34 +170,32 @@ const createInvestment = asyncHandler(async (req, res, next) => {
  */
 const getAllInvestments = asyncHandler(async (req, res, next) => {
   const page = parseInt(req.query.page, 10) || 1;
-  const limit = parseInt(req.query.limit, 10) || 10;
+  const limit = parseInt(req.query.limit, 10) || 500;
   const skip = (page - 1) * limit;
 
   const queryObj = {};
 
-  // Search by client name (case-insensitive partial match)
   if (req.query.clientName) {
     queryObj.clientName = { $regex: req.query.clientName, $options: 'i' };
   }
-
-  // Search by client code (case-insensitive exact-ish match)
   if (req.query.clientCode) {
     queryObj.clientCode = { $regex: req.query.clientCode, $options: 'i' };
   }
-
-  // Filter by segment
   if (req.query.segment) {
     queryObj.segment = req.query.segment;
   }
-
-  // Filter by status
   if (req.query.status) {
     queryObj.status = req.query.status;
   }
 
   const total = await Investment.countDocuments(queryObj);
   const investments = await Investment.find(queryObj)
-    .populate('clientId', 'name email')
+    .populate({
+      path: 'clientId',
+      select: 'name email clientCode assignedAgent',
+      populate: { path: 'assignedAgent', select: 'name email clientCode agentCode' }
+    })
+    .populate('projectId', 'name segment portfolioValue targetFunding minInvestment monthlyRoi riskLevel status bannerImage mediaFiles summary currentUpdate allocationFocus horizon totalSlots slotsAvailable fundedAmount health milestoneProgress')
     .populate('createdBy', 'name email role')
     .sort({ createdAt: -1 })
     .skip(skip)
@@ -289,6 +289,53 @@ const deleteInvestment = asyncHandler(async (req, res, next) => {
 
   if (!investment) {
     return next(new AppError('Investment record not found.', 404));
+  }
+
+  // Recalculate Project funding & available slots from actual remaining active investments
+  if (investment.projectId) {
+    try {
+      const remainingInvestments = await Investment.find({ projectId: investment.projectId, status: 'active' }).lean();
+      const realFunded = remainingInvestments.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
+      const project = await Project.findById(investment.projectId);
+      if (project) {
+        const totalSlots = project.totalSlots || 20;
+        const realSlotsAvail = Math.max(0, totalSlots - remainingInvestments.length);
+        project.fundedAmount = realFunded;
+        project.slotsAvailable = realSlotsAvail;
+        if (realSlotsAvail > 0 && project.status === 'Slot Full') {
+          project.status = 'Open';
+        }
+        await project.save();
+        console.log(`[Project Funding Recalculated] Project ${project.name} fundedAmount -> ₹${realFunded}, slotsAvailable -> ${realSlotsAvail}`);
+      }
+    } catch (projErr) {
+      console.error('Failed to restore project slots on investment deletion:', projErr);
+    }
+  }
+
+  // Delete or clean up linked transaction if created from a deposit
+  if (investment.sourceTransactionId) {
+    try {
+      const Transaction = require('../../models/Transaction.model');
+      await Transaction.findByIdAndDelete(investment.sourceTransactionId);
+    } catch (txErr) {
+      console.error('Failed to delete linked transaction on investment deletion:', txErr);
+    }
+  }
+
+  // Recalculate client total investment in profile
+  if (investment.clientId) {
+    try {
+      const remainingInvestments = await Investment.find({ clientId: investment.clientId });
+      const newTotal = remainingInvestments.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
+      const ClientProfile = require('../../models/ClientProfile.model');
+      await ClientProfile.findOneAndUpdate(
+        { userId: investment.clientId },
+        { $set: { totalInvestment: newTotal } }
+      );
+    } catch (profileErr) {
+      console.error('Failed to recalculate client total investment:', profileErr);
+    }
   }
 
   res.status(200).json({

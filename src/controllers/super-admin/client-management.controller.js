@@ -836,6 +836,9 @@ const verifyDocument = asyncHandler(async (req, res, next) => {
   // Mark the specific document as verified
   const verifiedField = `${documentField}Verified`;
   profile[verifiedField] = true;
+  if (documentField === 'agreementDocument') {
+    profile.agreementDocumentVerifiedAt = new Date();
+  }
 
   // Check if ALL documents are now verified
   const allVerified =

@@ -12,7 +12,7 @@ const asyncHandler = require('../../utils/asyncHandler');
  * POST /api/client/transactions
  */
 const requestTransaction = asyncHandler(async (req, res, next) => {
-  const { type, amount, paymentMethod, referenceNumber, remarks } = req.body;
+  const { type, amount, paymentMethod, referenceNumber, remarks, projectId, projectName } = req.body;
 
   // Basic validation
   if (!type || !amount) {
@@ -26,6 +26,18 @@ const requestTransaction = asyncHandler(async (req, res, next) => {
   const numericAmount = Number(amount);
   if (isNaN(numericAmount) || numericAmount <= 0) {
     return next(new AppError('Amount must be a positive number.', 400));
+  }
+
+  let targetProjectId = null;
+  let targetProjectName = projectName || '';
+
+  if (projectId) {
+    const Project = require('../../models/Project.model');
+    const proj = await Project.findById(projectId);
+    if (proj) {
+      targetProjectId = proj._id;
+      targetProjectName = proj.name;
+    }
   }
 
   // File proof receipt handle (specifically required for deposits)
@@ -55,6 +67,8 @@ const requestTransaction = asyncHandler(async (req, res, next) => {
     remarks,
     proofAttachment: proofAttachmentUrl,
     status: TRANSACTION_STATUS.PENDING,
+    projectId: targetProjectId,
+    projectName: targetProjectName,
   });
 
   // Notify all active Super Admins via email

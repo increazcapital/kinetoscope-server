@@ -81,6 +81,16 @@ const transactionSchema = new mongoose.Schema(
       ref: 'Investment',
       default: null,
     },
+    projectId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Project',
+      default: null,
+    },
+    projectName: {
+      type: String,
+      trim: true,
+      default: '',
+    },
   },
   {
     timestamps: true,

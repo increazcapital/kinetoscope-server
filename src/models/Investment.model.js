@@ -53,7 +53,6 @@ const investmentSchema = new mongoose.Schema(
     },
     riskLevel: {
       type: String,
-      enum: ['Low', 'Medium', 'High', 'Medium High'],
       default: 'Medium',
     },
     durationMonths: {

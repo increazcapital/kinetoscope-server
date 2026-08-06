@@ -100,6 +100,11 @@ const projectSchema = new mongoose.Schema(
       default: '',
       trim: true,
     },
+    horizon: {
+      type: String,
+      default: '12 Months',
+      trim: true,
+    },
     totalDividendPool: {
       type: Number,
       default: 0,

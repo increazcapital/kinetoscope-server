@@ -78,9 +78,12 @@ const getAgentDetailsData = async (agentId) => {
       idProofDocument: profile.idProofDocument || '',
       bankProofDocument: profile.bankProofDocument || '',
       nomineeProofDocument: profile.nomineeProofDocument || '',
+      agreementDocument: profile.agreementDocument || '',
       panDocumentVerified: profile.panDocumentVerified || false,
       idProofDocumentVerified: profile.idProofDocumentVerified || false,
       bankProofDocumentVerified: profile.bankProofDocumentVerified || false,
+      agreementDocumentVerified: profile.agreementDocumentVerified || false,
+      agreementDocumentVerifiedAt: profile.agreementDocumentVerifiedAt || null,
       nomineeProofDocumentVerified: profile.nomineeProofDocumentVerified || false,
       kycStatus: computedKycStatus,
       agentCode: user.clientCode || '',
@@ -133,6 +136,12 @@ const getAgentDocumentsData = async (agentId) => {
       key: 'bankProofDocument',
       description: 'Cancelled Cheque or Bank Statement',
       fileSize: '1.8 MB',
+    },
+    {
+      name: 'Agreement Document',
+      key: 'agreementDocument',
+      description: 'Signed Agent Service Agreement Contract',
+      fileSize: '3.1 MB',
     },
   ];
 

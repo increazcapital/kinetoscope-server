@@ -576,6 +576,43 @@ const getClientWealthAdvisor = asyncHandler(async (req, res, next) => {
   });
 });
 
+/**
+ * Upload or update signed agreement document for Client
+ * POST /api/client/documents/agreement
+ */
+const uploadAgreementDocument = asyncHandler(async (req, res, next) => {
+  const profile = await ClientProfile.findOne({ userId: req.user.id });
+  if (!profile) {
+    return next(new AppError('Client profile not found.', 404));
+  }
+
+  let fileUrl = req.body.fileUrl || '';
+  if (req.file) {
+    const { uploadBufferToCloudinary } = require('../../services/cloudinary.service');
+    try {
+      fileUrl = await uploadBufferToCloudinary(req.file.buffer, 'kinetoscope/clients/agreements');
+    } catch (err) {
+      return next(new AppError(`File upload failed: ${err.message}`, 500));
+    }
+  }
+
+  if (!fileUrl) {
+    return next(new AppError('Please select or upload a valid agreement document file.', 400));
+  }
+
+  profile.agreementDocument = fileUrl;
+  profile.agreementDocumentVerified = false;
+  await profile.save();
+
+  res.status(200).json({
+    success: true,
+    message: 'Signed agreement document uploaded successfully',
+    data: {
+      agreementDocument: fileUrl,
+    },
+  });
+});
+
 module.exports = {
   calculateDashboardData,
   getClientDashboard,
@@ -584,6 +621,7 @@ module.exports = {
   getClientProfile,
   updateClientProfile,
   getClientDocuments,
+  uploadAgreementDocument,
   getClientPayouts,
   getClientWealthAdvisor,
 };

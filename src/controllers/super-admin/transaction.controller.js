@@ -50,6 +50,7 @@ const getPendingApprovals = asyncHandler(async (req, res, next) => {
   const transactions = await Transaction.find(query)
     .populate('clientId', 'name email clientCode')
     .populate('agentId', 'name email clientCode')
+    .populate('projectId', 'name segment minInvestment targetFunding')
     .sort({ createdAt: -1 })
     .skip(skip)
     .limit(limit)
@@ -63,6 +64,7 @@ const getPendingApprovals = asyncHandler(async (req, res, next) => {
       ...tx,
       investorName: user.name || tx.clientName || 'Unknown User',
       investorCode: isAgent ? (user.clientCode ? `AGT-${user.clientCode.replace('AGT-', '')}` : '—') : (user.clientCode || tx.clientCode || '—'),
+      projectName: tx.projectName || (tx.projectId ? tx.projectId.name : ''),
     };
   });
 
@@ -139,7 +141,14 @@ const approveRejectTransaction = asyncHandler(async (req, res, next) => {
       const clientUser = await User.findById(transaction.clientId).lean();
       const clientProfile = clientUser ? await ClientProfile.findOne({ userId: transaction.clientId }).lean() : null;
 
-      const roiPct = clientProfile ? (clientProfile.monthlyRoi || 0) : 0;
+      // Check if a specific Project was targeted for this deposit
+      let projectObj = null;
+      if (transaction.projectId) {
+        const Project = require('../../models/Project.model');
+        projectObj = await Project.findById(transaction.projectId).lean();
+      }
+
+      const roiPct = projectObj?.monthlyRoi ? parseFloat(projectObj.monthlyRoi) : (clientProfile ? (clientProfile.monthlyRoi || 1.5) : 1.5);
       const riskPct = 0; // default risk %
 
       // Check if an Investment for this exact transaction already exists (idempotent guard)
@@ -149,15 +158,16 @@ const approveRejectTransaction = asyncHandler(async (req, res, next) => {
           clientId: transaction.clientId,
           clientName: transaction.clientName || (clientUser ? clientUser.name : 'Unknown'),
           clientCode: transaction.clientCode || (clientUser ? clientUser.clientCode : ''),
+          projectId: transaction.projectId || undefined,
+          segment: projectObj?.segment || transaction.segment || transaction.category || 'General',
           investmentAmount: transaction.amount,
           roiPercentage: roiPct,
           riskPercentage: riskPct,
-          riskLevel: 'Medium',
+          riskLevel: projectObj?.riskLevel || 'Medium',
           investmentDate: transaction.actionAt || new Date(),
           status: 'active',
           createdBy: req.user.id || req.user._id,
-          remarks: `Auto-created from approved deposit transaction #${transaction._id}`,
-          segment: transaction.segment || transaction.category || (transaction.projectId ? 'Project Allocated' : 'Unallocated'),
+          remarks: `Auto-created from approved deposit transaction #${transaction._id}${transaction.projectName ? ` for project "${transaction.projectName}"` : ''}`,
           sourceTransactionId: transaction._id
         });
 
@@ -354,6 +364,7 @@ const getTransactionById = asyncHandler(async (req, res, next) => {
   const transaction = await Transaction.findById(id)
     .populate('clientId', 'name email clientCode')
     .populate('agentId', 'name email clientCode')
+    .populate('projectId', 'name segment minInvestment targetFunding riskLevel')
     .lean();
 
   if (!transaction) {

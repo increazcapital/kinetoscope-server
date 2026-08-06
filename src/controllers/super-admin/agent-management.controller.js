@@ -960,6 +960,7 @@ const verifyAgentDocument = asyncHandler(async (req, res, next) => {
     'panDocument',
     'idProofDocument',
     'bankProofDocument',
+    'agreementDocument',
     'nomineeProofDocument',
   ];
 
@@ -977,6 +978,10 @@ const verifyAgentDocument = asyncHandler(async (req, res, next) => {
   }
 
   const verifiedField = `${targetField}Verified`;
+  profile[verifiedField] = true;
+  if (targetField === 'agreementDocument') {
+    profile.agreementDocumentVerifiedAt = new Date();
+  }
 
   // Check if core required documents (pan, idProof, bankProof) are verified
   const panOk = targetField === 'panDocument' ? true : !!profile.panDocumentVerified;

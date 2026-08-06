@@ -16,10 +16,11 @@ const { ROLES } = require('../../constants/roles');
 const getAgentDashboard = asyncHandler(async (req, res, next) => {
   const agentId = req.user.id;
 
-  // 1) Find assigned clients and agent commissions in parallel (Batch 1)
-  const [clients, commissions] = await Promise.all([
+  // 1) Find assigned clients, agent commissions, and agent profile in parallel (Batch 1)
+  const [clients, commissions, agentProfile] = await Promise.all([
     User.find({ role: ROLES.CLIENT, assignedAgent: agentId }).sort({ createdAt: -1 }).lean(),
-    AgentCommission.find({ agentId }).lean()
+    AgentCommission.find({ agentId }).lean(),
+    AgentProfile.findOne({ userId: agentId }).lean()
   ]);
   const clientIds = clients.map(c => c._id);
 
@@ -272,7 +273,9 @@ const getAgentDashboard = asyncHandler(async (req, res, next) => {
       clientInvestmentShare,
       monthlyCommissionTrend,
       clientOnboardingMomentum,
-      withdrawalRequestTrend
+      withdrawalRequestTrend,
+      agentProfile: agentProfile || null,
+      profile: agentProfile || null,
     }
   });
 });
@@ -710,11 +713,50 @@ const getAgentClientById = asyncHandler(async (req, res, next) => {
   });
 });
 
+/**
+ * Upload or update signed agreement document for Agent
+ * POST /api/agent/documents/agreement
+ */
+const uploadAgentAgreementDocument = asyncHandler(async (req, res, next) => {
+  const AgentProfile = require('../../models/AgentProfile.model');
+  const profile = await AgentProfile.findOne({ userId: req.user.id });
+  if (!profile) {
+    return next(new AppError('Agent profile not found.', 404));
+  }
+
+  let fileUrl = req.body.fileUrl || '';
+  if (req.file) {
+    const { uploadBufferToCloudinary } = require('../../services/cloudinary.service');
+    try {
+      fileUrl = await uploadBufferToCloudinary(req.file.buffer, 'kinetoscope/agents/agreements');
+    } catch (err) {
+      return next(new AppError(`File upload failed: ${err.message}`, 500));
+    }
+  }
+
+  if (!fileUrl) {
+    return next(new AppError('Please select or upload a valid agreement document file.', 400));
+  }
+
+  profile.agreementDocument = fileUrl;
+  profile.agreementDocumentVerified = false;
+  await profile.save();
+
+  res.status(200).json({
+    success: true,
+    message: 'Signed agent agreement document uploaded successfully',
+    data: {
+      agreementDocument: fileUrl,
+    },
+  });
+});
+
 module.exports = {
   getAgentDashboard,
   getAgentClients,
   getAgentCommissions,
   getAgentProfile,
   getAgentDocuments,
+  uploadAgentAgreementDocument,
   getAgentClientById,
 };

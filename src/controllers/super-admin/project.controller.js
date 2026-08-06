@@ -1,5 +1,6 @@
 const Project = require('../../models/Project.model');
 const ProjectUpdate = require('../../models/ProjectUpdate.model');
+const User = require('../../models/User.model');
 const { uploadBufferToCloudinary, deleteFromCloudinary } = require('../../services/cloudinary.service');
 const AppError = require('../../utils/AppError');
 const asyncHandler = require('../../utils/asyncHandler');
@@ -32,6 +33,7 @@ const createProject = asyncHandler(async (req, res, next) => {
     summary,
     currentUpdate,
     allocationFocus,
+    horizon,
     totalDividendPool,
   } = req.body;
 
@@ -45,11 +47,23 @@ const createProject = asyncHandler(async (req, res, next) => {
     }
   }
 
+  const targetFundingVal = Number(targetFunding) || 0;
+  let defaultPortfolioValue = portfolioValue;
+  if (!defaultPortfolioValue || defaultPortfolioValue === '₹0.0 Cr' || defaultPortfolioValue === '₹0 Cr') {
+    if (targetFundingVal >= 10000000) {
+      defaultPortfolioValue = `₹${(targetFundingVal / 10000000).toFixed(1)} Cr`;
+    } else if (targetFundingVal >= 100000) {
+      defaultPortfolioValue = `₹${(targetFundingVal / 100000).toFixed(1)} L`;
+    } else {
+      defaultPortfolioValue = `₹${targetFundingVal.toLocaleString('en-IN')}`;
+    }
+  }
+
   const project = await Project.create({
     name,
     segment,
     status: status || 'Planning',
-    portfolioValue: portfolioValue || `₹${((Number(targetFunding) || 25000000) / 10000000).toFixed(1)} Cr`,
+    portfolioValue: defaultPortfolioValue,
     monthlyRoi: monthlyRoi || '1.0%',
     riskLevel: riskLevel || 'Medium',
     milestoneProgress: milestoneProgress !== undefined ? Number(milestoneProgress) : 0,
@@ -62,6 +76,7 @@ const createProject = asyncHandler(async (req, res, next) => {
     summary: summary || '',
     currentUpdate: currentUpdate || '',
     allocationFocus: allocationFocus || '',
+    horizon: horizon || '12 Months',
     totalDividendPool: totalDividendPool !== undefined ? Number(totalDividendPool) : 0,
     bannerImage: bannerImageUrl,
     createdBy: req.user.id,
@@ -74,15 +89,50 @@ const createProject = asyncHandler(async (req, res, next) => {
   });
 });
 
+const Investment = require('../../models/Investment.model');
+
+/**
+ * Dynamically recompute fundedAmount & slotsAvailable from actual active Investment records
+ */
+const recalculateProjectFunding = async (projectObj) => {
+  if (!projectObj) return projectObj;
+  const projId = projectObj._id || projectObj.id;
+  const activeInvestments = await Investment.find({ projectId: projId, status: 'active' }).lean();
+  
+  const realFundedAmount = activeInvestments.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
+  const totalSlots = projectObj.totalSlots || 20;
+  const usedSlots = activeInvestments.length;
+  const realSlotsAvailable = Math.max(0, totalSlots - usedSlots);
+
+  // Sync to database if different
+  if (projectObj.fundedAmount !== realFundedAmount || projectObj.slotsAvailable !== realSlotsAvailable) {
+    await Project.findByIdAndUpdate(projId, {
+      $set: {
+        fundedAmount: realFundedAmount,
+        slotsAvailable: realSlotsAvailable,
+        status: (projectObj.targetFunding > 0 && realFundedAmount >= projectObj.targetFunding) || realSlotsAvailable <= 0 ? 'Slot Full' : (projectObj.status === 'Slot Full' ? 'Open' : projectObj.status)
+      }
+    });
+  }
+
+  return {
+    ...projectObj,
+    fundedAmount: realFundedAmount,
+    slotsAvailable: realSlotsAvailable,
+  };
+};
+
 /**
  * Get all Projects (Supports statistics calculations)
  * GET /api/super-admin/projects
  */
 const getAllProjects = asyncHandler(async (req, res, next) => {
-  const projects = await Project.find()
+  const rawProjects = await Project.find()
     .populate('createdBy', 'name email')
     .sort({ createdAt: -1 })
     .lean();
+
+  const projects = await Promise.all(rawProjects.map(p => recalculateProjectFunding(p)));
 
   // Compute card stats
   const totalProjects = projects.length;
@@ -109,10 +159,12 @@ const getAllProjects = asyncHandler(async (req, res, next) => {
  * GET /api/super-admin/projects/:id
  */
 const getProjectById = asyncHandler(async (req, res, next) => {
-  const project = await Project.findById(req.params.id).populate('createdBy', 'name email');
-  if (!project) {
+  const rawProject = await Project.findById(req.params.id).populate('createdBy', 'name email').lean();
+  if (!rawProject) {
     return next(new AppError('Project not found', 404));
   }
+
+  const project = await recalculateProjectFunding(rawProject);
 
   res.status(200).json({
     success: true,
@@ -149,6 +201,7 @@ const updateProject = asyncHandler(async (req, res, next) => {
     'mediaFiles',
     'currentUpdate',
     'allocationFocus',
+    'horizon',
     'totalDividendPool',
   ];
 
@@ -255,11 +308,23 @@ const deleteProject = asyncHandler(async (req, res, next) => {
     }
   }
 
+  // Cascade delete linked investments and project updates
+  try {
+    const Investment = require('../../models/Investment.model');
+    const ProjectUpdate = require('../../models/ProjectUpdate.model');
+    await Promise.all([
+      Investment.deleteMany({ projectId: req.params.id }),
+      ProjectUpdate.deleteMany({ projectId: req.params.id })
+    ]);
+  } catch (cleanErr) {
+    console.error('Error cleaning up project investments/updates on deletion:', cleanErr);
+  }
+
   await Project.findByIdAndDelete(req.params.id);
 
   res.status(200).json({
     success: true,
-    message: 'Project deleted successfully',
+    message: 'Project and all associated investment records deleted successfully',
   });
 });
 
@@ -268,10 +333,12 @@ const deleteProject = asyncHandler(async (req, res, next) => {
  * GET /api/client/projects
  */
 const getClientProjects = asyncHandler(async (req, res, next) => {
-  const projects = await Project.find()
+  const rawProjects = await Project.find()
     .sort({ createdAt: -1 })
     .select('-createdBy -createdAt -updatedAt -__v')
     .lean();
+
+  const projects = await Promise.all(rawProjects.map(p => recalculateProjectFunding(p)));
 
   res.status(200).json({
     success: true,
@@ -387,47 +454,64 @@ const deleteProjectMedia = asyncHandler(async (req, res, next) => {
  */
 const applyForProjectInvestment = asyncHandler(async (req, res, next) => {
   const { amount } = req.body;
-  const numAmount = Number(amount);
-
-  if (!numAmount || isNaN(numAmount) || numAmount <= 0) {
-    return next(new AppError('Please enter a valid investment amount', 400));
-  }
-
   const project = await Project.findById(req.params.id);
   if (!project) {
     return next(new AppError('Project not found', 404));
   }
 
-  const minInvestment = project.minInvestment || 200000;
-  if (numAmount < minInvestment) {
-    return next(new AppError(`Investment amount must be at least ₹${minInvestment.toLocaleString('en-IN')}`, 400));
-  }
+  const numAmount = Number(amount) || project.minInvestment || 0;
 
   if (project.slotsAvailable <= 0 || project.status === 'Slot Full') {
     return next(new AppError('All investment slots for this project are currently full', 400));
   }
 
-  // Update funding & slots
-  project.fundedAmount = (project.fundedAmount || 0) + numAmount;
-  if (project.slotsAvailable > 0) {
-    project.slotsAvailable = project.slotsAvailable - 1;
-  }
-  if (project.targetFunding > 0 && project.fundedAmount >= project.targetFunding) {
-    project.status = 'Slot Full';
-  } else if (project.slotsAvailable <= 0) {
-    project.status = 'Slot Full';
-  }
-  await project.save();
-
-  // Create Service Request Alert for Super Admin
+  // Create Investment Record in Database
+  const Investment = require('../../models/Investment.model');
   const ServiceRequest = require('../../models/ServiceRequest.model');
   const user = req.user;
 
+  // Fetch full user with assignedAgent
+  const clientUser = await User.findById(user.id).populate('assignedAgent');
+  const assignedAgent = clientUser?.assignedAgent;
+  const agentName = assignedAgent ? assignedAgent.name : 'Direct / No Agent';
+  const agentCode = assignedAgent ? (assignedAgent.clientCode || assignedAgent.agentCode || 'N/A') : 'N/A';
+  const clientCode = user.clientCode || (clientUser && clientUser.clientCode) || 'KFPL-CL-1001';
+
+  const newInvestment = await Investment.create({
+    clientId: user.id,
+    clientName: user.name,
+    clientCode: clientCode,
+    projectId: project._id,
+    segment: project.segment || 'General',
+    investmentAmount: numAmount,
+    roiPercentage: parseFloat(project.monthlyRoi) || 1.5,
+    riskLevel: project.riskLevel || 'Medium',
+    riskPercentage: 20,
+    durationMonths: 24,
+    status: 'active',
+    investmentDate: new Date(),
+    remarks: `Client ${user.name} selected project "${project.name}" via Client Dashboard Project Selection.`,
+    createdBy: user.id,
+  });
+
+  // Create Detailed Service Request Alert for Super Admin
+  const serviceReqDescription =
+    `CLIENT REQUEST DETAILS:\n` +
+    `• Client: ${user.name} (${user.email}, Code: ${user.clientCode || 'N/A'})\n` +
+    `• Assigned Agent: ${agentName} (${agentCode})\n` +
+    `• Selected Project: ${project.name}\n` +
+    `• Segment: ${project.segment}\n` +
+    `• Investment Amount: ₹${numAmount.toLocaleString('en-IN')}\n` +
+    `• Expected ROI Rate: ${project.monthlyRoi || '1.5%'}\n` +
+    `• Project Target Funding: ₹${(project.targetFunding || 25000000).toLocaleString('en-IN')}\n` +
+    `• Updated Total Funded: ₹${project.fundedAmount.toLocaleString('en-IN')}\n` +
+    `• Request Purpose: Client submitted project investment selection from Client Portal.`;
+
   const serviceReq = await ServiceRequest.create({
     createdBy: user.id,
-    category: 'Investment Query',
-    subject: `New Investment Application - ${project.name}`,
-    description: `Client ${user.name} (${user.email}, Code: ${user.clientCode || 'N/A'}) applied for project "${project.name}" (${project.segment}) with investment amount ₹${numAmount.toLocaleString('en-IN')}. Target Funding: ₹${(project.targetFunding || 25000000).toLocaleString('en-IN')}, Current Total Funded: ₹${project.fundedAmount.toLocaleString('en-IN')}.`,
+    category: 'Project Investment Request',
+    subject: `Project Investment Selection - ${project.name} (₹${numAmount.toLocaleString('en-IN')})`,
+    description: serviceReqDescription,
     status: 'OPEN',
   });
 
@@ -438,16 +522,17 @@ const applyForProjectInvestment = asyncHandler(async (req, res, next) => {
       name: user.name,
       email: user.email,
       clientCode: user.clientCode || 'N/A'
-    }, `Investment Application for ${project.name} (Amount: ₹${numAmount.toLocaleString('en-IN')})`).catch(e => console.error('[Email Alert Error]:', e.message));
+    }, `Project Investment Request for ${project.name} by ${user.name} (Amount: ₹${numAmount.toLocaleString('en-IN')})`).catch(e => console.error('[Email Alert Error]:', e.message));
   } catch (emailErr) {
     console.error('[Email Alert Exception]:', emailErr.message);
   }
 
   res.status(200).json({
     success: true,
-    message: `Application for ${project.name} submitted successfully! Super Admin has been notified.`,
+    message: `Investment request for ${project.name} (₹${numAmount.toLocaleString('en-IN')}) submitted successfully! Super Admin has been notified.`,
     data: {
       project,
+      investment: newInvestment,
       serviceRequest: serviceReq,
     },
   });
