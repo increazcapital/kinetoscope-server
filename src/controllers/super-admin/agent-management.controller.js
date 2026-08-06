@@ -351,18 +351,55 @@ const getAllAgents = asyncHandler(async (req, res, next) => {
     }
   });
 
-  // Fetch active investments in bulk
-  let investmentMap = {}; // Maps clientId -> sum of active investment amounts
+  // Fetch active investments, approved deposits, and client profiles in bulk
+  let investmentMap = {}; // Maps clientId -> total investment
   if (allClientIds.length > 0) {
-    const investments = await Investment.find(
-      { clientId: { $in: allClientIds }, status: 'active' },
-      { clientId: 1, investmentAmount: 1 }
-    ).lean();
+    const [investments, approvedDeposits, clientProfiles] = await Promise.all([
+      Investment.find(
+        { clientId: { $in: allClientIds } },
+        { clientId: 1, investmentAmount: 1, status: 1 }
+      ).lean(),
+      Transaction.find(
+        { clientId: { $in: allClientIds }, type: 'deposit', status: 'approved' },
+        { clientId: 1, amount: 1 }
+      ).lean(),
+      ClientProfile.find(
+        { userId: { $in: allClientIds } },
+        { userId: 1, totalInvestment: 1 }
+      ).lean()
+    ]);
+
+    const clientInvMap = {};
+    const clientDepMap = {};
+    const clientProfMap = {};
+
     investments.forEach(inv => {
-      if (inv && inv.clientId) {
-        const clientIdStr = inv.clientId.toString();
-        investmentMap[clientIdStr] = (investmentMap[clientIdStr] || 0) + (inv.investmentAmount || 0);
+      if (inv && inv.clientId && inv.status !== 'cancelled') {
+        const cid = inv.clientId.toString();
+        clientInvMap[cid] = (clientInvMap[cid] || 0) + (Number(inv.investmentAmount) || 0);
       }
+    });
+
+    approvedDeposits.forEach(tx => {
+      if (tx && tx.clientId) {
+        const cid = tx.clientId.toString();
+        clientDepMap[cid] = (clientDepMap[cid] || 0) + (Number(tx.amount) || 0);
+      }
+    });
+
+    clientProfiles.forEach(p => {
+      if (p && p.userId) {
+        const cid = p.userId.toString();
+        clientProfMap[cid] = Number(p.totalInvestment) || 0;
+      }
+    });
+
+    allClientIds.forEach(idObj => {
+      const cid = idObj.toString();
+      const invAmt = clientInvMap[cid] || 0;
+      const depAmt = clientDepMap[cid] || 0;
+      const profAmt = clientProfMap[cid] || 0;
+      investmentMap[cid] = Math.max(invAmt, depAmt, profAmt);
     });
   }
 
