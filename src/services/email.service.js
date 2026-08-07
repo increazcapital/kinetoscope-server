@@ -505,11 +505,57 @@ const sendSubscriptionConfirmationEmail = async (recipientEmail) => {
   return sendEmail({ to: recipientEmail, subject, text, html });
 };
 
+const sendServiceRequestAlertToAdmin = async (reqUser, category, subject, description) => {
+  try {
+    const User = require('../models/User.model');
+    const admins = await User.find({ role: { $in: ['super-admin', 'SUPER_ADMIN'] }, isActive: true }, { email: 1 }).lean();
+    const adminEmail = process.env.SUPER_ADMIN_EMAIL || 'info@kinetoscopefilms.com';
+    const rawEmails = [...admins.map(a => a.email), adminEmail].filter(Boolean);
+    const targetEmails = Array.from(new Set(rawEmails.filter(e => !e.includes('@kfpl.com') && !e.includes('@example.com'))));
+    if (!targetEmails.includes('info@kinetoscopefilms.com')) {
+      targetEmails.push('info@kinetoscopefilms.com');
+    }
+
+    const roleLabel = (reqUser?.role || 'user').toUpperCase();
+    const userName = reqUser?.name || reqUser?.fullName || 'Portal User';
+    const userEmail = reqUser?.email || 'N/A';
+    const mailSubject = `Kinetoscope – New ${roleLabel} Support Ticket: ${subject}`;
+    const text = `New support request submitted by ${userName} (${userEmail}).\nCategory: ${category}\nSubject: ${subject}\nDescription: ${description}\n— ${COMPANY_NAME}`;
+
+    const contentHtml = `
+      <div style="background-color: #F8FAFC; border-left: 4px solid #0284C7; border-radius: 8px; padding: 18px; margin: 16px 0; border: 1px solid #E2E8F0; border-left-width: 4px;">
+        <p style="margin: 0 0 6px 0; color: #0F172A; font-size: 15px; font-weight: 700;">From: ${userName} (${userEmail}) [${roleLabel}]</p>
+        <p style="margin: 0 0 6px 0; color: #334155; font-size: 14px;">Category: <strong>${category}</strong></p>
+        <p style="margin: 0 0 6px 0; color: #334155; font-size: 14px;">Subject: <strong>${subject}</strong></p>
+        <div style="margin-top: 10px; padding: 12px; background: #FFFFFF; border-radius: 6px; border: 1px solid #E2E8F0; font-size: 13px; color: #334155; white-space: pre-wrap;">${description}</div>
+      </div>
+      <p style="color: #64748B; font-size: 13px; text-align: center; margin-top: 16px;">Log in to Super Admin Control Center to review and respond.</p>
+    `;
+
+    const html = buildLightEmailTemplate({
+      title: `New ${roleLabel} Service Request`,
+      subtitle: `A new support request has been submitted by ${userName}.`,
+      contentHtml,
+      bannerAccent: '#0284C7'
+    });
+
+    await Promise.allSettled(
+      targetEmails.map((email) => sendEmail({ to: email, subject: mailSubject, text, html }))
+    );
+  } catch (err) {
+    console.error('[Service Request Email Alert Error]:', err.message);
+  }
+};
+
 const sendNewRegistrationAlertToAdmin = async (user, roleLabel) => {
   const User = require('../models/User.model');
   const admins = await User.find({ role: { $in: ['super-admin', 'SUPER_ADMIN'] }, isActive: true }, { email: 1 }).lean();
   const adminEmail = process.env.SUPER_ADMIN_EMAIL || 'info@kinetoscopefilms.com';
-  const superAdminEmails = Array.from(new Set([...admins.map(a => a.email).filter(Boolean), adminEmail]));
+  const rawEmails = [...admins.map(a => a.email), adminEmail].filter(Boolean);
+  const targetEmails = Array.from(new Set(rawEmails.filter(e => !e.includes('@kfpl.com') && !e.includes('@example.com'))));
+  if (!targetEmails.includes('info@kinetoscopefilms.com')) {
+    targetEmails.push('info@kinetoscopefilms.com');
+  }
 
   const code = user.clientCode || 'N/A';
   const subject = `Kinetoscope – New ${roleLabel} Registration (${user.name})`;
@@ -532,7 +578,7 @@ const sendNewRegistrationAlertToAdmin = async (user, roleLabel) => {
   });
 
   await Promise.allSettled(
-    superAdminEmails.map((email) => sendEmail({ to: email, subject, text, html }))
+    targetEmails.map((email) => sendEmail({ to: email, subject, text, html }))
   );
 };
 
@@ -553,4 +599,5 @@ module.exports = {
   sendNewArticleNotification,
   sendSubscriptionConfirmationEmail,
   sendNewRegistrationAlertToAdmin,
+  sendServiceRequestAlertToAdmin,
 };

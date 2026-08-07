@@ -33,6 +33,14 @@ const createServiceRequest = asyncHandler(async (req, res, next) => {
     attachment: attachmentUrl,
   });
 
+  // Dispatch Email Notification to info@kinetoscopefilms.com asynchronously
+  try {
+    const { sendServiceRequestAlertToAdmin } = require('../../services/email.service');
+    sendServiceRequestAlertToAdmin(req.user, category, subject, description).catch(e => console.error('[Service Request Email Error]:', e.message));
+  } catch (emailErr) {
+    console.error('[Service Request Email Trigger Error]:', emailErr.message);
+  }
+
   res.status(201).json({
     success: true,
     message: 'Service request submitted successfully.',
@@ -149,34 +157,44 @@ const updateServiceRequestStatus = asyncHandler(async (req, res, next) => {
     { new: true, runValidators: true }
   ).populate('createdBy', 'name email role clientCode');
 
-  // Trigger real email notification if requested
-  if (notifyUser && request.createdBy && request.createdBy.email) {
+  // Trigger real email notification unless explicitly disabled (notifyUser === false)
+  const creator = updatedRequest.createdBy || request.createdBy;
+  const shouldNotify = notifyUser !== false;
+
+  if (shouldNotify && creator && creator.email) {
     try {
-      const { buildLightEmailTemplate } = require('../../services/email.service');
+      const { buildLightEmailTemplate, sendEmail } = require('../../services/email.service');
+      const reqId = updatedRequest.requestId || request.requestId || 'Ticket';
+      const reqSubject = updatedRequest.subject || request.subject || 'Support Ticket';
+      const currentStatus = (updatedRequest.status || status || 'UPDATED').toUpperCase();
+      const remarksText = adminRemarks || updatedRequest.adminRemarks || updatedRequest.remarks || 'Your request has been reviewed.';
+
       const contentHtml = `
-        <p style="font-size: 15px; color: #1E293B;">Hello <strong>${request.createdBy.name}</strong>,</p>
-        <p style="font-size: 14px; color: #475569;">Your service request <strong>${request.requestId}</strong> ("${request.subject}") has been updated.</p>
+        <p style="font-size: 15px; color: #1E293B;">Hello <strong>${creator.name || 'Valued Client'}</strong>,</p>
+        <p style="font-size: 14px; color: #475569;">Your service request <strong>${reqId}</strong> ("${reqSubject}") has been updated by Super Admin.</p>
         <div style="margin: 20px 0; padding: 16px; background-color: #F8FAFC; border-left: 4px solid #059669; border-radius: 8px; border: 1px solid #E2E8F0; border-left-width: 4px;">
-          <p style="margin: 0; color: #0F172A; font-weight: 700; font-size: 14px;">Status: <span style="color: #059669; text-transform: uppercase;">${status}</span></p>
-          <p style="margin: 8px 0 0 0; color: #334155; font-size: 13.5px;"><strong>Admin Remarks:</strong> ${adminRemarks || 'No remarks provided.'}</p>
+          <p style="margin: 0; color: #0F172A; font-weight: 700; font-size: 14px;">Status: <span style="color: #059669; text-transform: uppercase;">${currentStatus}</span></p>
+          <p style="margin: 8px 0 0 0; color: #334155; font-size: 13.5px;"><strong>Admin Response / Remarks:</strong> ${remarksText}</p>
         </div>
+        <p style="font-size: 13px; color: #64748B; margin-top: 16px;">You can view the complete status update by logging into your portal dashboard.</p>
       `;
+
       const html = buildLightEmailTemplate({
-        title: 'Service Request Status Updated',
-        subtitle: `Request ID: ${request.requestId}`,
+        title: 'Support Ticket Response Received',
+        subtitle: `Request ID: ${reqId}`,
         contentHtml,
         bannerAccent: '#059669'
       });
 
       await sendEmail({
-        to: request.createdBy.email,
-        subject: `Kinetoscope – Service Request ${request.requestId} Updated`,
-        text: `Hello ${request.createdBy.name},\n\nYour service request ${request.requestId} ("${request.subject}") has been updated to status: ${status}.\n\nAdmin Remarks: ${adminRemarks || 'None'}\n\n— Kinetoscope Support Team`,
+        to: creator.email,
+        subject: `Kinetoscope – Response on Ticket ${reqId} (${currentStatus})`,
+        text: `Hello ${creator.name || 'Client'},\n\nYour service request ${reqId} ("${reqSubject}") has been updated to status: ${currentStatus}.\n\nAdmin Remarks: ${remarksText}\n\n— Kinetoscope Support Team`,
         html,
       });
-      console.log(`[Service Request Notification] Sent email successfully to ${request.createdBy.email}`);
+      console.log(`[Service Request Response Email] Sent email successfully to ${creator.email}`);
     } catch (err) {
-      console.error(`[Service Request Notification] Failed to send email to ${request.createdBy.email}:`, err.message);
+      console.error(`[Service Request Response Email Error] Failed to send email to ${creator?.email}:`, err.message);
     }
   }
 

@@ -35,6 +35,9 @@ const login = asyncHandler(async (req, res, next) => {
     return next(new AppError('Access Denied. Only client accounts are permitted to log in to this portal.', 403));
   }
 
+  // Fetch client profile
+  const profile = await ClientProfile.findOne({ userId: user._id });
+
   if (profile && profile.kycStatus === 'REJECTED') {
     return next(new AppError('Your account KYC registration has been rejected. Please contact support.', 403));
   }

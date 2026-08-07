@@ -154,20 +154,27 @@ const login = asyncHandler(async (req, res, next) => {
       lastSentAt: new Date(),
     });
 
+    let portalLabel = 'Super Admin';
+    if (user.role === ROLES.CLIENT) {
+      portalLabel = 'Client Portal';
+    } else if (user.role === ROLES.AGENT) {
+      portalLabel = 'Agent Portal';
+    }
+
     const { buildOtpEmailHtml } = require('../../services/email.service');
     await transporter.sendMail({
       from: process.env.EMAIL_USER || process.env.SMTP_FROM || 'noreply@kinetoscopefilmproduction.com',
       to: user.email,
-      subject: 'Your Kinetoscope Super Admin Login OTP',
+      subject: `Your Kinetoscope ${portalLabel} Login OTP`,
       html: buildOtpEmailHtml({
-        title: 'Super Admin Login Verification',
-        subtitle: `Hello <strong>${user.name}</strong>, enter the OTP below to complete your Super Admin sign-in.`,
+        title: `${portalLabel} Login Verification`,
+        subtitle: `Hello <strong>${user.name}</strong>, enter the OTP below to complete your ${portalLabel} sign-in.`,
         otp,
         expiryMinutes: 10
       }),
     });
 
-    console.log(`[2FA OTP] Code sent to ${user.email}`);
+    console.log(`[2FA OTP] Code sent to ${user.email} (${portalLabel})`);
 
     return res.status(200).json({
       success: true,
