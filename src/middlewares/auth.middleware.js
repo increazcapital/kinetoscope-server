@@ -38,8 +38,16 @@ const protect = asyncHandler(async (req, res, next) => {
     return next(new AppError('Invalid authentication token. Please log in again.', 401));
   }
 
-  // 3) Check if user still exists
-  const currentUser = await User.findById(decoded.id);
+  // 3) Check if user or sub-admin still exists
+  let currentUser = await User.findById(decoded.id);
+  if (!currentUser) {
+    const SubAdmin = require('../models/SubAdmin.model');
+    currentUser = await SubAdmin.findById(decoded.id);
+    if (currentUser && !currentUser.role) {
+      currentUser.role = ROLES.SUB_ADMIN;
+    }
+  }
+
   if (!currentUser) {
     return next(new AppError('The user belonging to this token no longer exists.', 401));
   }
@@ -100,18 +108,20 @@ const requirePermission = (moduleKey, action = 'view') => {
     // Sub Admin permission check
     if (userRole === ROLES.SUB_ADMIN.toLowerCase()) {
       const perms = req.user.permissions || {};
-      const modPerm = perms[moduleKey] || {};
+      const keys = Array.isArray(moduleKey) ? moduleKey : [moduleKey];
 
-      // If action is view, also grant if create, edit, or delete is true
-      if (action === 'view') {
-        if (modPerm.view || modPerm.create || modPerm.edit || modPerm.delete) {
+      for (const k of keys) {
+        const modPerm = perms[k] || {};
+        if (action === 'view') {
+          if (modPerm.view || modPerm.create || modPerm.edit || modPerm.delete) {
+            return next();
+          }
+        } else if (modPerm[action] === true) {
           return next();
         }
-      } else if (modPerm[action] === true) {
-        return next();
       }
 
-      console.warn(`[SubAdmin Permission Denied] URL: ${req.originalUrl} | SubAdmin: ${req.user._id} | Module: ${moduleKey} | Action: ${action}`);
+      console.warn(`[SubAdmin Permission Denied] URL: ${req.originalUrl} | SubAdmin: ${req.user._id} | Modules: ${keys.join(', ')} | Action: ${action}`);
       return next(new AppError('You do not have permission to perform this action.', 403));
     }
 

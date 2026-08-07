@@ -278,24 +278,24 @@ router.get('/dashboard', getAdminDashboard);
 
 // 2. Client / Investor Management
 router.route('/clients')
-  .get(requirePermission('manageClients', 'view'), getAllClients)
-  .post(requirePermission('manageClients', 'create'), memoryClientOnboardingUpload, createClientValidationRules, createClient);
+  .get(requirePermission(['manageClients', 'clientPortal'], 'view'), getAllClients)
+  .post(requirePermission(['manageClients', 'clientPortal'], 'create'), memoryClientOnboardingUpload, createClientValidationRules, createClient);
 
-router.get('/clients/manage', requirePermission('manageClients', 'view'), getManageClients);
-router.get('/clients/manage/export', requirePermission('manageClients', 'view'), exportClientsCSV);
+router.get('/clients/manage', requirePermission(['manageClients', 'clientPortal'], 'view'), getManageClients);
+router.get('/clients/manage/export', requirePermission(['manageClients', 'clientPortal'], 'view'), exportClientsCSV);
 
-router.delete('/clients/clear', requirePermission('manageClients', 'delete'), clearAllClients);
+router.delete('/clients/clear', requirePermission(['manageClients', 'clientPortal'], 'delete'), clearAllClients);
 
 router.route('/clients/:id')
-  .patch(requirePermission('manageClients', 'edit'), memoryClientOnboardingUpload, updateClientRulesByAdmin, updateClient)
-  .delete(requirePermission('manageClients', 'delete'), deleteClient);
+  .patch(requirePermission(['manageClients', 'clientPortal'], 'edit'), memoryClientOnboardingUpload, updateClientRulesByAdmin, updateClient)
+  .delete(requirePermission(['manageClients', 'clientPortal'], 'delete'), deleteClient);
 
-router.patch('/clients/:id/roi/:payoutId/pay', requirePermission('manageClients', 'edit'), markRoiPaid);
-router.patch('/clients/:id/roi-rate', requirePermission('manageClients', 'edit'), updateClientRoiRate);
-router.patch('/clients/:id/verify-document', requirePermission('manageClients', 'edit'), verifyDocument);
+router.patch('/clients/:id/roi/:payoutId/pay', requirePermission(['manageClients', 'clientPortal'], 'edit'), markRoiPaid);
+router.patch('/clients/:id/roi-rate', requirePermission(['manageClients', 'clientPortal'], 'edit'), updateClientRoiRate);
+router.patch('/clients/:id/verify-document', requirePermission(['manageClients', 'clientPortal'], 'edit'), verifyDocument);
 
 // Client dashboard preview
-router.get('/client-dashboard/:clientId', requirePermission('manageClients', 'view'), previewClientDashboard);
+router.get('/client-dashboard/:clientId', requirePermission(['manageClients', 'clientPortal'], 'view'), previewClientDashboard);
 
 // 3. Investment Management — Read-only after assignment (immutable financial records)
 router.route('/investments')
@@ -324,11 +324,11 @@ router.post('/roi/payouts/bulk', requirePermission('transactionDetails', 'create
 router.patch('/roi/payouts/:id/pay', requirePermission('transactionDetails', 'edit'), markRoiPaid);
 
 // 5. Agent Management
-router.delete('/agents/clear', requirePermission('manageAgents', 'delete'), clearAllAgents);
+router.delete('/agents/clear', requirePermission(['manageAgents', 'agentPortal'], 'delete'), clearAllAgents);
 
 router.route('/agents')
-  .get(requirePermission('manageAgents', 'view'), getAllAgents)
-  .post(requirePermission('manageAgents', 'create'), memoryAgentOnboardingUpload, createAgentValidationRules, createAgent);
+  .get(requirePermission(['manageAgents', 'agentPortal'], 'view'), getAllAgents)
+  .post(requirePermission(['manageAgents', 'agentPortal'], 'create'), memoryAgentOnboardingUpload, createAgentValidationRules, createAgent);
 
 router.route('/agents/:id')
   .get(requirePermission('manageAgents', 'view'), getAgentById)

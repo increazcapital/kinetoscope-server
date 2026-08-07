@@ -58,6 +58,10 @@ const subAdminSchema = new mongoose.Schema(
       manageClients:    { type: permissionSchema, default: () => ({}) },
       manageAgents:     { type: permissionSchema, default: () => ({}) },
 
+      // Portals
+      clientPortal:     { type: permissionSchema, default: () => ({}) },
+      agentPortal:      { type: permissionSchema, default: () => ({}) },
+
       // Investment Management
       manageInvestments:  { type: permissionSchema, default: () => ({}) },
       transactionDetails: { type: permissionSchema, default: () => ({}) },

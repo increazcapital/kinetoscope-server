@@ -10,6 +10,7 @@ const AppError = require('../../utils/AppError');
 // ── Helper: sanitize permissions object ───────────────────────
 const VALID_MODULES = [
   'manageClients', 'manageAgents',
+  'clientPortal', 'agentPortal',
   'manageInvestments', 'transactionDetails', 'investmentStatus', 'portfolio',
   'depositWithdrawal', 'perksRecognition', 'commissionSlabs', 'rewardsConfig',
   'emailNotifications', 'serviceRequests', 'newsMedia', 'faqManagement',
