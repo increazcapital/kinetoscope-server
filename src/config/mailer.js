@@ -1,34 +1,34 @@
 const nodemailer = require('nodemailer');
 
+const smtpHost = process.env.SMTP_HOST || 'smtp.titan.email';
+const smtpPort = parseInt(process.env.SMTP_PORT || '465', 10);
+const smtpUser = process.env.SMTP_USER || process.env.EMAIL_USER || 'info@kinetoscopefilms.com';
+const smtpPass = process.env.SMTP_PASS || process.env.EMAIL_PASS || 'Euorskm@4321';
+const isSecure = process.env.SMTP_SECURE === 'true' || (process.env.SMTP_SECURE === undefined && smtpPort === 465);
+
+console.log(`[SMTP Transporter Init] Host: ${smtpHost}, Port: ${smtpPort}, Secure: ${isSecure}, User: ${smtpUser}`);
+
 /**
- * Mailer transport configuration.
- * Uses Gmail credentials (EMAIL_USER / EMAIL_PASS) when SMTP host is not configured.
+ * Titan Mail (BigRock) SMTP Transporter
  */
-const isGmail = !process.env.SMTP_HOST && process.env.EMAIL_USER;
+const transporter = nodemailer.createTransport({
+  host: smtpHost,
+  port: smtpPort,
+  secure: isSecure,
+  auth: {
+    user: smtpUser,
+    pass: smtpPass,
+  },
+});
 
-const transporter = isGmail
-  ? nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-      },
-    })
-  : nodemailer.createTransport({
-      host: process.env.SMTP_HOST || 'smtp.mailtrap.io',
-      port: parseInt(process.env.SMTP_PORT || '2525', 10),
-      auth: {
-        user: process.env.SMTP_USER || '',
-        pass: process.env.SMTP_PASS || '',
-      },
-    });
-
-// Verify mailer configuration (async checking, does not block server bootstrap)
+/**
+ * Verify transporter configuration on startup
+ */
 transporter.verify((error, success) => {
   if (error) {
-    console.warn(`SMTP Mailer verification failed: ${error.message}. Mails may not send successfully.`);
+    console.error(`[SMTP Connection/Auth Error] Failed to connect/authenticate with ${smtpHost}:${smtpPort} as ${smtpUser}:`, error.message);
   } else {
-    console.log('SMTP Mailer configuration verified successfully.');
+    console.log(`[SMTP Transporter Verified] Connection to ${smtpHost}:${smtpPort} (${smtpUser}) established successfully.`);
   }
 });
 

@@ -81,24 +81,13 @@ const serviceRequestSchema = new mongoose.Schema(
   }
 );
 
-// Auto-generate requestId sequence (SR-001, SR-002, etc.)
+// Auto-generate requestId sequence (SR-101, SR-102, etc.)
 serviceRequestSchema.pre('save', async function () {
   if (!this.isNew) return;
   if (this.requestId) return;
 
-  const lastRequest = await mongoose.model('ServiceRequest').findOne(
-    {},
-    {},
-    { sort: { createdAt: -1 } }
-  );
-
-  let nextSeq = 101;
-  if (lastRequest && lastRequest.requestId) {
-    const match = lastRequest.requestId.match(/SR-(\d+)/);
-    if (match) {
-      nextSeq = parseInt(match[1], 10) + 1;
-    }
-  }
+  const count = await mongoose.model('ServiceRequest').countDocuments({});
+  const nextSeq = 101 + count;
   this.requestId = `SR-${String(nextSeq).padStart(3, '0')}`;
 });
 

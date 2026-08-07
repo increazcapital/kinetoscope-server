@@ -102,8 +102,10 @@ const buildOtpEmailHtml = ({ title, subtitle, otp, expiryMinutes = 5, note }) =>
  * Dispatch templates or custom messages using mailer configuration
  */
 const sendEmail = async (options) => {
+  const defaultFrom = process.env.EMAIL_FROM || 'Kinetoscope Film Pvt Ltd <info@kinetoscopefilms.com>';
   const mailOptions = {
-    from: process.env.EMAIL_USER || process.env.SMTP_FROM || 'noreply@kinetoscopefilmproduction.com',
+    from: options.from || defaultFrom,
+    replyTo: options.replyTo || 'info@kinetoscopefilms.com',
     to: options.to,
     subject: options.subject,
     text: options.text,
@@ -113,10 +115,13 @@ const sendEmail = async (options) => {
 
   try {
     const info = await transporter.sendMail(mailOptions);
-    console.log(`Email dispatched successfully to ${options.to}. MessageID: ${info.messageId}`);
+    console.log(`[SMTP sendMail Response] To: ${options.to} | MessageID: ${info.messageId} | Server Response: ${info.response || 'OK'}`);
+    if (info.rejected && info.rejected.length > 0) {
+      console.warn(`[SMTP Warning] Email was rejected by server for recipients:`, info.rejected);
+    }
     return info;
   } catch (error) {
-    console.error(`Email dispatch error to ${options.to}:`, error.message);
+    console.error(`[SMTP sendMail Error] Failed to deliver email to ${options.to}:`, error.message);
     throw error;
   }
 };
@@ -235,7 +240,8 @@ const sendCredentialsEmail = async (toEmail, clientName, clientCode, tempPasswor
 };
 
 const sendTransactionRequestAlertToAdmin = async (superAdminEmails, clientName, clientCode, transactionDetails) => {
-  if (!superAdminEmails || superAdminEmails.length === 0) return;
+  const adminEmail = process.env.SUPER_ADMIN_EMAIL || 'info@kinetoscopefilms.com';
+  const targetEmails = Array.from(new Set([...(superAdminEmails || []), adminEmail])).filter(Boolean);
   const typeLabel = transactionDetails.type.toUpperCase();
   const subject = `Kinetoscope – New Pending ${typeLabel} Request from ${clientName} (${clientCode})`;
 
@@ -257,7 +263,7 @@ const sendTransactionRequestAlertToAdmin = async (superAdminEmails, clientName, 
   });
 
   await Promise.allSettled(
-    superAdminEmails.map((email) => sendEmail({ to: email, subject, text, html }))
+    targetEmails.map((email) => sendEmail({ to: email, subject, text, html }))
   );
 };
 
@@ -502,8 +508,8 @@ const sendSubscriptionConfirmationEmail = async (recipientEmail) => {
 const sendNewRegistrationAlertToAdmin = async (user, roleLabel) => {
   const User = require('../models/User.model');
   const admins = await User.find({ role: { $in: ['super-admin', 'SUPER_ADMIN'] }, isActive: true }, { email: 1 }).lean();
-  const superAdminEmails = admins.map(a => a.email).filter(Boolean);
-  if (superAdminEmails.length === 0) return;
+  const adminEmail = process.env.SUPER_ADMIN_EMAIL || 'info@kinetoscopefilms.com';
+  const superAdminEmails = Array.from(new Set([...admins.map(a => a.email).filter(Boolean), adminEmail]));
 
   const code = user.clientCode || 'N/A';
   const subject = `Kinetoscope – New ${roleLabel} Registration (${user.name})`;

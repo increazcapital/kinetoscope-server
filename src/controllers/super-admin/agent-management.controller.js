@@ -74,6 +74,7 @@ const createAgent = asyncHandler(async (req, res, next) => {
     fullName,
     phone,
     email,
+    address,
     residencyStatus,
     panNumber,
     aadhaarNumber,
@@ -151,6 +152,7 @@ const createAgent = asyncHandler(async (req, res, next) => {
       fullName,
       phone,
       email,
+      address: address || '',
       residencyStatus: residencyStatus || 'National (Domestic)',
       panNumber,
       aadhaarNumber,
@@ -522,6 +524,7 @@ const updateAgent = asyncHandler(async (req, res, next) => {
   const profileFields = [
     'fullName',
     'phone',
+    'address',
     'residencyStatus',
     'panNumber',
     'aadhaarNumber',

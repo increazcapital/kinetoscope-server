@@ -60,6 +60,7 @@ const getAgentDetailsData = async (agentId) => {
       fullName: profObj.fullName || user.name,
       email: profObj.email || user.email,
       phone: profObj.phone || '',
+      address: profObj.address || profile.address || '',
       joinDate: user.createdAt,
       panNumber: profObj.panNumber || '',
       aadhaarNumber: profObj.aadhaarNumber || '',

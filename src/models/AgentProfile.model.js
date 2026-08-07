@@ -23,6 +23,11 @@ const agentProfileSchema = new mongoose.Schema(
       required: [true, 'Phone number is required'],
       trim: true,
     },
+    address: {
+      type: String,
+      default: '',
+      trim: true,
+    },
     email: {
       type: String,
       required: [true, 'Email address is required'],

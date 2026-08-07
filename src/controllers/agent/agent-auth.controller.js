@@ -253,6 +253,7 @@ const registerAgent = asyncHandler(async (req, res, next) => {
     fullName,
     phone,
     email,
+    address,
     residencyStatus,
     citizenship, // fallback mapping
     panNumber,
@@ -322,6 +323,7 @@ const registerAgent = asyncHandler(async (req, res, next) => {
       fullName,
       phone,
       email: email.toLowerCase().trim(),
+      address: address || '',
       residencyStatus: residencyStatus || citizenship || 'National (Domestic)',
       panNumber,
       aadhaarNumber,

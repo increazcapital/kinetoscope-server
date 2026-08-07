@@ -18,25 +18,12 @@ const createRequestRules = [
   body('category')
     .trim()
     .notEmpty().withMessage('Request category is required')
-    .isIn([
-      'Profile Update',
-      'Nominee Update',
-      'Commission Query',
-      'Client Query',
-      'Reward Issue',
-      'Withdrawal Issue',
-      'Investment Query',
-      'Risk Profile Change',
-      'Contract Period Extended',
-      'Payment Issue',
-      'Document Request',
-      'Other',
-    ]).withMessage('Invalid category selected'),
+    .isString().withMessage('Category must be a string'),
 
   body('subject')
     .trim()
     .notEmpty().withMessage('Request subject is required')
-    .isLength({ max: 100 }).withMessage('Subject cannot exceed 100 characters'),
+    .isLength({ max: 250 }).withMessage('Subject cannot exceed 250 characters'),
 
   body('description')
     .trim()
