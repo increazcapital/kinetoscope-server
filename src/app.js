@@ -70,6 +70,18 @@ app.get('/', (req, res) => {
   });
 });
 
+// Database connection middleware for serverless & local environments
+const connectDB = require('./config/db');
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (err) {
+    console.error('Database connection middleware error:', err);
+    next(err);
+  }
+});
+
 // Response Masking Middleware (Applies role-based masking rules)
 const maskingMiddleware = require('./middlewares/masking.middleware');
 app.use(maskingMiddleware);

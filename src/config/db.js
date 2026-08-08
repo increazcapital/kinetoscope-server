@@ -22,7 +22,6 @@ const connectDB = async () => {
     const opts = {
       serverSelectionTimeoutMS: 15000,
       socketTimeoutMS: 45000,
-      family: 4, // Force IPv4 for fast MongoDB Atlas DNS resolution on Windows
     };
 
     const mongoUri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/kfpl';
