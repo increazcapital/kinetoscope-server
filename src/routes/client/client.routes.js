@@ -19,6 +19,7 @@ const {
   getClientInvestmentById,
   getClientProfile,
   updateClientProfile,
+  removeClientAvatar,
   getClientDocuments,
   getClientPayouts,
   getClientWealthAdvisor,
@@ -98,6 +99,7 @@ router.get('/payouts', getClientPayouts);
 // 4. Client Profile Info
 router.get('/profile', getClientProfile);
 router.patch('/profile', updateClientProfileRules, updateClientProfile);
+router.delete('/profile/avatar', removeClientAvatar);
 
 // 5. Client Documents Retrieval & Uploads
 const { uploadAgreementDocument } = require('../../controllers/client/client-dashboard.controller');

@@ -69,6 +69,7 @@ const getClientDetailsData = async (clientId) => {
       status: profile.status ? profile.status.toUpperCase() : 'ACTIVE',
       riskProfile: profile.riskProfile ? profile.riskProfile.toUpperCase() : 'MODERATE',
       kycStatus: kycStatusVal,
+      profilePic: profile.profilePic || user.profilePic || '',
     },
     summaryCards: {
       totalInvestment,
@@ -116,6 +117,7 @@ const getClientDetailsData = async (clientId) => {
       agreementDocumentVerified: profile.agreementDocumentVerified || false,
       agreementDocumentVerifiedAt: profile.agreementDocumentVerifiedAt || null,
       nomineeProofDocumentVerified: profile.nomineeProofDocumentVerified || false,
+      profilePic: profile.profilePic || user.profilePic || '',
     },
   };
 };

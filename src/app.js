@@ -6,22 +6,7 @@ const cookieParser = require('cookie-parser');
 const AppError = require('./utils/AppError');
 const globalErrorHandler = require('./middlewares/error.middleware');
 const rootRouter = require('./routes');
-const connectDB = require('./config/db');
 const app = express();
-
-// Ensure database connection is active before processing any requests (essential for Serverless warm-starts)
-app.use(async (req, res, next) => {
-  try {
-    await connectDB();
-    next();
-  } catch (error) {
-    console.error('Database connection failed in middleware:', error.message);
-    res.status(500).json({
-      success: false,
-      message: 'Database connection failed. Please try again.'
-    });
-  }
-});
 
 // Set security HTTP headers
 app.use(helmet());
@@ -29,12 +14,14 @@ app.use(helmet());
 // Compress all responses
 app.use(compression());
 
-
 // Enable CORS
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:5174',
   'http://localhost:5175',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:5174',
+  'http://127.0.0.1:5175',
   'https://kinetoscope-superadmin-seven.vercel.app',
   'https://kinetoscope-clientadmin.vercel.app',
   'https://kinetoscope-agentadmin.vercel.app',
@@ -55,8 +42,8 @@ app.use(cors({
 }));
 
 // Body parser, reading data from body into req.body
-app.use(express.json({ limit: '10kb' }));
-app.use(express.urlencoded({ extended: true, limit: '10kb' }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Cookie parser
 app.use(cookieParser());

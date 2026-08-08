@@ -94,6 +94,7 @@ const getAgentDetailsData = async (agentId) => {
       monthlySlab: profile.monthlySlab || '',
       specialCommission: profile.specialCommission || 0,
       portalPassword: profile.portalPassword || '',
+      profilePic: profile.profilePic || user.profilePic || '',
     },
   };
 };

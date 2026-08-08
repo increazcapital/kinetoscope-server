@@ -170,6 +170,10 @@ const clientProfileSchema = new mongoose.Schema(
       },
       default: 'National (Domestic)',
     },
+    profilePic: {
+      type: String,
+      default: '',
+    },
     // Document URLs (Stored on Cloudinary — populated asynchronously after initial save)
     panDocument: {
       type: String,

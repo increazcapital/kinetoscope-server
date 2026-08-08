@@ -67,8 +67,10 @@ module.exports = (err, req, res, next) => {
   }
 
   if (process.env.NODE_ENV === 'development') {
-    // Print the full error and stack trace to the server terminal for debugging
-    console.error('DEV ERROR 💥:', err);
+    // Only log full stack trace for actual server errors (500+), skip noisy 401/404 auth errors
+    if (error.statusCode >= 500) {
+      console.error('DEV ERROR 💥:', err);
+    }
     sendErrorDev(error, res);
   } else {
     sendErrorProd(error, res);

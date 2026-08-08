@@ -103,7 +103,6 @@ subAdminSchema.methods.comparePassword = async function (candidatePassword) {
 };
 
 // ── Indexes ───────────────────────
-subAdminSchema.index({ email: 1 });
 subAdminSchema.index({ isActive: 1 });
 subAdminSchema.index({ createdAt: -1 });
 

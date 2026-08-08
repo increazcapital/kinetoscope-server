@@ -399,6 +399,7 @@ const getAgentClients = asyncHandler(async (req, res, next) => {
       perkTier: profile ? (profile.tier || 'GOLD').toUpperCase() : 'GOLD',
       contractEndDate: profile ? profile.contractEndDate : '',
       contractEnd: profile ? profile.contractEndDate : '',
+      profilePic: (profile && profile.profilePic) || client.profilePic || '',
       
       // Dual-compatibility nested structure
       user: {
@@ -407,6 +408,7 @@ const getAgentClients = asyncHandler(async (req, res, next) => {
         email: client.email,
         clientCode: client.clientCode || '',
         createdAt: client.createdAt,
+        profilePic: client.profilePic || '',
       },
       profile: {
         _id: profile ? profile._id : null,
@@ -751,11 +753,82 @@ const uploadAgentAgreementDocument = asyncHandler(async (req, res, next) => {
   });
 });
 
+const updateAgentProfile = asyncHandler(async (req, res, next) => {
+  const allowedUpdates = ['phone', 'address', 'profilePic', 'nomineeName', 'nomineeRelation', 'nomineePhone', 'nomineeEmail', 'nomineeResidency'];
+  const updates = {};
+  for (const key of Object.keys(req.body)) {
+    if (allowedUpdates.includes(key)) {
+      updates[key] = req.body[key];
+    }
+  }
+
+  if (updates.profilePic && updates.profilePic.startsWith('data:image/')) {
+    const { uploadBase64ToCloudinary } = require('../../services/cloudinary.service');
+    try {
+      const cloudinaryUrl = await uploadBase64ToCloudinary(updates.profilePic, 'kinetoscope/agents/avatars');
+      if (cloudinaryUrl && (cloudinaryUrl.startsWith('http://') || cloudinaryUrl.startsWith('https://'))) {
+        updates.profilePic = cloudinaryUrl;
+      } else {
+        delete updates.profilePic;
+      }
+    } catch (err) {
+      console.error('[Agent Profile Upload] Failed to upload avatar to Cloudinary:', err);
+      delete updates.profilePic;
+    }
+  }
+
+  const profile = await AgentProfile.findOneAndUpdate(
+    { userId: req.user.id },
+    { $set: updates },
+    { new: true, runValidators: true }
+  );
+
+  if (updates.profilePic) {
+    await User.findByIdAndUpdate(req.user.id, { profilePic: updates.profilePic });
+  }
+
+  if (!profile) {
+    return next(new AppError('Agent profile could not be found.', 404));
+  }
+
+  const details = await agentDetailsService.getAgentDetailsData(req.user.id);
+
+  res.status(200).json({
+    success: true,
+    message: 'Agent profile updated successfully.',
+    data: details.profile,
+  });
+});
+
+const removeAgentAvatar = asyncHandler(async (req, res, next) => {
+  const profile = await AgentProfile.findOne({ userId: req.user.id });
+  if (profile && profile.profilePic) {
+    if (profile.profilePic.startsWith('http')) {
+      const { deleteFromCloudinary } = require('../../services/cloudinary.service');
+      await deleteFromCloudinary(profile.profilePic);
+    }
+    profile.profilePic = '';
+    await profile.save();
+  }
+
+  await User.findByIdAndUpdate(req.user.id, { profilePic: '' });
+
+  const profileObj = profile ? profile.toObject() : {};
+
+  res.status(200).json({
+    success: true,
+    message: 'Profile picture removed successfully.',
+    data: profileObj,
+  });
+});
+
 module.exports = {
   getAgentDashboard,
   getAgentClients,
   getAgentCommissions,
   getAgentProfile,
+  updateAgentProfile,
+  removeAgentAvatar,
   getAgentDocuments,
   uploadAgentAgreementDocument,
   getAgentClientById,

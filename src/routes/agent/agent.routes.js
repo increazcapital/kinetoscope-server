@@ -18,6 +18,8 @@ const {
   getAgentClients,
   getAgentCommissions,
   getAgentProfile,
+  updateAgentProfile,
+  removeAgentAvatar,
   getAgentDocuments,
   uploadAgentAgreementDocument,
   getAgentClientById,
@@ -89,6 +91,8 @@ router.get('/commission-slabs', getAllSlabs);
 
 // 5. Agent Profile Info
 router.get('/profile', getAgentProfile);
+router.patch('/profile', updateAgentProfile);
+router.delete('/profile/avatar', removeAgentAvatar);
 
 // 6. Agent Documents Retrieval
 router.get('/documents', getAgentDocuments);

@@ -226,12 +226,31 @@ const uploadDocumentsToCloudinaryParallelBackground = ({ files, fileFields, Mode
   safeWaitUntil(uploadPromise);
 };
 
+/**
+ * Upload a Base64 string directly to Cloudinary and return the secure URL.
+ * @param {string} base64String - Data URL or raw base64 string
+ * @param {string} folder - Cloudinary folder name
+ * @returns {Promise<string>} Cloudinary secure URL
+ */
+const uploadBase64ToCloudinary = async (base64String, folder = 'kinetoscope/avatars') => {
+  if (!base64String) return '';
+  if (base64String.startsWith('http://') || base64String.startsWith('https://')) {
+    return base64String;
+  }
+  const result = await cloudinary.uploader.upload(base64String, {
+    folder,
+    resource_type: 'image',
+  });
+  return result.secure_url;
+};
+
 module.exports = {
   deleteFromCloudinary,
   uploadToCloudinary,
   cleanupTempFile,
   processDocumentUploadsInBackground,
   uploadBufferToCloudinary,
+  uploadBase64ToCloudinary,
   uploadDocumentsToCloudinaryParallel,
   uploadDocumentsToCloudinaryParallelBackground,
 };

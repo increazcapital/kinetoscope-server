@@ -180,6 +180,10 @@ const agentProfileSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    profilePic: {
+      type: String,
+      default: '',
+    },
     // Nominee Details (Optional for Agents)
     nomineeName: {
       type: String,

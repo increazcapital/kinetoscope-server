@@ -427,6 +427,7 @@ const getAllAgents = asyncHandler(async (req, res, next) => {
       clientCode: user.clientCode,
       isActive: user.isActive,
       createdAt: user.createdAt,
+      profilePic: (profile && profile.profilePic) || user.profilePic || '',
       user,
       profile,
       clientsCount,
@@ -1160,7 +1161,7 @@ const payAgentCommission = asyncHandler(async (req, res, next) => {
             </table>
           </div>
           <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
-          <p style="color: #94a3b8; font-size: 11px; text-align: center;">Kinetoscope Film Production Pvt Ltd</p>
+          <p style="color: #94a3b8; font-size: 11px; text-align: center;">Kinetoscope Films Production Pvt Ltd</p>
         </div>
       `;
 

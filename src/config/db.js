@@ -1,3 +1,4 @@
+require('dotenv').config();
 const mongoose = require('mongoose');
 
 // Use global cache for the database connection promise to handle Vercel serverless environments
@@ -8,22 +9,29 @@ if (!cachedConnection) {
 }
 
 const connectDB = async () => {
+  if (mongoose.connection.readyState === 1) {
+    cachedConnection.conn = mongoose.connection;
+    return cachedConnection.conn;
+  }
+
   if (cachedConnection.conn) {
-    console.log('MongoDB: Using existing cached database connection.');
     return cachedConnection.conn;
   }
 
   if (!cachedConnection.promise) {
     const opts = {
-      bufferCommands: false,
-      serverSelectionTimeoutMS: 30000, // Increase to 30s to allow DNS and handshake resolution on slower connections
-      socketTimeoutMS: 45000, // Close sockets after 45 seconds of inactivity
+      serverSelectionTimeoutMS: 15000,
+      socketTimeoutMS: 45000,
+      family: 4, // Force IPv4 for fast MongoDB Atlas DNS resolution on Windows
     };
 
     const mongoUri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/kfpl';
 
     const syncExistingPayoutsToRoiPayouts = async () => {
       try {
+        require('../models/Payout.model');
+        require('../models/User.model');
+        require('../models/RoiPayout.model');
         const Payout = mongoose.model('Payout');
         const User = mongoose.model('User');
         const RoiPayout = mongoose.model('RoiPayout');
@@ -68,7 +76,7 @@ const connectDB = async () => {
       }
     };
 
-    const connectWithRetry = async (retries = 5, delay = 5000) => {
+    const connectWithRetry = async (retries = 2, delay = 1500) => {
       try {
         const mongooseInstance = await mongoose.connect(mongoUri, opts);
         console.log(`MongoDB Connected: ${mongooseInstance.connection.host}`);

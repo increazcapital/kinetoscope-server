@@ -1,7 +1,7 @@
 const transporter = require('../config/mailer');
 
 const LOGO_URL = 'https://res.cloudinary.com/j8ksidlp/image/upload/v1785908914/kinetoscope/branding/kfpl_logo.jpg';
-const COMPANY_NAME = 'Kinetoscope Film Pvt Ltd';
+const COMPANY_NAME = 'Kinetoscope Films Pvt Ltd';
 const TAGLINE = 'A GLOBAL MEDIA FUND';
 
 /**
@@ -102,7 +102,7 @@ const buildOtpEmailHtml = ({ title, subtitle, otp, expiryMinutes = 5, note }) =>
  * Dispatch templates or custom messages using mailer configuration
  */
 const sendEmail = async (options) => {
-  const defaultFrom = process.env.EMAIL_FROM || 'Kinetoscope Film Pvt Ltd <info@kinetoscopefilms.com>';
+  const defaultFrom = process.env.EMAIL_FROM || 'Kinetoscope Films Pvt Ltd <info@kinetoscopefilms.com>';
   const mailOptions = {
     from: options.from || defaultFrom,
     replyTo: options.replyTo || 'info@kinetoscopefilms.com',

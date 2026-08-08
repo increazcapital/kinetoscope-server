@@ -434,6 +434,7 @@ const getAllClients = asyncHandler(async (req, res, next) => {
       assignedAgentName: assignedAgentObj?.name || '',
       agentCommissionMonthly: agentCommissionStr,
       agentCommission: agentCommissionStr,
+      profilePic: (profile && profile.profilePic) || user.profilePic || '',
       user,
       profile
     };

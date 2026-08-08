@@ -393,6 +393,7 @@ const getClientProfile = asyncHandler(async (req, res, next) => {
         dobFormatted: formatLongDate(profile.dob),
         address: profile.address || '—',
         emergencyContact: profile.emergencyContact || 'Not provided',
+        profilePic: profile.profilePic || req.user.profilePic || '',
       },
       accountDetails: {
         clientId: req.user.clientCode || '—',
@@ -430,6 +431,7 @@ const updateClientProfile = asyncHandler(async (req, res, next) => {
     'nomineePhone',
     'nomineeEmail',
     'nomineeResidency',
+    'profilePic',
   ];
 
   const updates = {};
@@ -439,11 +441,31 @@ const updateClientProfile = asyncHandler(async (req, res, next) => {
     }
   }
 
+  if (updates.profilePic && updates.profilePic.startsWith('data:image/')) {
+    const { uploadBase64ToCloudinary } = require('../../services/cloudinary.service');
+    try {
+      const cloudinaryUrl = await uploadBase64ToCloudinary(updates.profilePic, 'kinetoscope/clients/avatars');
+      if (cloudinaryUrl && (cloudinaryUrl.startsWith('http://') || cloudinaryUrl.startsWith('https://'))) {
+        updates.profilePic = cloudinaryUrl;
+      } else {
+        delete updates.profilePic;
+      }
+    } catch (err) {
+      console.error('[Client Profile Upload] Failed to upload avatar to Cloudinary:', err);
+      delete updates.profilePic;
+    }
+  }
+
   const profile = await ClientProfile.findOneAndUpdate(
     { userId: req.user.id },
     { $set: updates },
     { new: true, runValidators: true }
   );
+
+  if (updates.profilePic) {
+    const User = require('../../models/User.model');
+    await User.findByIdAndUpdate(req.user.id, { profilePic: updates.profilePic });
+  }
 
   if (!profile) {
     return next(new AppError('Client profile could not be found.', 404));
@@ -458,6 +480,35 @@ const updateClientProfile = asyncHandler(async (req, res, next) => {
   res.status(200).json({
     success: true,
     message: 'Profile updated successfully',
+    data: {
+      profile: profileObj,
+    },
+  });
+});
+
+const removeClientAvatar = asyncHandler(async (req, res, next) => {
+  const profile = await ClientProfile.findOne({ userId: req.user.id });
+  if (profile && profile.profilePic) {
+    if (profile.profilePic.startsWith('http')) {
+      const { deleteFromCloudinary } = require('../../services/cloudinary.service');
+      await deleteFromCloudinary(profile.profilePic);
+    }
+    profile.profilePic = '';
+    await profile.save();
+  }
+
+  const User = require('../../models/User.model');
+  await User.findByIdAndUpdate(req.user.id, { profilePic: '' });
+
+  const profileObj = profile ? {
+    ...profile.toObject(),
+    clientCode: req.user.clientCode || '—',
+    clientId: req.user.clientCode || '—',
+  } : {};
+
+  res.status(200).json({
+    success: true,
+    message: 'Profile picture removed successfully.',
     data: {
       profile: profileObj,
     },
@@ -620,6 +671,7 @@ module.exports = {
   getClientInvestmentById,
   getClientProfile,
   updateClientProfile,
+  removeClientAvatar,
   getClientDocuments,
   uploadAgreementDocument,
   getClientPayouts,
