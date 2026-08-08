@@ -16,26 +16,20 @@ const { ROLES } = require('../../constants/roles');
 const getAgentDashboard = asyncHandler(async (req, res, next) => {
   const agentId = req.user.id;
 
-  // 1) Find assigned clients, agent commissions, and agent profile in parallel (Batch 1)
-  const [clients, commissions, agentProfile] = await Promise.all([
+  // 1) Find assigned clients, agent commissions, agent profile, and active investments in a single parallel batch
+  const [clients, commissions, agentProfile, allActiveInvestments] = await Promise.all([
     User.find({ role: ROLES.CLIENT, assignedAgent: agentId }).sort({ createdAt: -1 }).lean(),
     AgentCommission.find({ agentId }).lean(),
-    AgentProfile.findOne({ userId: agentId }).lean()
+    AgentProfile.findOne({ userId: agentId }).lean(),
+    Investment.find({ status: 'active' }).lean()
   ]);
-  const clientIds = clients.map(c => c._id);
 
-  // 2) Find active client investments, profiles, and transactions in parallel (Batch 2)
-  const [investmentsList, clientProfiles, clientTransactions] = await Promise.all([
-    clientIds.length > 0
-      ? Investment.find({ clientId: { $in: clientIds }, status: 'active' }).lean()
-      : Promise.resolve([]),
-    clientIds.length > 0
-      ? ClientProfile.find({ userId: { $in: clientIds } }).lean()
-      : Promise.resolve([]),
-    clientIds.length > 0
-      ? Transaction.find({ clientId: { $in: clientIds } }).sort({ createdAt: -1 }).limit(10).lean()
-      : Promise.resolve([])
-  ]);
+  const clientIds = new Set(clients.map(c => String(c._id)));
+  const investmentsList = allActiveInvestments.filter(inv => clientIds.has(String(inv.clientId)));
+
+  const clientTransactions = clientIds.size > 0
+    ? await Transaction.find({ clientId: { $in: Array.from(clientIds) } }).sort({ createdAt: -1 }).limit(10).lean()
+    : [];
 
   const totalClientsInvestment = investmentsList.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
 

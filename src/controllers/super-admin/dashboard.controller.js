@@ -13,7 +13,7 @@ const { ROLES } = require('../../constants/roles');
  * GET /api/super-admin/dashboard/analytics
  */
 const getAdminDashboard = asyncHandler(async (req, res, next) => {
-  // 1) Gather basic counts in parallel
+  // 1) Gather all metrics concurrently in a single parallel Promise.all batch
   const [
     totalClientsCount,
     totalAgentsCount,
@@ -25,7 +25,9 @@ const getAdminDashboard = asyncHandler(async (req, res, next) => {
     allTransactions,
     paidRoiPayouts,
     paidPayouts,
-    approvedDepositsList
+    approvedDepositsList,
+    closedInvestmentsCount,
+    pendingDepositsCount
   ] = await Promise.all([
     User.countDocuments({ role: ROLES.CLIENT }),
     User.countDocuments({ role: ROLES.AGENT }),
@@ -37,7 +39,9 @@ const getAdminDashboard = asyncHandler(async (req, res, next) => {
     Transaction.find().sort({ createdAt: -1 }).limit(100).lean(),
     RoiPayout.find({ status: 'PAID' }).lean(),
     Payout.find({ recipientType: 'Client Return (ROI)', status: 'paid' }).lean(),
-    Transaction.find({ type: 'deposit', status: 'approved' }).lean()
+    Transaction.find({ type: 'deposit', status: 'approved' }).lean(),
+    Investment.countDocuments({ status: { $in: ['completed', 'cancelled'] } }),
+    Transaction.countDocuments({ type: 'deposit', status: 'pending' })
   ]);
 
   // 2) Calculate total investment amount
@@ -290,8 +294,6 @@ const getAdminDashboard = asyncHandler(async (req, res, next) => {
     .slice(0, 10);
 
   // 8) Investment Status Donut Split
-  const closedInvestmentsCount = await Investment.countDocuments({ status: { $in: ['completed', 'cancelled'] } });
-  const pendingDepositsCount = await Transaction.countDocuments({ type: 'deposit', status: 'pending' });
 
   const investmentStatusSplit = {
     active: activeInvestmentsCount,
