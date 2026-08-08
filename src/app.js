@@ -25,13 +25,16 @@ const allowedOrigins = [
   'https://kinetoscope-superadmin-seven.vercel.app',
   'https://kinetoscope-clientadmin.vercel.app',
   'https://kinetoscope-agentadmin.vercel.app',
-  process.env.FRONTEND_URL
+  process.env.FRONTEND_URL,
+  process.env.SUPER_ADMIN_URL,
+  process.env.CLIENT_ADMIN_URL,
+  process.env.AGENT_ADMIN_URL,
 ].filter(Boolean);
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps, curl, postman) or matching allowedOrigins
-    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV === 'development' || origin.includes('postman') || origin.startsWith('chrome-extension://')) {
+    // Allow requests with no origin (like mobile apps, curl, postman) or matching allowedOrigins/vercel.app
+    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV === 'development' || origin.includes('postman') || origin.startsWith('chrome-extension://') || origin.endsWith('.vercel.app')) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
