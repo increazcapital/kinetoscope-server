@@ -585,6 +585,8 @@ const updateAgent = asyncHandler(async (req, res, next) => {
     'panDocumentVerified',
     'idProofDocumentVerified',
     'bankProofDocumentVerified',
+    'agreementDocumentVerified',
+    'agreementDocumentVerifiedAt',
     'nomineeProofDocumentVerified',
   ];
 
@@ -1097,19 +1099,28 @@ const verifyAgentDocument = asyncHandler(async (req, res, next) => {
     return next(new AppError(`Invalid document field. Must be one of: ${allowedFields.join(', ')}`, 400));
   }
 
-  let profile = await AgentProfile.findOne({ userId: id });
-  if (!profile && mongoose.Types.ObjectId.isValid(id)) {
-    profile = await AgentProfile.findById(id);
+  const agentUser = await findAgentUser(id);
+  if (!agentUser) {
+    return next(new AppError('Agent account not found.', 404));
   }
 
+  let profile = await AgentProfile.findOne({ userId: agentUser._id });
   if (!profile) {
     return next(new AppError('Agent profile not found.', 404));
   }
 
   const verifiedField = `${targetField}Verified`;
   profile[verifiedField] = true;
+
+  const updateFields = {
+    [verifiedField]: true,
+  };
+
   if (targetField === 'agreementDocument') {
+    profile.agreementDocumentVerified = true;
     profile.agreementDocumentVerifiedAt = new Date();
+    updateFields.agreementDocumentVerified = true;
+    updateFields.agreementDocumentVerifiedAt = profile.agreementDocumentVerifiedAt;
   }
 
   // Check if core required documents (pan, idProof, bankProof) are verified
@@ -1117,10 +1128,6 @@ const verifyAgentDocument = asyncHandler(async (req, res, next) => {
   const idOk = targetField === 'idProofDocument' ? true : !!profile.idProofDocumentVerified;
   const bankOk = targetField === 'bankProofDocument' ? true : !!profile.bankProofDocumentVerified;
   const isCoreVerified = panOk && idOk && bankOk;
-
-  const updateFields = {
-    [verifiedField]: true,
-  };
 
   if (isCoreVerified) {
     updateFields.kycStatus = 'VERIFIED';
@@ -1143,10 +1150,13 @@ const verifyAgentDocument = asyncHandler(async (req, res, next) => {
       documentField: targetField,
       verified: true,
       kycStatus: updatedProfile.kycStatus,
+      agreementDocumentVerified: updatedProfile.agreementDocumentVerified,
+      agreementDocumentVerifiedAt: updatedProfile.agreementDocumentVerifiedAt,
       verificationStatus: {
         panDocumentVerified: updatedProfile.panDocumentVerified,
         idProofDocumentVerified: updatedProfile.idProofDocumentVerified,
         bankProofDocumentVerified: updatedProfile.bankProofDocumentVerified,
+        agreementDocumentVerified: updatedProfile.agreementDocumentVerified,
         nomineeProofDocumentVerified: updatedProfile.nomineeProofDocumentVerified,
       },
     },

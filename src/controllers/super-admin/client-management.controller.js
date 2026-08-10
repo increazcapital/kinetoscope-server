@@ -907,7 +907,12 @@ const verifyDocument = asyncHandler(async (req, res, next) => {
     return next(new AppError(`Invalid document field. Must be one of: ${allowedFields.join(', ')}`, 400));
   }
 
-  const profile = await ClientProfile.findOne({ userId: id });
+  const clientUser = await findClientUser(id);
+  if (!clientUser) {
+    return next(new AppError('Client account not found.', 404));
+  }
+
+  let profile = await ClientProfile.findOne({ userId: clientUser._id });
   if (!profile) {
     return next(new AppError('Client profile not found.', 404));
   }
@@ -921,6 +926,7 @@ const verifyDocument = asyncHandler(async (req, res, next) => {
   const verifiedField = `${documentField}Verified`;
   profile[verifiedField] = true;
   if (documentField === 'agreementDocument') {
+    profile.agreementDocumentVerified = true;
     profile.agreementDocumentVerifiedAt = new Date();
   }
 
@@ -941,7 +947,6 @@ const verifyDocument = asyncHandler(async (req, res, next) => {
 
   // Send automated email notification to the client and their assigned agent (if any)
   try {
-    const clientUser = await User.findById(id);
     if (clientUser && clientUser.email) {
       let agentEmail = null;
       if (clientUser.assignedAgent) {

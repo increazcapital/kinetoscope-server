@@ -247,6 +247,7 @@ const getAgentDocumentsData = async (agentId) => {
       panDocumentVerified: profile.panDocumentVerified || false,
       idProofDocumentVerified: profile.idProofDocumentVerified || false,
       bankProofDocumentVerified: profile.bankProofDocumentVerified || false,
+      agreementDocumentVerified: profile.agreementDocumentVerified || false,
       nomineeProofDocumentVerified: profile.nomineeProofDocumentVerified || false,
     },
   };
