@@ -10,8 +10,50 @@ const { ROLES } = require('../constants/roles');
  * @param {string} agentId - User ID of the agent
  * @returns {Promise<Object>} Formatted object with header, summaryCards, and profile details
  */
+const slugifyName = (name) => {
+  if (!name) return '';
+  return String(name)
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s-]/g, '')
+    .replace(/[\s_-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+};
+
+const findAgentUser = async (agentId) => {
+  if (!agentId) return null;
+  const str = String(agentId).trim();
+  if (/^[0-9a-fA-F]{24}$/.test(str)) {
+    const user = await User.findById(str);
+    if (user && user.role === ROLES.AGENT) return user;
+  }
+  let user = await User.findOne({ clientCode: str.toUpperCase(), role: ROLES.AGENT });
+  if (!user) user = await User.findOne({ clientCode: str, role: ROLES.AGENT });
+  if (!user) {
+    const prof = await AgentProfile.findOne({
+      $or: [
+        { agentCode: str.toUpperCase() },
+        { agentCode: str },
+        { agentId: str.toUpperCase() },
+        { agentId: str }
+      ]
+    });
+    if (prof) user = await User.findById(prof.userId);
+  }
+  if (!user) {
+    const allAgents = await User.find({ role: ROLES.AGENT });
+    user = allAgents.find(a => slugifyName(a.name) === str.toLowerCase() || slugifyName(a.email) === str.toLowerCase());
+  }
+  if (!user) {
+    const allProfiles = await AgentProfile.find();
+    const matchedProf = allProfiles.find(p => slugifyName(p.fullName) === str.toLowerCase());
+    if (matchedProf) user = await User.findById(matchedProf.userId);
+  }
+  return user;
+};
+
 const getAgentDetailsData = async (agentId) => {
-  const user = await User.findById(agentId);
+  const user = await findAgentUser(agentId);
   if (!user || user.role !== ROLES.AGENT) {
     throw new AppError('Agent account not found.', 404);
   }
@@ -106,7 +148,7 @@ const getAgentDetailsData = async (agentId) => {
  * @returns {Promise<Array>} List of document objects
  */
 const getAgentDocumentsData = async (agentId) => {
-  const user = await User.findById(agentId);
+  const user = await findAgentUser(agentId);
   if (!user || user.role !== ROLES.AGENT) {
     throw new AppError('Agent account not found.', 404);
   }

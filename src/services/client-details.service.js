@@ -11,8 +11,50 @@ const { ROLES } = require('../constants/roles');
  * @param {string} clientId - User ID of the client
  * @returns {Promise<Object>} Formatted object with header, summaryCards, and profile details
  */
+const slugifyName = (name) => {
+  if (!name) return '';
+  return String(name)
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s-]/g, '')
+    .replace(/[\s_-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+};
+
+const findClientUser = async (clientId) => {
+  if (!clientId) return null;
+  const str = String(clientId).trim();
+  if (/^[0-9a-fA-F]{24}$/.test(str)) {
+    const user = await User.findById(str).populate('assignedAgent', 'name email');
+    if (user && user.role === ROLES.CLIENT) return user;
+  }
+  let user = await User.findOne({ clientCode: str.toUpperCase(), role: ROLES.CLIENT }).populate('assignedAgent', 'name email');
+  if (!user) user = await User.findOne({ clientCode: str, role: ROLES.CLIENT }).populate('assignedAgent', 'name email');
+  if (!user) {
+    const prof = await ClientProfile.findOne({
+      $or: [
+        { clientCode: str.toUpperCase() },
+        { clientCode: str },
+        { clientId: str.toUpperCase() },
+        { clientId: str }
+      ]
+    });
+    if (prof) user = await User.findById(prof.userId).populate('assignedAgent', 'name email');
+  }
+  if (!user) {
+    const allClients = await User.find({ role: ROLES.CLIENT }).populate('assignedAgent', 'name email');
+    user = allClients.find(c => slugifyName(c.name) === str.toLowerCase() || slugifyName(c.email) === str.toLowerCase());
+  }
+  if (!user) {
+    const allProfiles = await ClientProfile.find();
+    const matchedProf = allProfiles.find(p => slugifyName(p.fullName) === str.toLowerCase());
+    if (matchedProf) user = await User.findById(matchedProf.userId).populate('assignedAgent', 'name email');
+  }
+  return user;
+};
+
 const getClientDetailsData = async (clientId) => {
-  const user = await User.findById(clientId).populate('assignedAgent', 'name email');
+  const user = await findClientUser(clientId);
   if (!user || user.role !== ROLES.CLIENT) {
     throw new AppError('Client account not found.', 404);
   }
@@ -129,7 +171,7 @@ const getClientDetailsData = async (clientId) => {
  * @returns {Promise<Array>} List of document objects
  */
 const getClientDocumentsData = async (clientId) => {
-  const user = await User.findById(clientId);
+  const user = await findClientUser(clientId);
   if (!user || user.role !== ROLES.CLIENT) {
     throw new AppError('Client account not found.', 404);
   }

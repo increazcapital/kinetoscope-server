@@ -478,15 +478,55 @@ const getClientById = asyncHandler(async (req, res, next) => {
  * Update Client details and status (Super Admin only)
  * PATCH /api/super-admin/clients/:id
  */
-const updateClient = asyncHandler(async (req, res, next) => {
-  const userId = req.params.id;
+const slugifyName = (name) => {
+  if (!name) return '';
+  return String(name)
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s-]/g, '')
+    .replace(/[\s_-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+};
 
-  // 1) Find the target user and profile
-  const user = await User.findById(userId);
+const findClientUser = async (identifier) => {
+  if (!identifier) return null;
+  const str = String(identifier).trim();
+  if (/^[0-9a-fA-F]{24}$/.test(str)) {
+    const user = await User.findById(str);
+    if (user && user.role === ROLES.CLIENT) return user;
+  }
+  let user = await User.findOne({ clientCode: str.toUpperCase(), role: ROLES.CLIENT });
+  if (!user) user = await User.findOne({ clientCode: str, role: ROLES.CLIENT });
+  if (!user) {
+    const prof = await ClientProfile.findOne({
+      $or: [
+        { clientCode: str.toUpperCase() },
+        { clientCode: str },
+        { clientId: str.toUpperCase() },
+        { clientId: str }
+      ]
+    });
+    if (prof) user = await User.findById(prof.userId);
+  }
+  if (!user) {
+    const allClients = await User.find({ role: ROLES.CLIENT });
+    user = allClients.find(c => slugifyName(c.name) === str.toLowerCase() || slugifyName(c.email) === str.toLowerCase());
+  }
+  if (!user) {
+    const allProfiles = await ClientProfile.find();
+    const matchedProf = allProfiles.find(p => slugifyName(p.fullName) === str.toLowerCase());
+    if (matchedProf) user = await User.findById(matchedProf.userId);
+  }
+  return user;
+};
+
+const updateClient = asyncHandler(async (req, res, next) => {
+  const user = await findClientUser(req.params.id);
   if (!user || user.role !== ROLES.CLIENT) {
     return next(new AppError('Client user record not found.', 404));
   }
 
+  const userId = user._id;
   const profile = await ClientProfile.findOne({ userId });
   if (!profile) {
     return next(new AppError('Client profile record not found.', 404));

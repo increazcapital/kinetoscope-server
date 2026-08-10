@@ -473,15 +473,55 @@ const getAgentById = asyncHandler(async (req, res, next) => {
  * Update Agent details and status (Super Admin only)
  * PATCH /api/super-admin/agents/:id
  */
-const updateAgent = asyncHandler(async (req, res, next) => {
-  const userId = req.params.id;
+const slugifyName = (name) => {
+  if (!name) return '';
+  return String(name)
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s-]/g, '')
+    .replace(/[\s_-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+};
 
-  // 1) Find the target user and profile
-  const user = await User.findById(userId);
+const findAgentUser = async (identifier) => {
+  if (!identifier) return null;
+  const str = String(identifier).trim();
+  if (/^[0-9a-fA-F]{24}$/.test(str)) {
+    const user = await User.findById(str);
+    if (user && user.role === ROLES.AGENT) return user;
+  }
+  let user = await User.findOne({ clientCode: str.toUpperCase(), role: ROLES.AGENT });
+  if (!user) user = await User.findOne({ clientCode: str, role: ROLES.AGENT });
+  if (!user) {
+    const prof = await AgentProfile.findOne({
+      $or: [
+        { agentCode: str.toUpperCase() },
+        { agentCode: str },
+        { agentId: str.toUpperCase() },
+        { agentId: str }
+      ]
+    });
+    if (prof) user = await User.findById(prof.userId);
+  }
+  if (!user) {
+    const allAgents = await User.find({ role: ROLES.AGENT });
+    user = allAgents.find(a => slugifyName(a.name) === str.toLowerCase() || slugifyName(a.email) === str.toLowerCase());
+  }
+  if (!user) {
+    const allProfiles = await AgentProfile.find();
+    const matchedProf = allProfiles.find(p => slugifyName(p.fullName) === str.toLowerCase());
+    if (matchedProf) user = await User.findById(matchedProf.userId);
+  }
+  return user;
+};
+
+const updateAgent = asyncHandler(async (req, res, next) => {
+  const user = await findAgentUser(req.params.id);
   if (!user || user.role !== ROLES.AGENT) {
     return next(new AppError('Agent user record not found.', 404));
   }
 
+  const userId = user._id;
   const profile = await AgentProfile.findOne({ userId });
   if (!profile) {
     return next(new AppError('Agent profile record not found.', 404));
