@@ -105,10 +105,13 @@ const agentProfileSchema = new mongoose.Schema(
       required: [true, 'IFSC / SWIFT code is required'],
       trim: true,
       uppercase: true,
+      set: encrypt,
+      get: decrypt,
       validate: {
         validator: function(v) {
-          if (!v) return false;
-          const cleanIfsc = v.replace(/\s/g, '').toUpperCase();
+          const decryptedVal = decrypt(v);
+          if (!decryptedVal) return false;
+          const cleanIfsc = decryptedVal.replace(/\s/g, '').toUpperCase();
           if (this.residencyStatus === 'International') {
             return cleanIfsc.trim().length > 0;
           }

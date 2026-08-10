@@ -125,12 +125,15 @@ const clientProfileSchema = new mongoose.Schema(
       required: [true, 'IFSC / SWIFT code is required'],
       trim: true,
       uppercase: true,
+      set: encrypt,
+      get: decrypt,
       validate: {
         validator: function(v) {
+          const decryptedVal = decrypt(v);
           if (this.residencyStatus === 'International') {
-            return v && v.trim().length > 0;
+            return decryptedVal && decryptedVal.trim().length > 0;
           }
-          return /^[A-Z]{4}0[A-Z0-9]{6}$/.test(v);
+          return /^[A-Z]{4}0[A-Z0-9]{6}$/.test(decryptedVal);
         },
         message: 'Please provide a valid IFSC code',
       },
