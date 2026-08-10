@@ -52,9 +52,8 @@ const protect = asyncHandler(async (req, res, next) => {
     return next(new AppError('The user belonging to this token no longer exists.', 401));
   }
 
-  // 4) Verify account is still active
   if (!currentUser.isActive) {
-    return next(new AppError('Your account has been deactivated. Please contact support.', 403));
+    return next(new AppError('Your account has been deactivated or put on hold. Please contact info@kinetoscopefilms.com for assistance.', 403));
   }
 
   // 5) Attach authenticated user to request object

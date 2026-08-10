@@ -35,9 +35,8 @@ const login = asyncHandler(async (req, res, next) => {
     return next(new AppError('Access Denied. Only agent accounts are permitted to log in to this portal.', 403));
   }
 
-  // 4) Verify account is active
   if (!user.isActive) {
-    return next(new AppError('Your account has been deactivated or blocked. Please contact admin.', 403));
+    return next(new AppError('Your account has been deactivated or blocked. Please contact info@kinetoscopefilms.com for assistance.', 403));
   }
 
   // 5) Check if 2FA (OTP Verification) is enabled
@@ -352,7 +351,10 @@ const registerAgent = asyncHandler(async (req, res, next) => {
     if (createdUser) {
       await User.findByIdAndDelete(createdUser._id);
     }
-    return next(new AppError(`Database transaction failed: ${dbError.message}`, 500));
+    const cleanMsg = dbError.name === 'ValidationError' && dbError.errors 
+      ? Object.values(dbError.errors).map(e => e.message).join('. ')
+      : dbError.message || 'Registration details are invalid. Please check your inputs.';
+    return next(new AppError(`Registration failed: ${cleanMsg}`, 400));
   }
 
   // 6) Trigger parallel in-memory background uploads (Vercel-safe using waitUntil)

@@ -25,11 +25,14 @@ const getAgentDashboard = asyncHandler(async (req, res, next) => {
   ]);
 
   const clientIds = new Set(clients.map(c => String(c._id)));
-  const investmentsList = allActiveInvestments.filter(inv => clientIds.has(String(inv.clientId)));
-
-  const clientTransactions = clientIds.size > 0
-    ? await Transaction.find({ clientId: { $in: Array.from(clientIds) } }).sort({ createdAt: -1 }).limit(10).lean()
-    : [];
+  const clientIdsArray = Array.from(clientIds);
+  const [investmentsList, clientProfiles, clientTransactions] = await Promise.all([
+    Investment.find({ status: 'active', clientId: { $in: clientIdsArray } }).lean(),
+    ClientProfile.find({ userId: { $in: clientIdsArray } }).lean(),
+    clientIdsArray.length > 0
+      ? Transaction.find({ clientId: { $in: clientIdsArray } }).sort({ createdAt: -1 }).limit(10).lean()
+      : []
+  ]);
 
   const totalClientsInvestment = investmentsList.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
 

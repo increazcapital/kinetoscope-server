@@ -39,10 +39,10 @@ const login = asyncHandler(async (req, res, next) => {
   const profile = await ClientProfile.findOne({ userId: user._id });
 
   if (profile && profile.kycStatus === 'REJECTED') {
-    return next(new AppError('Your account KYC registration has been rejected. Please contact support.', 403));
+    return next(new AppError('Your account KYC registration has been rejected. Please contact info@kinetoscopefilms.com for assistance.', 403));
   }
   if (!user.isActive || (profile && profile.status === 'suspended')) {
-    return next(new AppError('Your account has been deactivated. Please contact support.', 403));
+    return next(new AppError('Your account has been deactivated or put on hold. Please contact info@kinetoscopefilms.com for assistance.', 403));
   }
 
   // 5) Check if 2FA (OTP Verification) is enabled
@@ -248,6 +248,10 @@ const registerClient = asyncHandler(async (req, res, next) => {
     password,
   } = req.body;
 
+  if (!fullName || !email || !password) {
+    return next(new AppError('Please provide all required fields: Full Name, Email, and Password.', 400));
+  }
+
   // 1) Check if email is already in use
   const existingUser = await User.findOne({ email: email.toLowerCase().trim() });
   if (existingUser) {
@@ -354,7 +358,10 @@ const registerClient = asyncHandler(async (req, res, next) => {
     if (createdUser) {
       await User.findByIdAndDelete(createdUser._id);
     }
-    return next(new AppError(`Database saving failed: ${err.message}`, 500));
+    const cleanMsg = err.name === 'ValidationError' && err.errors 
+      ? Object.values(err.errors).map(e => e.message).join('. ')
+      : err.message || 'Registration details are invalid. Please check your inputs.';
+    return next(new AppError(`Registration failed: ${cleanMsg}`, 400));
   }
 
   // 6) Dispatch Welcome Email to Client & Alert to Super Admin asynchronously
