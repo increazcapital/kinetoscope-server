@@ -607,6 +607,45 @@ const updateClient = asyncHandler(async (req, res, next) => {
     profileUpdates.email = userUpdates.email;
   }
 
+  // Process document removal requests from Super Admin
+  const removedDocLabels = [];
+  const removeDocMap = [
+    { flag: 'removePanDocument', field: 'panDocument', verify: 'panDocumentVerified' },
+    { flag: 'removeAadhaarDocument', field: 'aadhaarDocument', verify: 'idProofDocumentVerified', extra: 'idProofDocument' },
+    { flag: 'removeBankProofDocument', field: 'bankProofDocument', verify: 'bankProofDocumentVerified' },
+    { flag: 'removeNomineeProofDocument', field: 'nomineeProofDocument', verify: 'nomineeProofDocumentVerified' },
+    { flag: 'removeAgreementDocument', field: 'agreementDocument', verify: 'agreementVerified', extra: 'signedAgreementUrl' },
+  ];
+
+  removeDocMap.forEach(cfg => {
+    if (req.body[cfg.flag] === 'true' || req.body[cfg.field] === '') {
+      profileUpdates[cfg.field] = '';
+      if (cfg.extra) profileUpdates[cfg.extra] = '';
+      if (cfg.verify) profileUpdates[cfg.verify] = false;
+      if (['panDocument', 'aadhaarDocument', 'bankProofDocument'].includes(cfg.field)) {
+        profileUpdates.kycStatus = 'PENDING';
+      }
+      const labelMap = {
+        panDocument: 'PAN Card Document',
+        aadhaarDocument: 'ID Proof Document (Aadhaar / Passport)',
+        bankProofDocument: 'Bank Details Document',
+        nomineeProofDocument: 'Nominee ID Proof Document',
+        agreementDocument: 'Signed Client Participation Agreement',
+      };
+      if (labelMap[cfg.field]) removedDocLabels.push(labelMap[cfg.field]);
+    }
+  });
+
+  if (removedDocLabels.length > 0 && user.email) {
+    const { sendDocumentReuploadRequiredEmail } = require('../../services/email.service');
+    sendDocumentReuploadRequiredEmail({
+      toEmail: user.email,
+      userName: user.name,
+      userRole: 'Client',
+      missingDocs: removedDocLabels,
+    }).catch(err => console.error('[Email Trigger] Client doc reupload email failed:', err.message));
+  }
+
   // 4) Process optional document uploads using buffer upload to Cloudinary (in-memory)
   const fileFields = [
     'panDocument',
@@ -635,6 +674,10 @@ const updateClient = asyncHandler(async (req, res, next) => {
           const buffer = req.files[field][0].buffer;
           const newUrl = await uploadBufferToCloudinary(buffer, 'kinetoscope');
           profileUpdates[field] = newUrl;
+          if (field === 'agreementDocument') {
+            profileUpdates.signedAgreementUrl = newUrl;
+            profileUpdates.agreementVerified = true;
+          }
           uploadedUrls.push(newUrl);
         }
       }

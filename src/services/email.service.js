@@ -582,6 +582,121 @@ const sendNewRegistrationAlertToAdmin = async (user, roleLabel) => {
   );
 };
 
+/**
+ * Send email to Client or Agent when Super Admin deletes/clears a document or requests a re-upload.
+ */
+const sendDocumentReuploadRequiredEmail = async ({ toEmail, userName, userRole, missingDocs = [] }) => {
+  if (!toEmail) return;
+
+  const subject = `Action Required: Document Verification & Re-upload Request — Kinetoscope Films Team`;
+  const portalUrl = userRole === 'Agent' 
+    ? (process.env.AGENT_PORTAL_URL || 'http://localhost:5175/profile') 
+    : (process.env.CLIENT_PORTAL_URL || 'http://localhost:5174/profile');
+
+  const contentHtml = `
+    <p style="font-size: 14.5px; color: #334155; line-height: 1.6; margin-top: 0;">
+      Dear <strong>${userName}</strong>,
+    </p>
+    <p style="font-size: 14px; color: #334155; line-height: 1.6;">
+      During our verification review, our compliance team noted that the following document(s) require re-upload for verification:
+    </p>
+    
+    <div style="background-color: #FEF2F2; border: 1px solid #FECACA; border-radius: 12px; padding: 18px; margin: 18px 0;">
+      <div style="font-size: 12px; font-weight: 800; color: #991B1B; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">
+        ⚠️ Required Re-upload Document(s):
+      </div>
+      <ul style="margin: 0; padding-left: 20px; color: #7F1D1D; font-size: 14px; font-weight: 700; line-height: 1.8;">
+        ${missingDocs.map(d => `<li>${d}</li>`).join('')}
+      </ul>
+    </div>
+
+    <div style="background-color: #F8FAFC; border: 1px dashed #CBD5E1; border-radius: 12px; padding: 16px; margin-bottom: 20px;">
+      <div style="font-size: 12.5px; font-weight: 800; color: #334155; margin-bottom: 6px;">
+        💡 Guidelines for Fast Document Approval:
+      </div>
+      <ul style="margin: 0; padding-left: 18px; color: #64748B; font-size: 12.5px; line-height: 1.6;">
+        <li>Ensure documents are clear, legible, and un-cropped (HD quality).</li>
+        <li>Accepted file formats: PDF, PNG, JPG, or DOCX.</li>
+        <li>Ensure all text (Name, ID Numbers, Account details) match your registered details.</li>
+      </ul>
+    </div>
+
+    <p style="font-size: 13.5px; color: #475569; line-height: 1.5;">
+      Please log in to your <strong>${userRole} Portal</strong> and navigate to your <strong>My Profile</strong> or <strong>Dashboard</strong> screen to re-upload the document(s).
+    </p>
+  `;
+
+  const html = buildLightEmailTemplate({
+    title: 'Document Action Required',
+    subtitle: `Action needed for your ${userRole} account verification.`,
+    contentHtml,
+    bannerAccent: '#DC2626',
+    actionButton: {
+      url: portalUrl,
+      text: `Log In to ${userRole} Portal & Re-upload`
+    }
+  });
+
+  const text = `Dear ${userName},\n\nPlease re-upload the following document(s) for verification:\n${missingDocs.join(', ')}\n\nLog in to your portal: ${portalUrl}\n\nKinetoscope Films Team`;
+
+  try {
+    await sendEmail({ to: toEmail, subject, text, html });
+  } catch (err) {
+    console.error(`[Email Error] Failed to send document re-upload email to ${toEmail}:`, err.message);
+  }
+};
+
+/**
+ * Send email notification to Super Admin when a Client or Agent re-uploads a document.
+ */
+const sendDocumentUploadedAdminNotification = async ({ userEmail, userName, userRole, userCode, uploadedDocLabels = [] }) => {
+  const adminEmail = process.env.SUPERADMIN_NOTIFY_EMAIL || process.env.SMTP_USER || 'admin@kinetoscopefilms.com';
+  const superAdminUrl = process.env.SUPER_ADMIN_PORTAL_URL || 'http://localhost:5173/investors';
+
+  const subject = `[Notification] New Document Re-uploaded by ${userRole}: ${userName} (${userCode || 'N/A'})`;
+
+  const contentHtml = `
+    <p style="font-size: 14.5px; color: #334155; line-height: 1.6; margin-top: 0;">
+      Hello Super Admin,
+    </p>
+    <p style="font-size: 14px; color: #334155; line-height: 1.6;">
+      <strong>${userName}</strong> (${userRole} — Code: <code>${userCode || 'N/A'}</code>, Email: ${userEmail}) has uploaded/re-uploaded the following document(s):
+    </p>
+
+    <div style="background-color: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 12px; padding: 18px; margin: 18px 0;">
+      <div style="font-size: 12px; font-weight: 800; color: #1E40AF; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">
+        📄 Uploaded Document(s):
+      </div>
+      <ul style="margin: 0; padding-left: 20px; color: #1E3A8A; font-size: 14px; font-weight: 700; line-height: 1.8;">
+        ${uploadedDocLabels.map(d => `<li>${d}</li>`).join('')}
+      </ul>
+    </div>
+
+    <p style="font-size: 13.5px; color: #475569; line-height: 1.5;">
+      Please log in to the Super Admin Portal to inspect and verify the newly submitted document(s).
+    </p>
+  `;
+
+  const html = buildLightEmailTemplate({
+    title: 'New Document Uploaded for Review',
+    subtitle: `${userRole} ${userName} has submitted document(s) for verification.`,
+    contentHtml,
+    bannerAccent: '#2563EB',
+    actionButton: {
+      url: superAdminUrl,
+      text: 'Open Super Admin Portal'
+    }
+  });
+
+  const text = `New Document Uploaded by ${userRole} ${userName} (${userCode}):\n${uploadedDocLabels.join(', ')}\n\nReview at: ${superAdminUrl}`;
+
+  try {
+    await sendEmail({ to: adminEmail, subject, text, html });
+  } catch (err) {
+    console.error(`[Email Error] Failed to send document upload notification to admin:`, err.message);
+  }
+};
+
 module.exports = {
   buildLightEmailTemplate,
   buildOtpEmailHtml,
@@ -600,4 +715,6 @@ module.exports = {
   sendSubscriptionConfirmationEmail,
   sendNewRegistrationAlertToAdmin,
   sendServiceRequestAlertToAdmin,
+  sendDocumentReuploadRequiredEmail,
+  sendDocumentUploadedAdminNotification,
 };

@@ -102,9 +102,10 @@ router.patch('/profile', updateClientProfileRules, updateClientProfile);
 router.delete('/profile/avatar', removeClientAvatar);
 
 // 5. Client Documents Retrieval & Uploads
-const { uploadAgreementDocument } = require('../../controllers/client/client-dashboard.controller');
+const { uploadAgreementDocument, uploadKycDocument } = require('../../controllers/client/client-dashboard.controller');
 router.get('/documents', getClientDocuments);
-router.post('/documents/agreement', memoryUpload.single('file'), uploadAgreementDocument);
+router.post('/documents/agreement', memoryUpload.any(), uploadAgreementDocument);
+router.post('/documents/kyc', memoryUpload.any(), uploadKycDocument);
 
 // 6. Settings - Change Password Flow (OTP verified)
 router.post('/settings/change-password/send-otp', sendChangePasswordOtpRules, sendChangePasswordOtpHandler);

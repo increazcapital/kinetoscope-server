@@ -94,10 +94,11 @@ router.get('/profile', getAgentProfile);
 router.patch('/profile', updateAgentProfile);
 router.delete('/profile/avatar', removeAgentAvatar);
 
-// 6. Agent Documents Retrieval
+// 6. Agent Documents Retrieval & Uploads
+const { uploadKycDocument } = require('../../controllers/agent/agent-dashboard.controller');
 router.get('/documents', getAgentDocuments);
-
-router.post('/documents/agreement', memoryUpload.single('file'), uploadAgentAgreementDocument);
+router.post('/documents/agreement', memoryUpload.any(), uploadAgentAgreementDocument);
+router.post('/documents/kyc', memoryUpload.any(), uploadKycDocument);
 
 // 7. Settings - Change Password Flow (OTP verified)
 const {

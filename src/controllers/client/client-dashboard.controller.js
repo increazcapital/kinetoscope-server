@@ -637,13 +637,23 @@ const uploadAgreementDocument = asyncHandler(async (req, res, next) => {
     return next(new AppError('Client profile not found.', 404));
   }
 
+  let file = req.file;
+  if (!file && req.files) {
+    if (Array.isArray(req.files) && req.files.length > 0) file = req.files[0];
+    else if (typeof req.files === 'object') {
+      const keys = Object.keys(req.files);
+      if (keys.length > 0 && req.files[keys[0]]?.length > 0) file = req.files[keys[0]][0];
+    }
+  }
+
   let fileUrl = req.body.fileUrl || '';
-  if (req.file) {
+  if (file) {
     const { uploadBufferToCloudinary } = require('../../services/cloudinary.service');
     try {
-      fileUrl = await uploadBufferToCloudinary(req.file.buffer, 'kinetoscope/clients/agreements');
+      fileUrl = await uploadBufferToCloudinary(file.buffer, 'kinetoscope/clients/agreements');
     } catch (err) {
-      return next(new AppError(`File upload failed: ${err.message}`, 500));
+      console.error('[Cloudinary Upload Error]', err);
+      return next(new AppError(`File upload to Cloudinary failed: ${err.message}`, 500));
     }
   }
 
@@ -652,15 +662,94 @@ const uploadAgreementDocument = asyncHandler(async (req, res, next) => {
   }
 
   profile.agreementDocument = fileUrl;
+  profile.signedAgreementUrl = fileUrl;
   profile.agreementDocumentVerified = false;
+  profile.agreementVerified = false;
+  profile.kycStatus = 'PENDING';
   await profile.save();
+
+  const { sendDocumentUploadedAdminNotification } = require('../../services/email.service');
+  sendDocumentUploadedAdminNotification({
+    userEmail: req.user.email,
+    userName: req.user.name,
+    userRole: 'Client',
+    userCode: req.user.clientCode,
+    uploadedDocLabels: ['Signed Client Participation Agreement'],
+  }).catch(err => console.error('[Email Notification] Admin upload notification failed:', err.message));
 
   res.status(200).json({
     success: true,
     message: 'Signed agreement document uploaded successfully',
     data: {
       agreementDocument: fileUrl,
+      url: fileUrl,
     },
+  });
+});
+
+const uploadKycDocument = asyncHandler(async (req, res, next) => {
+  const profile = await ClientProfile.findOne({ userId: req.user.id });
+  if (!profile) {
+    return next(new AppError('Client profile not found.', 404));
+  }
+
+  let file = req.file;
+  if (!file && req.files) {
+    if (Array.isArray(req.files) && req.files.length > 0) {
+      file = req.files[0];
+    } else if (typeof req.files === 'object') {
+      const keys = Object.keys(req.files);
+      if (keys.length > 0 && req.files[keys[0]] && req.files[keys[0]].length > 0) {
+        file = req.files[keys[0]][0];
+      }
+    }
+  }
+
+  const docType = req.body.docType || (file ? file.fieldname : null);
+
+  if (!file || !docType) {
+    return next(new AppError('No document file received for upload.', 400));
+  }
+
+  let url = '';
+  try {
+    const { uploadBufferToCloudinary } = require('../../services/cloudinary.service');
+    url = await uploadBufferToCloudinary(file.buffer, `kinetoscope/clients/${docType}`);
+  } catch (err) {
+    console.error(`[Client KYC Upload Error] Cloudinary upload failed for ${docType}:`, err);
+    return next(new AppError(`Cloudinary file upload failed: ${err.message}`, 500));
+  }
+
+  profile[docType] = url;
+  if (docType === 'aadhaarDocument') profile.idProofDocument = url;
+  profile.kycStatus = 'PENDING';
+  profile.agreementVerified = false;
+  profile.agreementDocumentVerified = false;
+  if (docType === 'agreementDocument') {
+    profile.signedAgreementUrl = url;
+  }
+  await profile.save();
+
+  const docLabels = {
+    panDocument: 'PAN Card Document',
+    aadhaarDocument: 'ID Proof (Aadhaar / Passport)',
+    bankProofDocument: 'Bank Details Document',
+    agreementDocument: 'Signed Client Participation Agreement',
+    nomineeProofDocument: 'Nominee ID Proof Document',
+  };
+  const { sendDocumentUploadedAdminNotification } = require('../../services/email.service');
+  sendDocumentUploadedAdminNotification({
+    userEmail: req.user.email,
+    userName: req.user.name,
+    userRole: 'Client',
+    userCode: req.user.clientCode,
+    uploadedDocLabels: [docLabels[docType] || docType],
+  }).catch(err => console.error('[Email Notification] Admin upload notification failed:', err.message));
+
+  return res.status(200).json({
+    success: true,
+    message: 'Document uploaded successfully to Cloudinary',
+    data: { url, [docType]: url }
   });
 });
 
@@ -674,6 +763,7 @@ module.exports = {
   removeClientAvatar,
   getClientDocuments,
   uploadAgreementDocument,
+  uploadKycDocument,
   getClientPayouts,
   getClientWealthAdvisor,
 };

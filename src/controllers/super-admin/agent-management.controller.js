@@ -577,11 +577,51 @@ const updateAgent = asyncHandler(async (req, res, next) => {
   }
 
   // 4) Process optional document uploads using buffer upload to Cloudinary (in-memory)
+  // Process document removal requests from Super Admin
+  const removedDocLabels = [];
+  const removeDocMap = [
+    { flag: 'removePanDocument', field: 'panDocument', verify: 'panDocumentVerified' },
+    { flag: 'removeIdProofDocument', field: 'idProofDocument', verify: 'idProofDocumentVerified' },
+    { flag: 'removeBankProofDocument', field: 'bankProofDocument', verify: 'bankProofDocumentVerified' },
+    { flag: 'removeNomineeProofDocument', field: 'nomineeProofDocument', verify: 'nomineeProofDocumentVerified' },
+    { flag: 'removeAgreementDocument', field: 'agreementDocument', verify: 'agreementDocumentVerified', extraField: 'signedAgreementUrl' },
+  ];
+
+  removeDocMap.forEach(cfg => {
+    if (req.body[cfg.flag] === 'true' || req.body[cfg.field] === '') {
+      profileUpdates[cfg.field] = '';
+      if (cfg.verify) profileUpdates[cfg.verify] = false;
+      if (cfg.extraField) profileUpdates[cfg.extraField] = '';
+      if (['panDocument', 'idProofDocument', 'bankProofDocument'].includes(cfg.field)) {
+        profileUpdates.kycStatus = 'PENDING';
+      }
+      const labelMap = {
+        panDocument: 'PAN Card Document',
+        idProofDocument: 'ID Proof Document (Aadhaar / Passport / DL)',
+        bankProofDocument: 'Bank Details Document',
+        nomineeProofDocument: 'Nominee ID Proof Document',
+        agreementDocument: 'Signed Agent Service Agreement',
+      };
+      if (labelMap[cfg.field]) removedDocLabels.push(labelMap[cfg.field]);
+    }
+  });
+
+  if (removedDocLabels.length > 0 && user.email) {
+    const { sendDocumentReuploadRequiredEmail } = require('../../services/email.service');
+    sendDocumentReuploadRequiredEmail({
+      toEmail: user.email,
+      userName: user.name,
+      userRole: 'Agent',
+      missingDocs: removedDocLabels,
+    }).catch(err => console.error('[Email Trigger] Agent doc reupload email failed:', err.message));
+  }
+
   const fileFields = [
     'panDocument',
     'idProofDocument',
     'bankProofDocument',
     'nomineeProofDocument',
+    'agreementDocument',
   ];
 
   const { uploadBufferToCloudinary } = require('../../services/cloudinary.service');
@@ -603,6 +643,14 @@ const updateAgent = asyncHandler(async (req, res, next) => {
           const buffer = req.files[field][0].buffer;
           const newUrl = await uploadBufferToCloudinary(buffer, 'kinetoscope');
           profileUpdates[field] = newUrl;
+          if (field === 'agreementDocument') {
+            profileUpdates.signedAgreementUrl = newUrl;
+            profileUpdates.agreementDocumentVerified = true;
+          }
+          if (field === 'panDocument') profileUpdates.panDocumentVerified = true;
+          if (field === 'idProofDocument') profileUpdates.idProofDocumentVerified = true;
+          if (field === 'bankProofDocument') profileUpdates.bankProofDocumentVerified = true;
+          if (field === 'nomineeProofDocument') profileUpdates.nomineeProofDocumentVerified = true;
           uploadedUrls.push(newUrl);
         }
       }

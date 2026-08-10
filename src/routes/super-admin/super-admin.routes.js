@@ -227,6 +227,7 @@ const agentOnboardingUpload = upload.fields([
   { name: 'panDocument', maxCount: 1 },
   { name: 'idProofDocument', maxCount: 1 },
   { name: 'bankProofDocument', maxCount: 1 },
+  { name: 'agreementDocument', maxCount: 1 },
   { name: 'nomineeProofDocument', maxCount: 1 },
 ]);
 
@@ -235,6 +236,7 @@ const memoryAgentOnboardingUpload = memoryUpload.fields([
   { name: 'panDocument', maxCount: 1 },
   { name: 'idProofDocument', maxCount: 1 },
   { name: 'bankProofDocument', maxCount: 1 },
+  { name: 'agreementDocument', maxCount: 1 },
   { name: 'nomineeProofDocument', maxCount: 1 },
 ]);
 
