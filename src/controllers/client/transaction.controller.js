@@ -108,7 +108,7 @@ const requestTransaction = asyncHandler(async (req, res, next) => {
  */
 const getClientTransactions = asyncHandler(async (req, res, next) => {
   const page = parseInt(req.query.page, 10) || 1;
-  const limit = parseInt(req.query.limit, 10) || 10;
+  const limit = Math.min(parseInt(req.query.limit, 10) || 1000, 1000);
   const skip = (page - 1) * limit;
 
   const clientId = req.user.id || req.user._id;

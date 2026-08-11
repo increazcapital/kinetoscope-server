@@ -14,12 +14,23 @@ const asyncHandler = require('../../utils/asyncHandler');
  * @returns {Promise<object>} Dashboard metrics payload
  */
 const calculateDashboardData = async (userId) => {
-  // 1) Batch 1: parallel fetch primary resources
-  const [profile, investments, clientUser, clientRoiPayouts] = await Promise.all([
+  // Fetch client user to get clientCode
+  const clientUser = await User.findById(userId).populate('assignedAgent').lean();
+  const clientCode = clientUser ? clientUser.clientCode : '';
+
+  // 1) Batch 1: parallel fetch primary resources (querying by userId OR clientCode)
+  const Transaction = require('../../models/Transaction.model');
+  const [profile, rawInvestments, clientRoiPayouts, approvedDeposits] = await Promise.all([
     ClientProfile.findOne({ userId }),
-    Investment.find({ clientId: userId }).sort({ investmentDate: -1 }).lean(),
-    User.findById(userId).populate('assignedAgent').lean(),
-    RoiPayout.find({ clientId: userId, status: 'PAID' }).sort({ processedDate: -1 }).lean()
+    Investment.find({
+      $or: [{ clientId: userId }, ...(clientCode ? [{ clientCode }] : [])]
+    }).sort({ investmentDate: -1 }).lean(),
+    RoiPayout.find({ clientId: userId, status: 'PAID' }).sort({ processedDate: -1 }).lean(),
+    Transaction.find({
+      $or: [{ clientId: userId }, ...(clientCode ? [{ clientCode }] : [])],
+      type: 'deposit',
+      status: 'approved'
+    }).lean()
   ]);
 
   if (!profile) {
@@ -27,26 +38,52 @@ const calculateDashboardData = async (userId) => {
   }
 
   // Filter out cancelled investments for the totals
-  const validInvestments = investments.filter(inv => inv.status !== 'cancelled');
-  const totalInvestment = validInvestments.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
+  const validInvestments = rawInvestments.filter(inv => inv.status !== 'cancelled');
+  const investmentsSum = validInvestments.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
+  const approvedDepositsSum = approvedDeposits.reduce((sum, tx) => sum + (tx.amount || 0), 0);
+
+  // Total investment is the max of investmentsSum, profile.totalInvestment, and approvedDepositsSum
+  const totalInvestment = Math.max(investmentsSum, profile.totalInvestment || 0, approvedDepositsSum);
+
+  // Define effective investments array (with fallback for clients with capital but no segment allocations yet)
+  const roiRateVal = parseFloat(profile.monthlyRoi) || 1.5;
+  const investments = rawInvestments.length > 0 ? rawInvestments : (totalInvestment > 0 ? [{
+    _id: `synth_inv_${userId}`,
+    clientId: userId,
+    clientName: clientUser?.name || profile?.fullName || 'Client',
+    clientCode: clientUser?.clientCode || '',
+    segment: 'Capital Deposit',
+    projectName: 'Unallocated',
+    investmentAmount: totalInvestment,
+    roiPercentage: roiRateVal,
+    riskPercentage: 0,
+    riskLevel: 'Medium',
+    investmentDate: profile?.createdAt || new Date(),
+    status: 'active',
+    remarks: 'Primary capital allocation'
+  }] : []);
 
   // Active investments calculations
-  const activeInvestmentsList = investments.filter(inv => inv.status === 'active');
-  const activeInvestmentsCount = activeInvestmentsList.length;
+  const activeInvestmentsList = rawInvestments.filter(inv => inv.status === 'active');
+  const activeInvestmentsCount = activeInvestmentsList.length > 0 ? activeInvestmentsList.length : (totalInvestment > 0 ? 1 : 0);
 
   // Average ROI rate of active investments
   let roiRate = parseFloat(profile.monthlyRoi) || 0;
-  if (activeInvestmentsCount > 0) {
+  if (activeInvestmentsList.length > 0) {
     const roiSum = activeInvestmentsList.reduce((sum, inv) => sum + (inv.roiPercentage || 0), 0);
-    roiRate = Number((roiSum / activeInvestmentsCount).toFixed(2));
+    roiRate = Number((roiSum / activeInvestmentsList.length).toFixed(2));
   }
 
   // Monthly expected return amount calculation
   let expectedMonthlyRoi = 0;
-  activeInvestmentsList.forEach(inv => {
-    const rate = inv.roiPercentage || parseFloat(profile.monthlyRoi) || 0;
-    expectedMonthlyRoi += (inv.investmentAmount || 0) * (rate / 100);
-  });
+  if (activeInvestmentsList.length > 0) {
+    activeInvestmentsList.forEach(inv => {
+      const rate = inv.roiPercentage || parseFloat(profile.monthlyRoi) || 0;
+      expectedMonthlyRoi += (inv.investmentAmount || 0) * (rate / 100);
+    });
+  } else if (totalInvestment > 0 && roiRate > 0) {
+    expectedMonthlyRoi = (totalInvestment * roiRate) / 100;
+  }
   expectedMonthlyRoi = Math.round(expectedMonthlyRoi);
 
   // Next ROI Date calculation
@@ -83,7 +120,6 @@ const calculateDashboardData = async (userId) => {
   const nextRoiDateFormatted = nextRoiDate ? formatDateToDDMMMYYYY(nextRoiDate) : '—';
 
   // 2) Batch 2: parallel fetch secondary resources dependent on clientCode and projects
-  const clientCode = clientUser ? clientUser.clientCode : '';
   const projectIds = activeInvestmentsList.map(inv => inv.projectId).filter(Boolean);
   const agentUser = clientUser && clientUser.assignedAgent ? clientUser.assignedAgent : null;
 
@@ -294,14 +330,52 @@ const getClientDashboard = asyncHandler(async (req, res, next) => {
  * GET /api/client/investments
  */
 const getClientInvestments = asyncHandler(async (req, res, next) => {
-  const [investments, profile, user] = await Promise.all([
-    Investment.find({ clientId: req.user.id }).sort({ investmentDate: -1 }).lean(),
+  const Transaction = require('../../models/Transaction.model');
+  const [profile, user] = await Promise.all([
     ClientProfile.findOne({ userId: req.user.id }).lean(),
     User.findById(req.user.id).select('name email clientCode').lean(),
   ]);
 
+  const clientCode = user ? user.clientCode : '';
+  const [rawInvestments, approvedDeposits] = await Promise.all([
+    Investment.find({
+      $or: [{ clientId: req.user.id }, ...(clientCode ? [{ clientCode }] : [])]
+    }).sort({ investmentDate: -1 }).lean(),
+    Transaction.find({
+      $or: [{ clientId: req.user.id }, ...(clientCode ? [{ clientCode }] : [])],
+      type: 'deposit',
+      status: 'approved'
+    }).sort({ updatedAt: -1 }).lean()
+  ]);
+
+  let effectiveInvestments = [...rawInvestments];
+  const totalFromInvs = rawInvestments.filter(inv => inv.status !== 'cancelled').reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
+  const profileTotal = profile ? (profile.totalInvestment || 0) : 0;
+  const depositsTotal = approvedDeposits.reduce((sum, tx) => sum + (tx.amount || 0), 0);
+  const targetTotal = Math.max(totalFromInvs, profileTotal, depositsTotal);
+
+  if (effectiveInvestments.length === 0 && targetTotal > 0) {
+    const roiRate = parseFloat(profile?.monthlyRoi) || 1.5;
+    effectiveInvestments = [{
+      _id: `synth_inv_${req.user.id}`,
+      clientId: req.user.id,
+      clientName: user?.name || profile?.fullName || 'Client',
+      clientCode: user?.clientCode || '',
+      segment: 'Capital Deposit',
+      projectName: 'Unallocated',
+      investmentAmount: targetTotal,
+      roiPercentage: roiRate,
+      riskPercentage: 0,
+      riskLevel: 'Medium',
+      investmentDate: profile?.createdAt || new Date(),
+      status: 'active',
+      remarks: 'Primary capital allocation'
+    }];
+  }
+
   const clientInfo = profile ? {
     ...profile,
+    totalInvestment: targetTotal,
     name: user?.name || '',
     email: user?.email || '',
     clientCode: user?.clientCode || '',
@@ -312,9 +386,9 @@ const getClientInvestments = asyncHandler(async (req, res, next) => {
 
   res.status(200).json({
     success: true,
-    count: investments.length,
+    count: effectiveInvestments.length,
     data: {
-      investments,
+      investments: effectiveInvestments,
       client: clientInfo,
     },
     client: clientInfo,
@@ -661,10 +735,16 @@ const uploadAgreementDocument = asyncHandler(async (req, res, next) => {
     return next(new AppError('Please select or upload a valid agreement document file.', 400));
   }
 
+  const uploadDate = new Date();
   profile.agreementDocument = fileUrl;
   profile.signedAgreementUrl = fileUrl;
   profile.agreementDocumentVerified = false;
   profile.agreementVerified = false;
+  profile.contractStartDate = uploadDate;
+  
+  const calcEndDate = new Date(uploadDate);
+  calcEndDate.setMonth(calcEndDate.getMonth() + 18);
+  profile.contractEndDate = calcEndDate;
   profile.kycStatus = 'PENDING';
   await profile.save();
 

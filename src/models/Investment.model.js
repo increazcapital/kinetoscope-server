@@ -57,7 +57,7 @@ const investmentSchema = new mongoose.Schema(
     },
     durationMonths: {
       type: Number,
-      default: 24,
+      default: 18,
     },
     contractEndDate: {
       type: Date,
@@ -73,7 +73,7 @@ const investmentSchema = new mongoose.Schema(
         values: ['pending', 'active', 'completed', 'cancelled'],
         message: 'Status must be either: pending, active, completed, or cancelled',
       },
-      default: 'pending',
+      default: 'active',
     },
     remarks: {
       type: String,
@@ -121,7 +121,7 @@ investmentSchema.pre('save', async function () {
   if (this.isNew || this.isModified('investmentDate') || this.isModified('durationMonths')) {
     if (!this.contractEndDate && this.investmentDate) {
       const start = new Date(this.investmentDate);
-      start.setMonth(start.getMonth() + (this.durationMonths || 24));
+      start.setMonth(start.getMonth() + (this.durationMonths || 18));
       this.contractEndDate = start;
     }
   }

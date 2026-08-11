@@ -204,14 +204,26 @@ const approveRejectTransaction = asyncHandler(async (req, res, next) => {
         }
       }
 
-      // Recalculate ClientProfile total investment balance
+      // Recalculate ClientProfile and User total investment balance from approved deposits and active investments
       const ClientProfile = require('../../models/ClientProfile.model');
-      const allActiveClientInvs = await Investment.find({ clientId: transaction.clientId, status: 'active' });
-      const newClientTotalInv = allActiveClientInvs.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
-      await ClientProfile.findOneAndUpdate(
-        { userId: transaction.clientId },
-        { $set: { totalInvestment: newClientTotalInv } }
-      );
+      const allApprovedDeposits = await Transaction.find({ clientId: transaction.clientId, type: 'deposit', status: 'APPROVED' }).lean();
+      const approvedDepositsSum = allApprovedDeposits.reduce((sum, t) => sum + Number(t.amount || 0), 0);
+
+      const allActiveClientInvs = await Investment.find({ clientId: transaction.clientId, status: 'active' }).lean();
+      const activeInvsSum = allActiveClientInvs.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
+
+      const finalClientTotalInv = Math.max(approvedDepositsSum, activeInvsSum);
+
+      await Promise.all([
+        ClientProfile.findOneAndUpdate(
+          { userId: transaction.clientId },
+          { $set: { totalInvestment: finalClientTotalInv } }
+        ),
+        User.findByIdAndUpdate(
+          transaction.clientId,
+          { $set: { totalInvestment: finalClientTotalInv } }
+        )
+      ]);
 
       // Auto-resolve any open Service Request for project investment
       try {
@@ -587,7 +599,7 @@ const runInvestmentBackfill = async () => {
           status: 'active',
           createdBy: tx.actionBy || tx.clientId,
           remarks: `Auto-synced from approved deposit transaction #${tx._id}`,
-          segment: tx.segment || tx.category || (tx.projectId ? 'Project Allocated' : 'Unallocated'),
+          segment: tx.segment || tx.category || (tx.projectId ? 'Project Investment' : 'Capital Deposit'),
           sourceTransactionId: tx._id,
         });
 

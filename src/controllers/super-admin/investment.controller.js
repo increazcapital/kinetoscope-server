@@ -45,8 +45,8 @@ const seedMockInvestments = async (creatorId) => {
         riskPercentage: 30,
         riskLevel: 'Medium',
         investmentDate: new Date('2024-01-10T00:00:00Z'),
-        durationMonths: 24,
-        contractEndDate: new Date('2026-01-10T00:00:00Z'),
+        durationMonths: 18,
+        contractEndDate: new Date('2025-07-10T00:00:00Z'),
         status: 'active',
         createdBy: creatorId,
       },
@@ -60,8 +60,8 @@ const seedMockInvestments = async (creatorId) => {
         riskPercentage: 10,
         riskLevel: 'Low',
         investmentDate: new Date('2024-01-15T00:00:00Z'),
-        durationMonths: 24,
-        contractEndDate: new Date('2026-01-15T00:00:00Z'),
+        durationMonths: 18,
+        contractEndDate: new Date('2025-07-15T00:00:00Z'),
         status: 'active',
         createdBy: creatorId,
       },
@@ -75,8 +75,8 @@ const seedMockInvestments = async (creatorId) => {
         riskPercentage: 75,
         riskLevel: 'High',
         investmentDate: new Date('2024-01-20T00:00:00Z'),
-        durationMonths: 24,
-        contractEndDate: new Date('2026-01-20T00:00:00Z'),
+        durationMonths: 18,
+        contractEndDate: new Date('2025-07-20T00:00:00Z'),
         status: 'active',
         createdBy: creatorId,
       },
@@ -119,17 +119,88 @@ const createInvestment = asyncHandler(async (req, res, next) => {
     return next(new AppError('Client account not found.', 404));
   }
 
-  const investmentData = {
-    ...req.body,
-    investmentAmount: req.body.investmentAmount || req.body.amount,
-    roiPercentage: req.body.roiPercentage !== undefined ? req.body.roiPercentage : req.body.roi,
+  // Check if client already has an Unallocated or unlinked investment record
+  const existingUnallocated = await Investment.findOne({
     clientId: clientUser._id,
-    clientName: clientUser.name,
-    clientCode: clientUser.clientCode,
-    createdBy: req.user.id,
-  };
+    $or: [
+      { segment: 'Unallocated' },
+      { segment: { $regex: /^unallocated/i } },
+      { segment: 'General' },
+      { segment: 'General Capital Pool' },
+      { segment: 'Capital Deposit' },
+      { projectId: null },
+      { projectId: { $exists: false } }
+    ]
+  }).sort({ createdAt: -1 });
 
-  const investment = await Investment.create(investmentData);
+  let investment;
+  const inputAmount = Number(req.body.investmentAmount || req.body.amount) || 0;
+  const inputRoi = req.body.roiPercentage !== undefined ? req.body.roiPercentage : (req.body.roi !== undefined ? req.body.roi : 0);
+
+  if (existingUnallocated) {
+    // UPDATE existing unallocated investment record to link selected project & segment without double counting money
+    if (req.body.projectId) existingUnallocated.projectId = req.body.projectId;
+    if (req.body.segmentAllocation) existingUnallocated.segmentAllocation = req.body.segmentAllocation;
+    if (req.body.segment) {
+      existingUnallocated.segment = req.body.segment;
+    } else if (req.body.projectId) {
+      const proj = await Project.findById(req.body.projectId);
+      if (proj) existingUnallocated.segment = proj.segment || proj.category || 'Project Allocated';
+    }
+
+    if (inputAmount > 0) existingUnallocated.investmentAmount = inputAmount;
+    existingUnallocated.roiPercentage = inputRoi;
+    if (req.body.riskPercentage !== undefined) existingUnallocated.riskPercentage = req.body.riskPercentage;
+    if (req.body.riskLevel) existingUnallocated.riskLevel = req.body.riskLevel;
+    if (req.body.contractPeriod || req.body.durationMonths) existingUnallocated.durationMonths = Number(req.body.contractPeriod || req.body.durationMonths) || 18;
+    if (req.body.contractEndDate) existingUnallocated.contractEndDate = new Date(req.body.contractEndDate);
+    if (req.body.dateOfJoining || req.body.investmentDate) existingUnallocated.investmentDate = new Date(req.body.dateOfJoining || req.body.investmentDate);
+    existingUnallocated.status = 'active';
+
+    await existingUnallocated.save();
+    investment = existingUnallocated;
+    console.log(`[Assign Investment] Updated existing unallocated investment ${investment._id} for client ${clientUser.name}`);
+  } else {
+    // Create new active investment if no unallocated record exists
+    const investmentData = {
+      ...req.body,
+      investmentAmount: inputAmount,
+      roiPercentage: inputRoi,
+      clientId: clientUser._id,
+      clientName: clientUser.name,
+      clientCode: clientUser.clientCode,
+      status: 'active',
+      createdBy: req.user.id,
+    };
+    investment = await Investment.create(investmentData);
+  }
+
+  // Update Project funded amount if linked
+  if (investment.projectId) {
+    try {
+      const activeInvestments = await Investment.find({ projectId: investment.projectId, status: 'active' });
+      const totalFunded = activeInvestments.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
+      const project = await Project.findById(investment.projectId);
+      if (project) {
+        project.fundedAmount = totalFunded;
+        await project.save();
+      }
+    } catch (pErr) {
+      console.error('[Assign Investment] Project sync error:', pErr);
+    }
+  }
+
+  // Sync ClientProfile totalInvestment
+  try {
+    const activeClientInvestments = await Investment.find({ clientId: clientUser._id, status: 'active' });
+    const newTotal = activeClientInvestments.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
+    await ClientProfile.findOneAndUpdate(
+      { userId: clientUser._id },
+      { $set: { totalInvestment: newTotal } }
+    );
+  } catch (cpErr) {
+    console.error('[Assign Investment] Client profile sync error:', cpErr);
+  }
 
   // Send automated email notification to client and their agent
   try {

@@ -420,6 +420,14 @@ const getAllClients = asyncHandler(async (req, res, next) => {
       }
     }
 
+    const startDt = (profile && profile.contractStartDate) || user.createdAt;
+    let endDt = (profile && profile.contractEndDate);
+    if (!endDt && startDt) {
+      const d = new Date(startDt);
+      d.setMonth(d.getMonth() + 18);
+      endDt = d;
+    }
+
     return {
       _id: user._id,
       clientId: user.clientCode || (profile && profile.clientCode) || '',
@@ -430,6 +438,9 @@ const getAllClients = asyncHandler(async (req, res, next) => {
       monthlyRoi,
       roi: monthlyRoi,
       roiPercentage: monthlyRoi,
+      contractStartDate: startDt,
+      contractEndDate: endDt,
+      durationMonths: 18,
       assignedAgent: assignedAgentObj,
       assignedAgentName: assignedAgentObj?.name || '',
       agentCommissionMonthly: agentCommissionStr,
@@ -662,7 +673,12 @@ const updateClient = asyncHandler(async (req, res, next) => {
       profileUpdates[cfg.field] = '';
       if (cfg.extra) profileUpdates[cfg.extra] = '';
       if (cfg.verify) profileUpdates[cfg.verify] = false;
-      if (['panDocument', 'aadhaarDocument', 'bankProofDocument'].includes(cfg.field)) {
+      if (cfg.field === 'agreementDocument') {
+        profileUpdates.agreementDocumentVerified = false;
+        profileUpdates.agreementVerified = false;
+        profileUpdates.agreementDocumentVerifiedAt = null;
+      }
+      if (['panDocument', 'aadhaarDocument', 'bankProofDocument', 'agreementDocument'].includes(cfg.field)) {
         profileUpdates.kycStatus = 'PENDING';
       }
       const labelMap = {
@@ -727,6 +743,32 @@ const updateClient = asyncHandler(async (req, res, next) => {
     return next(new AppError(`Document upload failed: ${uploadError.message}`, 500));
   }
 
+  // Dynamic KYC Status Re-evaluation for Client
+  const finalPan = profileUpdates.panDocument !== undefined ? profileUpdates.panDocument : profile.panDocument;
+  const finalPanVerified = profileUpdates.panDocumentVerified !== undefined ? profileUpdates.panDocumentVerified : profile.panDocumentVerified;
+
+  const finalAadhaar = profileUpdates.aadhaarDocument !== undefined ? profileUpdates.aadhaarDocument : (profile.aadhaarDocument || profile.idProofDocument);
+  const finalAadhaarVerified = profileUpdates.aadhaarDocumentVerified !== undefined ? profileUpdates.aadhaarDocumentVerified : (profile.aadhaarDocumentVerified || profile.idProofDocumentVerified);
+
+  const finalBank = profileUpdates.bankProofDocument !== undefined ? profileUpdates.bankProofDocument : profile.bankProofDocument;
+  const finalBankVerified = profileUpdates.bankProofDocumentVerified !== undefined ? profileUpdates.bankProofDocumentVerified : profile.bankProofDocumentVerified;
+
+  const finalAgreement = profileUpdates.agreementDocument !== undefined ? profileUpdates.agreementDocument : profile.agreementDocument;
+  const finalAgreementVerified = profileUpdates.agreementDocumentVerified !== undefined ? profileUpdates.agreementDocumentVerified : (profile.agreementDocumentVerified || profile.agreementVerified);
+
+  const isPanOk = Boolean(finalPan && String(finalPan).trim() !== '' && finalPan !== 'null') && Boolean(finalPanVerified);
+  const isAadhaarOk = Boolean(finalAadhaar && String(finalAadhaar).trim() !== '' && finalAadhaar !== 'null') && Boolean(finalAadhaarVerified);
+  const isBankOk = Boolean(finalBank && String(finalBank).trim() !== '' && finalBank !== 'null') && Boolean(finalBankVerified);
+  const isAgreementOk = Boolean(finalAgreement && String(finalAgreement).trim() !== '' && finalAgreement !== 'null') && Boolean(finalAgreementVerified);
+
+  const isFullyVerified = isPanOk && isAadhaarOk && isBankOk && isAgreementOk;
+
+  if (!isFullyVerified) {
+    profileUpdates.kycStatus = 'PENDING';
+  } else if (isFullyVerified && (req.body.kycStatus === 'VERIFIED' || profile.kycStatus === 'PENDING')) {
+    profileUpdates.kycStatus = 'VERIFIED';
+  }
+
   // 5) Perform database updates
   const updatedUser = await User.findByIdAndUpdate(userId, { $set: userUpdates }, { new: true, runValidators: true });
   const updatedProfile = await ClientProfile.findOneAndUpdate(
@@ -734,6 +776,14 @@ const updateClient = asyncHandler(async (req, res, next) => {
     { $set: profileUpdates },
     { new: true, runValidators: true }
   );
+
+  if (profileUpdates.monthlyRoi !== undefined) {
+    const newRoiNum = Number(profileUpdates.monthlyRoi) || 0;
+    await Investment.updateMany(
+      { clientId: userId, status: 'active' },
+      { $set: { roiPercentage: newRoiNum } }
+    ).catch(e => console.error('[Sync Investments ROI Error]:', e.message));
+  }
 
   res.status(200).json({
     success: true,
@@ -854,7 +904,7 @@ const getAllAgents = asyncHandler(async (req, res, next) => {
  */
 const updateClientRoiRate = asyncHandler(async (req, res, next) => {
   const { monthlyRoi } = req.body;
-  const userId = req.params.id;
+  const idOrSlug = req.params.id;
 
   if (monthlyRoi === undefined) {
     return next(new AppError('Monthly ROI rate is required.', 400));
@@ -865,21 +915,62 @@ const updateClientRoiRate = asyncHandler(async (req, res, next) => {
     return next(new AppError('Monthly ROI rate must be a non-negative number.', 400));
   }
 
-  const updatedProfile = await ClientProfile.findOneAndUpdate(
-    { userId },
+  const clientUser = await findClientUser(idOrSlug);
+  if (!clientUser) {
+    return next(new AppError('Client account not found.', 404));
+  }
+
+  let updatedProfile = await ClientProfile.findOneAndUpdate(
+    { userId: clientUser._id },
     { $set: { monthlyRoi: roiNum } },
     { new: true, runValidators: true }
   );
 
   if (!updatedProfile) {
-    return next(new AppError('Client profile not found.', 404));
+    updatedProfile = await ClientProfile.create({
+      userId: clientUser._id,
+      monthlyRoi: roiNum,
+    });
+  }
+
+  // Also sync client's active investments to the new Monthly ROI %
+  await Investment.updateMany(
+    { clientId: clientUser._id, status: 'active' },
+    { $set: { roiPercentage: roiNum } }
+  ).catch(e => console.error('[Sync Investments ROI Error]:', e.message));
+
+  // Sync pending payouts in Payout collection for this client to reflect the updated ROI %
+  try {
+    const Payout = require('../../models/Payout.model');
+    const investments = await Investment.find({ clientId: clientUser._id, status: 'active' });
+    const totalInv = investments.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
+    const newAmount = Math.round((totalInv * roiNum) / 100);
+
+    const idMatches = Array.from(new Set([
+      String(clientUser._id),
+      clientUser.clientCode,
+      clientUser.clientCode?.toUpperCase()
+    ].filter(Boolean)));
+
+    const updateFields = { commissionType: `ROI (${roiNum}%)` };
+    if (newAmount > 0) updateFields.amount = newAmount;
+
+    await Payout.updateMany(
+      {
+        $or: [{ recipientId: { $in: idMatches } }, { clientId: { $in: idMatches } }],
+        status: 'pending'
+      },
+      { $set: updateFields }
+    );
+  } catch (err) {
+    console.error('[Sync Payouts ROI Error]:', err.message);
   }
 
   res.status(200).json({
     success: true,
     message: 'Monthly ROI rate updated successfully.',
     data: {
-      userId,
+      userId: clientUser._id,
       monthlyRoi: roiNum,
     },
   });

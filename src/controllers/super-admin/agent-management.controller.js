@@ -702,6 +702,32 @@ const updateAgent = asyncHandler(async (req, res, next) => {
     return next(new AppError(`Document upload failed: ${uploadError.message}`, 500));
   }
 
+  // Dynamic KYC Status Re-evaluation for Agent
+  const finalPan = profileUpdates.panDocument !== undefined ? profileUpdates.panDocument : profile.panDocument;
+  const finalPanVerified = profileUpdates.panDocumentVerified !== undefined ? profileUpdates.panDocumentVerified : profile.panDocumentVerified;
+
+  const finalId = profileUpdates.idProofDocument !== undefined ? profileUpdates.idProofDocument : (profile.idProofDocument || profile.aadhaarDocument);
+  const finalIdVerified = profileUpdates.idProofDocumentVerified !== undefined ? profileUpdates.idProofDocumentVerified : (profile.idProofDocumentVerified || profile.aadhaarDocumentVerified);
+
+  const finalBank = profileUpdates.bankProofDocument !== undefined ? profileUpdates.bankProofDocument : profile.bankProofDocument;
+  const finalBankVerified = profileUpdates.bankProofDocumentVerified !== undefined ? profileUpdates.bankProofDocumentVerified : profile.bankProofDocumentVerified;
+
+  const finalAgreement = profileUpdates.agreementDocument !== undefined ? profileUpdates.agreementDocument : profile.agreementDocument;
+  const finalAgreementVerified = profileUpdates.agreementDocumentVerified !== undefined ? profileUpdates.agreementDocumentVerified : profile.agreementDocumentVerified;
+
+  const isPanOk = Boolean(finalPan && String(finalPan).trim() !== '' && finalPan !== 'null') && Boolean(finalPanVerified);
+  const isIdOk = Boolean(finalId && String(finalId).trim() !== '' && finalId !== 'null') && Boolean(finalIdVerified);
+  const isBankOk = Boolean(finalBank && String(finalBank).trim() !== '' && finalBank !== 'null') && Boolean(finalBankVerified);
+  const isAgreementOk = Boolean(finalAgreement && String(finalAgreement).trim() !== '' && finalAgreement !== 'null') && Boolean(finalAgreementVerified);
+
+  const isAgentFullyVerified = isPanOk && isIdOk && isBankOk && isAgreementOk;
+
+  if (!isAgentFullyVerified) {
+    profileUpdates.kycStatus = 'PENDING';
+  } else if (isAgentFullyVerified && (req.body.kycStatus === 'VERIFIED' || profile.kycStatus === 'PENDING')) {
+    profileUpdates.kycStatus = 'VERIFIED';
+  }
+
   // 5) Perform database updates
   const updatedUser = await User.findByIdAndUpdate(userId, { $set: userUpdates }, { new: true, runValidators: true });
   const updatedProfile = await AgentProfile.findOneAndUpdate(
@@ -957,42 +983,9 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
     return next(new AppError('Agent account not found.', 404));
   }
 
-  // Sync Payout status to AgentCommission
+  // Preserve individual commission statuses (PENDING vs PAID) as set by Super Admin
   try {
-    const Payout = require('../../models/Payout.model');
-    const agentProfile = await AgentProfile.findOne({ userId: agentId }).lean();
-    const possibleCodes = [
-      String(agentId),
-      agent.clientCode,
-      agent.agentCode,
-      agentProfile?.clientCode,
-      agentProfile?.agentCode,
-      agent.name
-    ].filter(Boolean);
-
-    const paidPayouts = await Payout.find({
-      status: { $regex: /^paid$/i },
-      $or: [
-        { recipientId: { $in: possibleCodes } },
-        { recipientType: { $regex: /agent/i } }
-      ]
-    }).lean();
-
-    if (paidPayouts.length > 0) {
-      const latestPayout = paidPayouts[paidPayouts.length - 1];
-      await AgentCommission.updateMany(
-        { agentId },
-        {
-          $set: {
-            status: 'PAID',
-            paymentMode: latestPayout.paymentMode || 'Bank Transfer',
-            transactionRefId: latestPayout.transactionRefId || 'TXN-PAID',
-            paidAt: latestPayout.paidAt || new Date(),
-            date: latestPayout.paidAt || new Date()
-          }
-        }
-      );
-    }
+    // Keep individual commission statuses pristine - no bulk override to PAID
   } catch (err) {
     console.error('Failed to sync agent payouts in super-admin getAgentCommissions:', err);
   }

@@ -14,14 +14,13 @@ const connectDB = async () => {
     return cachedConnection.conn;
   }
 
-  if (cachedConnection.conn) {
-    return cachedConnection.conn;
-  }
-
   if (!cachedConnection.promise) {
     const opts = {
-      serverSelectionTimeoutMS: 15000,
+      maxPoolSize: 25,
+      minPoolSize: 5,
+      serverSelectionTimeoutMS: 5000,
       socketTimeoutMS: 45000,
+      family: 4, // Force IPv4 to bypass Windows IPv6 DNS lookup latency
     };
 
     const mongoUri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/kfpl';
@@ -80,10 +79,12 @@ const connectDB = async () => {
         const mongooseInstance = await mongoose.connect(mongoUri, opts);
         console.log(`MongoDB Connected: ${mongooseInstance.connection.host}`);
         
-        // Run migration in background
-        setTimeout(() => {
-          syncExistingPayoutsToRoiPayouts();
-        }, 1000);
+        // Run migration only if requested via env to prevent local startup delay
+        if (process.env.RUN_MIGRATION === 'true') {
+          setTimeout(() => {
+            syncExistingPayoutsToRoiPayouts();
+          }, 1000);
+        }
 
         return mongooseInstance;
       } catch (error) {

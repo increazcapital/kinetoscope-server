@@ -161,6 +161,11 @@ const sendAgentNotificationEmail = asyncHandler(async (req, res, next) => {
 const AgentCommission = require('../../models/AgentCommission.model');
 const Transaction = require('../../models/Transaction.model');
 const ServiceRequest = require('../../models/ServiceRequest.model');
+const Project = require('../../models/Project.model');
+const Article = require('../../models/Article.model');
+const Perk = require('../../models/Perk.model');
+const PerformanceReward = require('../../models/PerformanceReward.model');
+const AgentProfile = require('../../models/AgentProfile.model');
 
 /**
  * Get in-app notifications/alerts for logged in Agent
@@ -169,11 +174,26 @@ const ServiceRequest = require('../../models/ServiceRequest.model');
 const getAgentNotifications = asyncHandler(async (req, res) => {
   const agentId = req.user._id;
 
-  const [assignedClients, transactions, commissions, serviceRequests] = await Promise.all([
+  const [
+    assignedClients,
+    transactions,
+    commissions,
+    serviceRequests,
+    projects,
+    articles,
+    perks,
+    rewards,
+    profile
+  ] = await Promise.all([
     User.find({ role: ROLES.CLIENT, assignedAgent: agentId }).select('name email createdAt clientCode').lean().catch(() => []),
-    Transaction.find({ agent: agentId }).sort({ createdAt: -1 }).limit(10).lean().catch(() => []),
-    AgentCommission.find({ agent: agentId }).sort({ createdAt: -1 }).limit(10).lean().catch(() => []),
-    ServiceRequest.find({ raisedBy: agentId }).sort({ createdAt: -1 }).limit(10).lean().catch(() => []),
+    Transaction.find({ agentId }).sort({ createdAt: -1 }).limit(10).lean().catch(() => []),
+    AgentCommission.find({ agentId }).sort({ createdAt: -1 }).limit(10).lean().catch(() => []),
+    ServiceRequest.find({ createdBy: agentId }).sort({ createdAt: -1 }).limit(10).lean().catch(() => []),
+    Project.find({ isPublished: true }).sort({ createdAt: -1 }).limit(5).lean().catch(() => []),
+    Article.find({ isPublished: true }).sort({ createdAt: -1 }).limit(5).lean().catch(() => []),
+    Perk.find({ isActive: true }).sort({ createdAt: -1 }).limit(5).lean().catch(() => []),
+    PerformanceReward.find({ $or: [{ userId: agentId }, { agentId }] }).sort({ createdAt: -1 }).limit(5).lean().catch(() => []),
+    AgentProfile.findOne({ userId: agentId }).lean().catch(() => null),
   ]);
 
   const notifications = [];
@@ -193,14 +213,16 @@ const getAgentNotifications = asyncHandler(async (req, res) => {
 
   // 2. Transactions (Deposit / Withdrawal)
   (transactions || []).forEach((t) => {
-    const isApproved = t.status === 'Approved';
-    const isRejected = t.status === 'Rejected';
+    const rawSt = (t.status || 'pending').toLowerCase();
+    const isApproved = rawSt === 'approved';
+    const isRejected = rawSt === 'rejected';
+    const stTime = new Date(t.updatedAt || t.actionAt || t.createdAt || 0).getTime();
     notifications.push({
-      id: `tx-${t._id}`,
+      id: `tx-${t._id}-${rawSt}-${stTime}`,
       type: 'transaction',
-      title: `${t.type || 'Transaction'} ${t.status}`,
-      message: `Your ${t.type ? t.type.toLowerCase() : 'transaction'} request of ₹${(t.amount || 0).toLocaleString('en-IN')} is ${t.status.toLowerCase()}.`,
-      date: t.createdAt || new Date(),
+      title: `${t.type ? t.type.toUpperCase() : 'TRANSACTION'} ${(t.status || 'PENDING').toUpperCase()}`,
+      message: `Your ${t.type ? t.type.toLowerCase() : 'transaction'} request of ₹${(t.amount || 0).toLocaleString('en-IN')} is ${(t.status || 'pending').toLowerCase()}.`,
+      date: t.updatedAt || t.actionAt || t.createdAt || new Date(),
       link: '/withdrawal',
       category: isApproved ? 'success' : isRejected ? 'danger' : 'info',
     });
@@ -208,38 +230,106 @@ const getAgentNotifications = asyncHandler(async (req, res) => {
 
   // 3. Agent Commissions
   (commissions || []).forEach((cm) => {
+    const cmSt = (cm.status || 'updated').toLowerCase();
+    const cmTime = new Date(cm.updatedAt || cm.date || cm.createdAt || 0).getTime();
     notifications.push({
-      id: `cm-${cm._id}`,
+      id: `cm-${cm._id}-${cmSt}-${cmTime}`,
       type: 'commission',
       title: `Commission ${cm.status || 'Updated'}`,
       message: `Commission of ₹${(cm.amount || 0).toLocaleString('en-IN')} for ${cm.period || 'payout'} is marked as ${cm.status || 'processed'}.`,
-      date: cm.createdAt || new Date(),
+      date: cm.date || cm.createdAt || new Date(),
       link: '/commission',
       category: 'success',
     });
   });
 
   // 4. Service Requests
-  (serviceRequests || []).forEach((sr) => {
+  (serviceRequests || []).forEach((reqItem) => {
+    const srSt = (reqItem.status || 'open').toLowerCase();
+    const srTime = new Date(reqItem.updatedAt || reqItem.createdAt || 0).getTime();
     notifications.push({
-      id: `sr-${sr._id}`,
+      id: `sr-${reqItem._id}-${srSt}-${srTime}`,
       type: 'service_request',
-      title: `Service Request Update`,
-      message: `Request "${sr.subject || sr.type || 'Query'}" is currently ${sr.status || 'Open'}.`,
-      date: sr.updatedAt || sr.createdAt || new Date(),
-      link: '/service-requests',
+      title: `Service Request: ${reqItem.category || reqItem.subject || 'Query'}`,
+      message: `Request #${reqItem.requestId || reqItem._id} status is ${reqItem.status || 'OPEN'}.`,
+      date: reqItem.updatedAt || reqItem.createdAt || new Date(),
+      link: '/support',
+      category: reqItem.status === 'Resolved' || reqItem.status === 'Closed' ? 'success' : 'info',
+    });
+  });
+
+  // 5. New Published Projects
+  (projects || []).forEach((p) => {
+    notifications.push({
+      id: `proj-${p._id}`,
+      type: 'project',
+      title: `New Project Listed: ${p.name}`,
+      message: `Project "${p.name}" (${p.segment || 'Film Fund'}) is now active.`,
+      date: p.createdAt || new Date(),
+      link: '/portfolio',
       category: 'info',
     });
   });
 
-  // Sort latest first and slice top 20
+  // 6. News & Media Articles
+  (articles || []).forEach((art) => {
+    notifications.push({
+      id: `art-${art._id}`,
+      type: 'news',
+      title: `News & Media: ${art.title}`,
+      message: art.summary || art.title || 'New press release published.',
+      date: art.createdAt || new Date(),
+      link: '/media',
+      category: 'info',
+    });
+  });
+
+  // 7. Perks
+  (perks || []).forEach((pk) => {
+    notifications.push({
+      id: `pk-${pk._id}`,
+      type: 'perk',
+      title: `Perk Unlocked: ${pk.title}`,
+      message: pk.description || `Perk "${pk.title}" is available for agents.`,
+      date: pk.createdAt || new Date(),
+      link: '/rewards',
+      category: 'success',
+    });
+  });
+
+  // 8. Performance Rewards
+  (rewards || []).forEach((rw) => {
+    notifications.push({
+      id: `rw-${rw._id}`,
+      type: 'reward',
+      title: `Reward Credited: ${rw.rewardTitle || rw.title || 'Agent Bonus'}`,
+      message: `Performance reward of ₹${(rw.amount || 0).toLocaleString('en-IN')} has been credited.`,
+      date: rw.createdAt || new Date(),
+      link: '/rewards',
+      category: 'success',
+    });
+  });
+
+  // 9. KYC Status
+  if (profile && profile.kycStatus) {
+    const kycSt = String(profile.kycStatus).toUpperCase();
+    notifications.push({
+      id: `kyc-${profile._id}`,
+      type: 'kyc',
+      title: `KYC Status: ${kycSt}`,
+      message: kycSt === 'VERIFIED' ? 'Your agent KYC agreement is verified.' : kycSt === 'REJECTED' ? 'Your KYC verification requires re-upload.' : 'Your agent KYC is under review.',
+      date: profile.updatedAt || profile.createdAt || new Date(),
+      link: '/profile',
+      category: kycSt === 'VERIFIED' ? 'success' : kycSt === 'REJECTED' ? 'danger' : 'warning',
+    });
+  }
+
   notifications.sort((a, b) => new Date(b.date) - new Date(a.date));
-  const result = notifications.slice(0, 20);
 
   res.status(200).json({
-    status: 'success',
-    results: result.length,
-    notifications: result,
+    success: true,
+    notifications: notifications.slice(0, 25),
+    data: notifications.slice(0, 25),
   });
 });
 

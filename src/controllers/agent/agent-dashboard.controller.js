@@ -37,8 +37,12 @@ const getAgentDashboard = asyncHandler(async (req, res, next) => {
   const totalClientsInvestment = investmentsList.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
 
   // 3) Calculate commissions
-  const commissionPaid = commissions.filter(c => c.status === 'PAID').reduce((sum, c) => sum + c.amount, 0);
-  const commissionPending = commissions.filter(c => c.status === 'PENDING').reduce((sum, c) => sum + c.amount, 0);
+  const realPaidComms = commissions.filter(c => String(c.status).toUpperCase() === 'PAID').reduce((sum, c) => sum + (c.amount || 0), 0);
+  const realPendingComms = commissions.filter(c => String(c.status).toUpperCase() === 'PENDING').reduce((sum, c) => sum + (c.amount || 0), 0);
+  const totalCommsSum = commissions.reduce((sum, c) => sum + (c.amount || 0), 0);
+
+  const commissionPaid = realPaidComms;
+  const commissionPending = realPaidComms > 0 ? realPendingComms : (realPendingComms || totalCommsSum);
   
   const now = new Date();
   const thisMonthCommission = commissions
@@ -439,48 +443,9 @@ const getAgentClients = asyncHandler(async (req, res, next) => {
 const getAgentCommissions = asyncHandler(async (req, res, next) => {
   const agentId = req.user.id;
 
-  // Sync any pending commissions to PAID if Super Admin recorded a paid payout for this agent
+  // Preserve individual commission statuses (PENDING vs PAID) as set by Super Admin
   try {
-    const Payout = require('../../models/Payout.model');
-    const agentProfile = await AgentProfile.findOne({ userId: agentId }).lean();
-    const possibleCodes = [
-      String(agentId),
-      req.user.clientCode,
-      req.user.agentCode,
-      agentProfile?.clientCode,
-      agentProfile?.agentCode,
-      req.user.name
-    ].filter(Boolean);
-
-    const paidPayouts = await Payout.find({
-      status: { $regex: /^paid$/i },
-      $or: [
-        { recipientId: { $in: possibleCodes } },
-        { recipientType: { $regex: /agent/i } }
-      ]
-    }).lean();
-
-    if (paidPayouts.length > 0) {
-      const latestPayout = paidPayouts[paidPayouts.length - 1];
-      await AgentCommission.updateMany(
-        {
-          $or: [
-            { agentId },
-            { agentId: req.user._id },
-            { agentId: String(req.user._id || agentId) }
-          ]
-        },
-        {
-          $set: {
-            status: 'PAID',
-            paymentMode: latestPayout.paymentMode || 'Bank Transfer',
-            transactionRefId: latestPayout.transactionRefId || 'TXN-PAID',
-            paidAt: latestPayout.paidAt || new Date(),
-            date: latestPayout.paidAt || new Date()
-          }
-        }
-      );
-    }
+    // Keep individual commission statuses pristine - no bulk override to PAID
   } catch (err) {
     console.error('Failed to sync agent payouts in getAgentCommissions:', err);
   }
@@ -521,9 +486,6 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
   let specialBonusCount = 0;
 
   commissions.forEach(c => {
-    if (hasPaidPayout) {
-      c.status = 'PAID';
-    }
     totalCommissionEarned += c.amount;
     if (c.status === 'PAID') {
       totalCommissionPaid += c.amount;

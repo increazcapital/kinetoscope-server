@@ -85,6 +85,11 @@ const Transaction = require('../../models/Transaction.model');
 const Investment = require('../../models/Investment.model');
 const RoiPayout = require('../../models/RoiPayout.model');
 const ServiceRequest = require('../../models/ServiceRequest.model');
+const Project = require('../../models/Project.model');
+const Article = require('../../models/Article.model');
+const Perk = require('../../models/Perk.model');
+const PerformanceReward = require('../../models/PerformanceReward.model');
+const ClientProfile = require('../../models/ClientProfile.model');
 
 /**
  * Get in-app notifications/alerts for logged in Client
@@ -93,25 +98,42 @@ const ServiceRequest = require('../../models/ServiceRequest.model');
 const getClientNotifications = asyncHandler(async (req, res) => {
   const clientId = req.user._id;
 
-  const [transactions, investments, roiPayouts, serviceRequests] = await Promise.all([
-    Transaction.find({ user: clientId }).sort({ createdAt: -1 }).limit(10).lean().catch(() => []),
-    Investment.find({ user: clientId }).sort({ createdAt: -1 }).limit(10).lean().catch(() => []),
-    RoiPayout.find({ user: clientId }).sort({ createdAt: -1 }).limit(10).lean().catch(() => []),
-    ServiceRequest.find({ raisedBy: clientId }).sort({ createdAt: -1 }).limit(10).lean().catch(() => []),
+  const [
+    transactions,
+    investments,
+    roiPayouts,
+    serviceRequests,
+    projects,
+    articles,
+    perks,
+    rewards,
+    profile
+  ] = await Promise.all([
+    Transaction.find({ clientId }).sort({ createdAt: -1 }).limit(10).lean().catch(() => []),
+    Investment.find({ clientId }).sort({ createdAt: -1 }).limit(10).lean().catch(() => []),
+    RoiPayout.find({ clientId }).sort({ createdAt: -1 }).limit(10).lean().catch(() => []),
+    ServiceRequest.find({ createdBy: clientId }).sort({ createdAt: -1 }).limit(10).lean().catch(() => []),
+    Project.find({ isPublished: true }).sort({ createdAt: -1 }).limit(5).lean().catch(() => []),
+    Article.find({ isPublished: true }).sort({ createdAt: -1 }).limit(5).lean().catch(() => []),
+    Perk.find({ isActive: true }).sort({ createdAt: -1 }).limit(5).lean().catch(() => []),
+    PerformanceReward.find({ $or: [{ userId: clientId }, { clientId }] }).sort({ createdAt: -1 }).limit(5).lean().catch(() => []),
+    ClientProfile.findOne({ userId: clientId }).lean().catch(() => null),
   ]);
 
   const notifications = [];
 
   // 1. Transactions (Deposit / Withdrawal)
   (transactions || []).forEach((t) => {
-    const isApproved = t.status === 'Approved';
-    const isRejected = t.status === 'Rejected';
+    const rawSt = (t.status || 'pending').toLowerCase();
+    const isApproved = rawSt === 'approved';
+    const isRejected = rawSt === 'rejected';
+    const stTime = new Date(t.updatedAt || t.actionAt || t.createdAt || 0).getTime();
     notifications.push({
-      id: `tx-${t._id}`,
+      id: `tx-${t._id}-${rawSt}-${stTime}`,
       type: 'transaction',
-      title: `${t.type || 'Transaction'} ${t.status}`,
-      message: `Your ${t.type ? t.type.toLowerCase() : 'transaction'} request of ₹${(t.amount || 0).toLocaleString('en-IN')} is ${t.status.toLowerCase()}.`,
-      date: t.createdAt || new Date(),
+      title: `${t.type ? t.type.toUpperCase() : 'TRANSACTION'} ${(t.status || 'PENDING').toUpperCase()}`,
+      message: `Your ${t.type ? t.type.toLowerCase() : 'transaction'} request of ₹${(t.amount || 0).toLocaleString('en-IN')} is ${(t.status || 'pending').toLowerCase()}.`,
+      date: t.updatedAt || t.actionAt || t.createdAt || new Date(),
       link: '/complete-transaction-details',
       category: isApproved ? 'success' : isRejected ? 'danger' : 'info',
     });
@@ -119,13 +141,15 @@ const getClientNotifications = asyncHandler(async (req, res) => {
 
   // 2. Investments
   (investments || []).forEach((inv) => {
+    const rawSeg = inv.segment;
+    const segName = (!rawSeg || rawSeg === 'General' || rawSeg === 'General Capital Pool' || rawSeg === 'Unallocated' || rawSeg === 'Unallocated Pool') ? 'Capital Deposit' : rawSeg;
     notifications.push({
       id: `inv-${inv._id}`,
       type: 'investment',
-      title: `Investment Contract Active`,
-      message: `Investment contract #${inv.contractNumber || inv.id || 'N/A'} for ₹${(inv.principalAmount || 0).toLocaleString('en-IN')} is active.`,
-      date: inv.createdAt || new Date(),
-      link: '/investment',
+      title: `Investment Active (${segName})`,
+      message: `Investment contract for ₹${(inv.investmentAmount || inv.amount || 0).toLocaleString('en-IN')} is active.`,
+      date: inv.createdAt || inv.investmentDate || new Date(),
+      link: '/portfolio',
       category: 'success',
     });
   });
@@ -136,34 +160,102 @@ const getClientNotifications = asyncHandler(async (req, res) => {
       id: `roi-${roi._id}`,
       type: 'roi',
       title: `ROI Payout ${roi.status || 'Processed'}`,
-      message: `Monthly ROI payout of ₹${(roi.amount || 0).toLocaleString('en-IN')} for ${roi.monthYear || 'period'} is ${roi.status ? roi.status.toLowerCase() : 'processed'}.`,
-      date: roi.payoutDate || roi.createdAt || new Date(),
-      link: '/investment',
+      message: `Monthly ROI payout of ₹${(roi.amount || 0).toLocaleString('en-IN')} for ${roi.payoutMonth || 'period'} is ${roi.status ? roi.status.toLowerCase() : 'processed'}.`,
+      date: roi.processedDate || roi.createdAt || new Date(),
+      link: '/complete-transaction-details',
       category: 'success',
     });
   });
 
   // 4. Service Requests
   (serviceRequests || []).forEach((sr) => {
+    const srSt = (sr.status || 'open').toLowerCase();
+    const srTime = new Date(sr.updatedAt || sr.createdAt || 0).getTime();
     notifications.push({
-      id: `sr-${sr._id}`,
+      id: `sr-${sr._id}-${srSt}-${srTime}`,
       type: 'service_request',
-      title: `Service Request Update`,
-      message: `Request "${sr.subject || sr.type || 'Query'}" is currently ${sr.status || 'Open'}.`,
+      title: `Service Request: ${sr.category || sr.subject || 'Query'}`,
+      message: `Request #${sr.requestId || sr._id} status is ${sr.status || 'Open'}.`,
       date: sr.updatedAt || sr.createdAt || new Date(),
       link: '/service-requests',
+      category: sr.status === 'Resolved' || sr.status === 'Closed' ? 'success' : 'info',
+    });
+  });
+
+  // 5. New Published Projects
+  (projects || []).forEach((p) => {
+    notifications.push({
+      id: `proj-${p._id}`,
+      type: 'project',
+      title: `New Project Listed: ${p.name}`,
+      message: `Project "${p.name}" (${p.segment || 'Film Fund'}) is now open for investment.`,
+      date: p.createdAt || new Date(),
+      link: '/projects',
       category: 'info',
     });
   });
 
-  // Sort latest first and slice top 20
+  // 6. News & Media Articles
+  (articles || []).forEach((art) => {
+    notifications.push({
+      id: `art-${art._id}`,
+      type: 'news',
+      title: `News & Media: ${art.title}`,
+      message: art.summary || art.title || 'New press release published by Kinetoscope Films.',
+      date: art.createdAt || new Date(),
+      link: '/media',
+      category: 'info',
+    });
+  });
+
+  // 7. Perks & Recognition
+  (perks || []).forEach((pk) => {
+    notifications.push({
+      id: `pk-${pk._id}`,
+      type: 'perk',
+      title: `Perk Unlocked: ${pk.title}`,
+      message: pk.description || `Exclusive perk "${pk.title}" is available for your tier.`,
+      date: pk.createdAt || new Date(),
+      link: '/perks',
+      category: 'success',
+    });
+  });
+
+  // 8. Performance Rewards
+  (rewards || []).forEach((rw) => {
+    notifications.push({
+      id: `rw-${rw._id}`,
+      type: 'reward',
+      title: `Reward Credited: ${rw.rewardTitle || rw.title || 'Bonus Credit'}`,
+      message: `Performance reward of ₹${(rw.amount || 0).toLocaleString('en-IN')} has been credited.`,
+      date: rw.createdAt || new Date(),
+      link: '/perks',
+      category: 'success',
+    });
+  });
+
+  // 9. KYC Status
+  if (profile && profile.kycStatus) {
+    const kycSt = String(profile.kycStatus).toUpperCase();
+    const kycTime = new Date(profile.updatedAt || profile.createdAt || 0).getTime();
+    notifications.push({
+      id: `kyc-${profile._id}-${kycSt.toLowerCase()}-${kycTime}`,
+      type: 'kyc',
+      title: `KYC Status: ${kycSt}`,
+      message: kycSt === 'VERIFIED' ? 'Your KYC documents & agreement are verified.' : kycSt === 'REJECTED' ? 'Your KYC verification requires re-upload.' : 'Your KYC documents are under review.',
+      date: profile.updatedAt || profile.createdAt || new Date(),
+      link: '/profile',
+      category: kycSt === 'VERIFIED' ? 'success' : kycSt === 'REJECTED' ? 'danger' : 'warning',
+    });
+  }
+
+  // Sort latest first and slice top 25
   notifications.sort((a, b) => new Date(b.date) - new Date(a.date));
-  const result = notifications.slice(0, 20);
 
   res.status(200).json({
-    status: 'success',
-    results: result.length,
-    notifications: result,
+    success: true,
+    notifications: notifications.slice(0, 25),
+    data: notifications.slice(0, 25),
   });
 });
 

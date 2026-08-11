@@ -93,15 +93,40 @@ const getClientDetailsData = async (clientId) => {
   const activeInvestmentsList = investments.filter(inv => inv.status === 'active');
   const activeInvestmentsCount = Math.max(activeInvestmentsList.length, (approvedDeposits.length > 0 && invTotal === 0) ? 1 : 0);
 
-  let roiAverage = 0;
-  if (activeInvestmentsList.length > 0) {
+  const allocatedInvestmentsList = activeInvestmentsList.filter(inv => {
+    const seg = String(inv.segment || inv.projectName || '').toLowerCase().trim();
+    return seg && seg !== 'unallocated' && seg !== 'unallocated segment' && seg !== 'none' && seg !== '—' && seg !== '-';
+  });
+
+  const uniqueAllocatedSegments = new Set(allocatedInvestmentsList.map(inv => String(inv.segment || inv.projectName).toLowerCase().trim()));
+  const activeSegmentsCount = uniqueAllocatedSegments.size;
+
+  const configuredMonthlyRoi = profile.monthlyRoi !== undefined ? Number(profile.monthlyRoi) : 0;
+  let roiAverage = configuredMonthlyRoi;
+  if (!configuredMonthlyRoi && activeInvestmentsList.length > 0) {
     const roiSum = activeInvestmentsList.reduce((sum, inv) => sum + (inv.roiPercentage || 0), 0);
     roiAverage = Number((roiSum / activeInvestmentsList.length).toFixed(2));
-  } else {
-    roiAverage = profile.monthlyRoi !== undefined ? profile.monthlyRoi : 0;
   }
 
-  const kycStatusVal = profile.kycStatus || 'PENDING';
+  const hasAgreement = Boolean(profile.agreementDocument && String(profile.agreementDocument).trim() !== '' && profile.agreementDocument !== 'null');
+  const isAgreementVerified = hasAgreement && (profile.agreementDocumentVerified || profile.agreementVerified);
+  const hasPan = Boolean(profile.panDocument && String(profile.panDocument).trim() !== '' && profile.panDocument !== 'null');
+  const isPanVerified = hasPan && profile.panDocumentVerified;
+  const hasAadhaar = Boolean((profile.aadhaarDocument || profile.idProofDocument) && String(profile.aadhaarDocument || profile.idProofDocument).trim() !== '' && (profile.aadhaarDocument || profile.idProofDocument) !== 'null');
+  const isAadhaarVerified = hasAadhaar && (profile.aadhaarDocumentVerified || profile.idProofDocumentVerified);
+  const hasBank = Boolean(profile.bankProofDocument && String(profile.bankProofDocument).trim() !== '' && profile.bankProofDocument !== 'null');
+  const isBankVerified = hasBank && profile.bankProofDocumentVerified;
+
+  const isAllDocsVerified = isAgreementVerified && isPanVerified && isAadhaarVerified && isBankVerified;
+
+  let kycStatusVal = profile.kycStatus || 'PENDING';
+  if (!isAllDocsVerified) {
+    kycStatusVal = 'PENDING';
+    if (profile.kycStatus === 'VERIFIED') {
+      profile.kycStatus = 'PENDING';
+      profile.save().catch(e => console.error('[Auto Sync KYC Status Error]:', e.message));
+    }
+  }
 
   return {
     header: {
@@ -116,9 +141,9 @@ const getClientDetailsData = async (clientId) => {
     summaryCards: {
       totalInvestment,
       activeInvestments: activeInvestmentsCount,
-      activeSegments: activeInvestmentsCount,
-      averageRoi: roiAverage,
-      monthlyRoi: roiAverage || (profile.monthlyRoi !== undefined ? profile.monthlyRoi : 0),
+      activeSegments: activeSegmentsCount,
+      averageRoi: configuredMonthlyRoi || roiAverage,
+      monthlyRoi: configuredMonthlyRoi || roiAverage,
       kycStatus: kycStatusVal,
     },
     profile: {
@@ -264,6 +289,7 @@ const getClientDocumentsData = async (clientId) => {
 };
 
 module.exports = {
+  findClientUser,
   getClientDetailsData,
   getClientDocumentsData,
 };

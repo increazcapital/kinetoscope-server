@@ -1,6 +1,7 @@
 
 const financialsService = require('../../services/client-financials.service');
 const clientDetailsService = require('../../services/client-details.service');
+const { findClientUser } = require('../../services/client-details.service');
 const perksService = require('../../services/perks.service');
 const ClientProfile = require('../../models/ClientProfile.model');
 const User = require('../../models/User.model');
@@ -121,27 +122,28 @@ const getClientDocumentsTab = asyncHandler(async (req, res, next) => {
  */
 const getClientPerksTab = asyncHandler(async (req, res, next) => {
   const clientId = req.params.id;
+  const user = await findClientUser(clientId);
+  if (!user || user.role !== ROLES.CLIENT) {
+    return next(new AppError('Client profile not found.', 404));
+  }
+  const realClientId = user._id;
+
   if (req.user.role === ROLES.AGENT) {
-    await verifyAgentClientAccess(clientId, req.user.id);
+    await verifyAgentClientAccess(realClientId, req.user.id);
   }
 
-  const [user, investments, approvedDeposits, assignments, profile, allDbPerks] = await Promise.all([
-    User.findById(clientId),
-    Investment.find({ clientId }).lean(),
-    Transaction.find({ clientId, type: 'deposit', status: 'approved' }).lean(),
-    ClientPerk.find({ clientId })
+  const [investments, approvedDeposits, assignments, profile, allDbPerks] = await Promise.all([
+    Investment.find({ clientId: realClientId }).lean(),
+    Transaction.find({ clientId: realClientId, type: 'deposit', status: 'approved' }).lean(),
+    ClientPerk.find({ clientId: realClientId })
       .populate({
         path: 'perkId',
         select: 'title description tier minInvestment status',
       })
       .sort({ createdAt: -1 }),
-    ClientProfile.findOne({ userId: clientId }),
+    ClientProfile.findOne({ userId: realClientId }),
     Perk.find({ status: 'active' }).lean(),
   ]);
-
-  if (!user) {
-    return next(new AppError('Client profile not found.', 404));
-  }
 
   const validInvestments = (investments || []).filter(inv => inv.status !== 'cancelled');
   const invTotal = validInvestments.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);

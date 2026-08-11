@@ -125,7 +125,7 @@ const seedMockPayouts = async (creatorId) => {
         roiPercentage: 12,
         riskPercentage: 30,
         riskLevel: 'Medium',
-        durationMonths: 24,
+        durationMonths: 18,
         investmentDate: new Date('2026-01-01'),
         status: 'active',
         createdBy: creatorId
@@ -139,7 +139,7 @@ const seedMockPayouts = async (creatorId) => {
         roiPercentage: 10,
         riskPercentage: 15,
         riskLevel: 'Low',
-        durationMonths: 24,
+        durationMonths: 18,
         investmentDate: new Date('2026-02-01'),
         status: 'active',
         createdBy: creatorId
@@ -353,14 +353,16 @@ const getPayouts = asyncHandler(async (req, res, next) => {
   const recipientIds = payouts.map(p => p.recipientId);
   const objectIds = recipientIds.filter(id => mongoose.Types.ObjectId.isValid(id));
 
-  const [usersByCode, usersById, clientProfiles, agentProfiles] = await Promise.all([
+  const [usersByCode, usersById, clientProfiles, agentProfiles, allClientProfiles] = await Promise.all([
     User.find({ clientCode: { $in: recipientIds } }, { name: 1, clientCode: 1 }).lean(),
     User.find({ _id: { $in: objectIds } }, { name: 1 }).lean(),
     ClientProfile.find({ _id: { $in: objectIds } }).populate('userId', 'name').lean(),
-    AgentProfile.find({ _id: { $in: objectIds } }).populate('userId', 'name').lean()
+    AgentProfile.find({ _id: { $in: objectIds } }).populate('userId', 'name').lean(),
+    ClientProfile.find({}).lean()
   ]);
 
   const userMap = {};
+  const roiMap = {};
   usersByCode.forEach(u => {
     if (u.clientCode) userMap[u.clientCode] = u.name;
   });
@@ -368,10 +370,16 @@ const getPayouts = asyncHandler(async (req, res, next) => {
     userMap[u._id.toString()] = u.name;
   });
   clientProfiles.forEach(cp => {
-    if (cp.userId) userMap[cp._id.toString()] = cp.userId.name;
+    if (cp.userId) {
+      userMap[cp._id.toString()] = cp.userId.name;
+      roiMap[cp.userId._id.toString()] = cp.monthlyRoi;
+    }
   });
   agentProfiles.forEach(ap => {
     if (ap.userId) userMap[ap._id.toString()] = ap.userId.name;
+  });
+  allClientProfiles.forEach(cp => {
+    if (cp.userId) roiMap[cp.userId.toString()] = cp.monthlyRoi;
   });
 
   let formatted = payouts.map(p => {
@@ -389,13 +397,23 @@ const getPayouts = asyncHandler(async (req, res, next) => {
       console.error('[getPayouts] Error formatting period:', e.message);
     }
 
+    let roiTypeStr = 'ROI';
+    if (p.recipientType === 'Client Return (ROI)') {
+      if (p.commissionType && String(p.commissionType).trim() !== '') {
+        roiTypeStr = String(p.commissionType).includes('ROI') ? p.commissionType : `ROI (${p.commissionType})`;
+      } else {
+        const clientRoi = roiMap[p.recipientId] || roiMap[p.clientId] || 1.2;
+        roiTypeStr = `ROI (${clientRoi}%)`;
+      }
+    }
+
     return {
       _id: p._id,
       recipientId: p.recipientId,
       recipientName: name,
       recipientCode: p.recipientId,
       recipientType: p.recipientType === 'Client Return (ROI)' ? 'CLIENT' : 'AGENT',
-      type: p.recipientType === 'Client Return (ROI)' ? 'ROI' : `Comm (${p.commissionType || 'monthly'})`,
+      type: p.recipientType === 'Client Return (ROI)' ? roiTypeStr : `Comm (${p.commissionType || 'monthly'})`,
       period: periodFormatted,
       amount: p.amount,
       payoutDate: p.payoutDate,
