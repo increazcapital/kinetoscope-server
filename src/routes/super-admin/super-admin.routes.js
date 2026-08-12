@@ -430,6 +430,12 @@ router.patch('/notifications/triggers/:id/toggle', requirePermission('emailNotif
 router.get('/notifications/logs', requirePermission('emailNotifications', 'view'), getLogs);
 router.get('/notifications/metrics', requirePermission('emailNotifications', 'view'), getMetrics);
 
+// User In-App Notification Status Persistence (Read / Delete)
+const { getUserNotificationStatus, markSuperAdminNotificationRead, deleteSuperAdminNotification } = require('../../controllers/super-admin/notification.controller');
+router.get('/notifications/user-status', getUserNotificationStatus);
+router.patch('/notifications/user-status/read', markSuperAdminNotificationRead);
+router.delete('/notifications/user-status/delete', deleteSuperAdminNotification);
+
 // 9. Agreement Uploads
 router.route('/agreements')
   .get((req, res) => res.status(200).json({ status: 'success', message: 'List Agreements placeholder' }))

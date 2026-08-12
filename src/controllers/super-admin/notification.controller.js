@@ -641,6 +641,76 @@ const getMetrics = asyncHandler(async (req, res, next) => {
   });
 });
 
+/**
+ * Get user notification status (readIds & deletedIds)
+ * GET /api/super-admin/notifications/user-status
+ */
+const getUserNotificationStatus = asyncHandler(async (req, res) => {
+  const UserNotificationStatus = require('../../models/UserNotificationStatus.model');
+  const userId = req.user._id;
+  let status = await UserNotificationStatus.findOne({ userId }).lean().catch(() => null);
+  if (!status) {
+    status = { readIds: [], deletedIds: [] };
+  }
+  res.status(200).json({
+    success: true,
+    data: {
+      readIds: status.readIds || [],
+      deletedIds: status.deletedIds || []
+    }
+  });
+});
+
+/**
+ * Mark Super Admin Notification as Read
+ * PATCH /api/super-admin/notifications/user-status/read
+ */
+const markSuperAdminNotificationRead = asyncHandler(async (req, res) => {
+  const UserNotificationStatus = require('../../models/UserNotificationStatus.model');
+  const userId = req.user._id;
+  const { id, ids } = req.body || {};
+
+  let status = await UserNotificationStatus.findOne({ userId });
+  if (!status) {
+    status = await UserNotificationStatus.create({ userId, readIds: [], deletedIds: [] });
+  }
+
+  const toAdd = id === 'all' || !id ? (Array.isArray(ids) ? ids : []) : [id];
+  toAdd.forEach((item) => {
+    if (item && !status.readIds.includes(item)) {
+      status.readIds.push(item);
+    }
+  });
+
+  await status.save();
+  res.status(200).json({ success: true, message: 'Notification marked as read.' });
+});
+
+/**
+ * Delete Super Admin Notification
+ * DELETE /api/super-admin/notifications/user-status/delete
+ */
+const deleteSuperAdminNotification = asyncHandler(async (req, res) => {
+  const UserNotificationStatus = require('../../models/UserNotificationStatus.model');
+  const userId = req.user._id;
+  const { id, ids } = req.body || {};
+
+  let status = await UserNotificationStatus.findOne({ userId });
+  if (!status) {
+    status = await UserNotificationStatus.create({ userId, readIds: [], deletedIds: [] });
+  }
+
+  const toAdd = id === 'all' || !id ? (Array.isArray(ids) ? ids : []) : [id];
+  toAdd.forEach((item) => {
+    if (item && !status.deletedIds.includes(item)) {
+      status.deletedIds.push(item);
+    }
+  });
+
+  await status.save();
+  res.status(200).json({ success: true, message: 'Notification deleted.' });
+});
+
 module.exports = {
   sendDirectEmail,
   triggerScheduledEmailsProcess,
@@ -653,4 +723,7 @@ module.exports = {
   toggleTrigger,
   getLogs,
   getMetrics,
+  getUserNotificationStatus,
+  markSuperAdminNotificationRead,
+  deleteSuperAdminNotification,
 };

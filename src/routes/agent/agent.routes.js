@@ -138,8 +138,10 @@ router.route('/withdrawal')
 router.get('/withdrawals', getAgentWithdrawals);
 
 // 10. Agent direct messaging/notifications
-const { sendAgentNotificationEmail, getAgentNotifications } = require('../../controllers/agent/notification.controller');
+const { sendAgentNotificationEmail, getAgentNotifications, markAgentNotificationRead, deleteAgentNotification } = require('../../controllers/agent/notification.controller');
 router.get('/notifications', getAgentNotifications);
+router.patch('/notifications/:id/read', markAgentNotificationRead);
+router.delete('/notifications/:id', deleteAgentNotification);
 router.post('/notifications/send-email', sendAgentNotificationEmail);
 
 

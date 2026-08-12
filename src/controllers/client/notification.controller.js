@@ -249,18 +249,87 @@ const getClientNotifications = asyncHandler(async (req, res) => {
     });
   }
 
-  // Sort latest first and slice top 25
+  // Sort latest first
   notifications.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  // User persistent status filter
+  const UserNotificationStatus = require('../../models/UserNotificationStatus.model');
+  const userStatus = await UserNotificationStatus.findOne({ userId: clientId }).lean().catch(() => null);
+  const readIds = new Set(userStatus?.readIds || []);
+  const deletedIds = new Set(userStatus?.deletedIds || []);
+
+  const processedList = notifications
+    .filter((n) => !deletedIds.has(n.id))
+    .map((n) => ({
+      ...n,
+      read: readIds.has(n.id) || n.read || false,
+      isRead: readIds.has(n.id) || n.read || false,
+    }))
+    .slice(0, 25);
 
   res.status(200).json({
     success: true,
-    notifications: notifications.slice(0, 25),
-    data: notifications.slice(0, 25),
+    notifications: processedList,
+    data: processedList,
   });
+});
+
+/**
+ * Mark Client Notification as Read
+ * PATCH /api/client/notifications/:id/read
+ */
+const markClientNotificationRead = asyncHandler(async (req, res) => {
+  const clientId = req.user._id;
+  const { id } = req.params;
+  const { ids } = req.body || {};
+  const UserNotificationStatus = require('../../models/UserNotificationStatus.model');
+
+  let status = await UserNotificationStatus.findOne({ userId: clientId });
+  if (!status) {
+    status = await UserNotificationStatus.create({ userId: clientId, readIds: [], deletedIds: [] });
+  }
+
+  const toAdd = id === 'all' || !id ? (Array.isArray(ids) ? ids : []) : [id];
+  toAdd.forEach((item) => {
+    if (item && !status.readIds.includes(item)) {
+      status.readIds.push(item);
+    }
+  });
+
+  await status.save();
+  res.status(200).json({ success: true, message: 'Notification marked as read.' });
+});
+
+/**
+ * Delete Client Notification
+ * DELETE /api/client/notifications/:id
+ */
+const deleteClientNotification = asyncHandler(async (req, res) => {
+  const clientId = req.user._id;
+  const { id } = req.params;
+  const { ids } = req.body || {};
+  const UserNotificationStatus = require('../../models/UserNotificationStatus.model');
+
+  let status = await UserNotificationStatus.findOne({ userId: clientId });
+  if (!status) {
+    status = await UserNotificationStatus.create({ userId: clientId, readIds: [], deletedIds: [] });
+  }
+
+  const toAdd = id === 'all' || !id ? (Array.isArray(ids) ? ids : []) : [id];
+  toAdd.forEach((item) => {
+    if (item && !status.deletedIds.includes(item)) {
+      status.deletedIds.push(item);
+    }
+  });
+
+  await status.save();
+  res.status(200).json({ success: true, message: 'Notification deleted.' });
 });
 
 module.exports = {
   sendClientNotificationEmail,
   getClientNotifications,
+  markClientNotificationRead,
+  deleteClientNotification,
 };
 

@@ -145,8 +145,10 @@ router.route('/transactions')
   .post(memoryUpload.single('file'), requestTransaction);
 
 // 12. Client direct messaging/notifications
-const { sendClientNotificationEmail, getClientNotifications } = require('../../controllers/client/notification.controller');
+const { sendClientNotificationEmail, getClientNotifications, markClientNotificationRead, deleteClientNotification } = require('../../controllers/client/notification.controller');
 router.get('/notifications', getClientNotifications);
+router.patch('/notifications/:id/read', markClientNotificationRead);
+router.delete('/notifications/:id', deleteClientNotification);
 router.post('/notifications/send-email', sendClientNotificationEmail);
 
 
