@@ -4,6 +4,7 @@ const ClientProfile = require('../../models/ClientProfile.model');
 const Investment = require('../../models/Investment.model');
 const AgentCommission = require('../../models/AgentCommission.model');
 const Transaction = require('../../models/Transaction.model');
+const mongoose = require('mongoose');
 const agentDetailsService = require('../../services/agent-details.service');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
@@ -24,24 +25,62 @@ const getAgentDashboard = asyncHandler(async (req, res, next) => {
     Investment.find({ status: 'active' }).lean()
   ]);
 
-  const clientIds = new Set(clients.map(c => String(c._id)));
-  const investmentsList = allActiveInvestments.filter(inv => clientIds.has(String(inv.clientId)));
+  const clientObjectIds = clients.map(c => c._id);
+  const [clientProfiles, clientDeposits] = await Promise.all([
+    ClientProfile.find({ userId: { $in: clientObjectIds } }).lean(),
+    Transaction.find({
+      clientId: { $in: clientObjectIds },
+      type: { $regex: /deposit/i },
+      status: { $regex: /^(paid|approved|credited|completed)$/i }
+    }).lean()
+  ]);
 
   const clientActiveInvMap = {};
-  investmentsList.forEach(inv => {
-    const cidStr = String(inv.clientId);
-    clientActiveInvMap[cidStr] = (clientActiveInvMap[cidStr] || 0) + (inv.investmentAmount || 0);
+  clients.forEach(c => {
+    const cidStr = String(c._id);
+    const prof = clientProfiles.find(p => String(p.userId) === cidStr);
+    const invs = allActiveInvestments.filter(inv => String(inv.clientId) === cidStr);
+    const invSum = invs.reduce((s, inv) => s + (inv.investmentAmount || inv.amount || 0), 0);
+    const deps = clientDeposits.filter(t => String(t.clientId) === cidStr);
+    const depSum = deps.reduce((s, t) => s + (t.amount || 0), 0);
+    const profSum = prof ? (prof.totalInvestment || 0) : 0;
+
+    clientActiveInvMap[cidStr] = Math.max(invSum, depSum, profSum);
   });
 
-  const validCommissions = commissions.filter(c => {
-    if (!c.clientId) return true;
-    const cidStr = String(c.clientId);
-    const activeInvAmt = clientActiveInvMap[cidStr] || 0;
-    if (activeInvAmt === 0 && String(c.status).toUpperCase() === 'PENDING') {
-      return false;
+  const getSlabRate = (amount) => {
+    if (!amount) return 2;
+    if (amount <= 500000) return 2;
+    if (amount <= 1500000) return 2.5;
+    if (amount <= 3000000) return 3;
+    if (amount <= 5000000) return 3.5;
+    return 4;
+  };
+
+  const uniqueCommissionsMap = new Map();
+  commissions.forEach(c => {
+    if (String(c.status).toUpperCase() === 'PAID') {
+      uniqueCommissionsMap.set(c._id ? c._id.toString() : Math.random(), c);
+      return;
     }
-    return true;
+    const cidStr = c.clientId ? (c.clientId._id ? c.clientId._id.toString() : String(c.clientId)) : null;
+    if (!cidStr) return;
+    const activeInvAmt = clientActiveInvMap[cidStr] || 0;
+    if (activeInvAmt === 0) return;
+
+    const key = `${cidStr}_${c.period || 'Aug 2026'}`;
+    const rate = getSlabRate(activeInvAmt);
+    const dynamicAmt = Math.round((activeInvAmt * rate) / 100);
+
+    if (!uniqueCommissionsMap.has(key)) {
+      uniqueCommissionsMap.set(key, {
+        ...c,
+        amount: dynamicAmt > 0 ? dynamicAmt : c.amount,
+      });
+    }
   });
+
+  const validCommissions = Array.from(uniqueCommissionsMap.values());
 
   const totalClientsInvestment = investmentsList.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
 
@@ -482,26 +521,77 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
     hasPaidPayout = count > 0;
   } catch (e) {}
 
-  // Fetch all active investments of related clients to map investmentAmount & slab %
-  const clientIds = commissions.map(c => c.clientId ? (c.clientId._id || c.clientId) : null).filter(Boolean);
-  const investments = await Investment.find({ clientId: { $in: clientIds }, status: 'active' }).lean();
+  // Fetch all active investments, profiles, and deposits of related clients to map investmentAmount & slab %
+  const clientObjectIds = commissions
+    .map(c => c.clientId ? (c.clientId._id || c.clientId) : null)
+    .filter(id => id && mongoose.Types.ObjectId.isValid(String(id)))
+    .map(id => new mongoose.Types.ObjectId(String(id)));
+
+  const [investments, clientProfiles, approvedDeposits] = await Promise.all([
+    Investment.find({ clientId: { $in: clientObjectIds }, status: { $ne: 'cancelled' } }).lean(),
+    ClientProfile.find({ userId: { $in: clientObjectIds } }).lean(),
+    Transaction.find({
+      clientId: { $in: clientObjectIds },
+      type: { $regex: /deposit/i },
+      status: { $regex: /^(paid|approved|credited|completed)$/i }
+    }).lean()
+  ]);
 
   const investmentMap = {};
-  investments.forEach(inv => {
-    const cid = inv.clientId.toString();
-    investmentMap[cid] = (investmentMap[cid] || 0) + (inv.investmentAmount || 0);
+  clientObjectIds.forEach(id => {
+    const cidStr = id.toString();
+    const invs = investments.filter(inv => inv.clientId && inv.clientId.toString() === cidStr);
+    const invSum = invs.reduce((s, inv) => s + (inv.investmentAmount || inv.amount || 0), 0);
+
+    const prof = clientProfiles.find(p => p.userId && p.userId.toString() === cidStr);
+    const profSum = prof ? (prof.totalInvestment || 0) : 0;
+
+    const deps = approvedDeposits.filter(t => t.clientId && t.clientId.toString() === cidStr);
+    const depSum = deps.reduce((s, t) => s + (t.amount || 0), 0);
+
+    investmentMap[cidStr] = Math.max(invSum, profSum, depSum);
   });
 
-  // Exclude pending commissions for clients with 0 active investment (deleted/cancelled investments)
-  const validCommissions = commissions.filter(c => {
-    if (!c.clientId) return true;
-    const cidStr = c.clientId._id ? c.clientId._id.toString() : String(c.clientId);
-    const activeInvAmount = investmentMap[cidStr] || 0;
-    if (activeInvAmount === 0 && c.status === 'PENDING') {
-      return false;
+  const getSlabNum = (amount) => {
+    if (!amount) return 2;
+    if (amount <= 500000) return 2;
+    if (amount <= 1500000) return 2.5;
+    if (amount <= 3000000) return 3;
+    if (amount <= 5000000) return 3.5;
+    return 4;
+  };
+
+  const getSlabPct = (amount) => {
+    return `${getSlabNum(amount)}%`;
+  };
+
+  // Deduplicate and dynamically compute commission amount for pending records
+  const uniqueCommissionsMap = new Map();
+  commissions.forEach(doc => {
+    const c = doc.toObject ? doc.toObject() : doc;
+    if (String(c.status).toUpperCase() === 'PAID') {
+      uniqueCommissionsMap.set(c._id ? c._id.toString() : Math.random(), c);
+      return;
     }
-    return true;
+    const client = c.clientId || {};
+    const cidStr = client._id ? client._id.toString() : (typeof client === 'string' ? client : null);
+    if (!cidStr) return;
+    const activeInvAmount = investmentMap[cidStr] || 0;
+    if (activeInvAmount === 0) return;
+
+    const key = `${cidStr}_${c.period || 'Aug 2026'}`;
+    const rateNum = getSlabNum(activeInvAmount);
+    const dynamicAmt = Math.round((activeInvAmount * rateNum) / 100);
+
+    if (!uniqueCommissionsMap.has(key)) {
+      uniqueCommissionsMap.set(key, {
+        ...c,
+        amount: dynamicAmt > 0 ? dynamicAmt : c.amount,
+      });
+    }
   });
+
+  const validCommissions = Array.from(uniqueCommissionsMap.values());
 
   let totalCommissionEarned = 0;
   let totalCommissionPaid = 0;
@@ -534,20 +624,11 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
     }
   });
 
-  const getSlabPct = (amount) => {
-    if (!amount) return '2%';
-    if (amount <= 500000) return '2%';
-    if (amount <= 1500000) return '2.5%';
-    if (amount <= 3000000) return '3%';
-    if (amount <= 5000000) return '3.5%';
-    return '4%';
-  };
-
   const enrichedCommissions = validCommissions.map(c => {
     const client = c.clientId || {};
     const cidStr = client._id ? client._id.toString() : String(client);
     const invAmount = investmentMap[cidStr] || 0;
-    const slabPct = invAmount ? getSlabPct(invAmount) : '—';
+    const slabPct = invAmount ? getSlabPct(invAmount) : '2%';
 
     return {
       _id: c._id,
