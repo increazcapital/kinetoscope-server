@@ -88,23 +88,25 @@ const calculateDashboardData = async (userId) => {
 
   // Next ROI Date calculation
   let nextRoiDate = null;
-  if (activeInvestmentsCount > 0) {
-    const earliestInvestment = [...activeInvestmentsList].sort((a, b) => new Date(a.investmentDate) - new Date(b.investmentDate))[0];
-    const startDate = earliestInvestment.investmentDate ? new Date(earliestInvestment.investmentDate) : new Date();
-    
-    // One month anniversary
-    const oneMonthLater = new Date(startDate);
-    oneMonthLater.setMonth(oneMonthLater.getMonth() + 1);
+  if (activeInvestmentsCount > 0 && activeInvestmentsList.length > 0) {
+    const validInvList = activeInvestmentsList.filter(Boolean);
+    if (validInvList.length > 0) {
+      const earliestInvestment = [...validInvList].sort((a, b) => new Date(a.investmentDate || a.createdAt || 0) - new Date(b.investmentDate || b.createdAt || 0))[0];
+      const startDate = (earliestInvestment && earliestInvestment.investmentDate) ? new Date(earliestInvestment.investmentDate) : new Date();
+      
+      const oneMonthLater = new Date(startDate);
+      oneMonthLater.setMonth(oneMonthLater.getMonth() + 1);
 
-    const now = new Date();
-    if (now < oneMonthLater) {
-      nextRoiDate = oneMonthLater;
-    } else {
-      let candidate = new Date(oneMonthLater);
-      while (candidate <= now) {
-        candidate.setMonth(candidate.setMonth(candidate.getMonth() + 1));
+      const now = new Date();
+      if (now < oneMonthLater) {
+        nextRoiDate = oneMonthLater;
+      } else {
+        let candidate = new Date(oneMonthLater);
+        while (candidate <= now) {
+          candidate.setMonth(candidate.getMonth() + 1);
+        }
+        nextRoiDate = candidate;
       }
-      nextRoiDate = candidate;
     }
   }
 
