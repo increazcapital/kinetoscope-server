@@ -408,6 +408,8 @@ const deleteInvestment = asyncHandler(async (req, res, next) => {
       if (newTotal === 0) {
         const AgentCommission = require('../../models/AgentCommission.model');
         await AgentCommission.deleteMany({ clientId: investment.clientId, status: 'PENDING' });
+        const RoiPayout = require('../../models/RoiPayout.model');
+        await RoiPayout.deleteMany({ clientId: investment.clientId });
       }
     } catch (profileErr) {
       console.error('Failed to recalculate client total investment:', profileErr);

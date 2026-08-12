@@ -123,22 +123,25 @@ const getRoiTab = async (clientId) => {
   ]);
 
   const totalInv = investments.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
-  const calculatedRoiAmount = Math.round((totalInv * configuredRoiRate) / 100);
-
-  // Find exact paid payout record from RoiPayout collection
-  const exactPaidPayout = existingRoiPayouts.find(p => String(p.status).toUpperCase() === 'PAID');
-  const isPaid = Boolean(exactPaidPayout);
+  const calculatedRoiAmount = totalInv > 0 ? Math.round((totalInv * configuredRoiRate) / 100) : 0;
 
   let payouts = existingRoiPayouts.length > 0 ? [...existingRoiPayouts] : [];
 
-  // If no payout records exist, generate current month payout entry (default status PENDING)
-  if (payouts.length === 0) {
+  // If client has 0 active investments, return a clean PENDING payout entry with 0 amount
+  if (totalInv === 0) {
     const currentMonthStr = new Date().toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
-    const recAmt = Number(exactPaidPayout?.amount || 0);
-    const roiAmount = (isPaid && recAmt > 0 && (totalInv === 0 || recAmt < totalInv)) 
-      ? recAmt 
-      : calculatedRoiAmount;
-
+    payouts = [{
+      _id: `gen_roi_${realClientId}`,
+      clientId: realClientId,
+      payoutMonth: currentMonthStr,
+      amount: 0,
+      status: 'PENDING',
+      processedDate: null,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    }];
+  } else if (payouts.length === 0) {
+    const currentMonthStr = new Date().toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
     payouts.push({
       _id: `gen_roi_${realClientId}`,
       clientId: realClientId,
@@ -153,25 +156,19 @@ const getRoiTab = async (clientId) => {
 
   // Calculate dynamic ROI %
   let effectiveRoiRate = configuredRoiRate;
-  if (exactPaidPayout) {
-    if (exactPaidPayout.roiPercentage || exactPaidPayout.roiRate) {
-      effectiveRoiRate = parseFloat(exactPaidPayout.roiPercentage || exactPaidPayout.roiRate);
-    } else if (exactPaidPayout.commissionType && String(exactPaidPayout.commissionType).includes('%')) {
-      const match = String(exactPaidPayout.commissionType).match(/(\d+(\.\d+)?)%/);
-      if (match) effectiveRoiRate = parseFloat(match[1]);
-    }
-  }
 
   // Enrich payouts with dynamic ROI %, status & processedDate
   const enrichedPayouts = payouts.map(p => {
     let rawStatus = String(p.status || 'PENDING').toUpperCase();
-    let finalStatus = (rawStatus === 'PAID' || rawStatus === 'APPROVED') ? 'PAID' : 'PENDING';
+    let finalStatus = (totalInv > 0 && (rawStatus === 'PAID' || rawStatus === 'APPROVED')) ? 'PAID' : 'PENDING';
     let finalProcessedDate = (finalStatus === 'PAID' && p.processedDate) 
       ? new Date(p.processedDate).toISOString().split('T')[0] 
       : '—';
 
     let finalAmount = Number(p.amount || 0);
-    if (finalAmount <= 0 || (totalInv > 0 && finalAmount >= totalInv)) {
+    if (totalInv === 0) {
+      finalAmount = 0;
+    } else if (finalAmount <= 0 || finalAmount >= totalInv) {
       finalAmount = calculatedRoiAmount;
     }
 
@@ -179,7 +176,7 @@ const getRoiTab = async (clientId) => {
       _id: p._id,
       clientId: p.clientId,
       payoutMonth: p.payoutMonth || 'Aug 2026',
-      amount: finalAmount > 0 ? finalAmount : calculatedRoiAmount,
+      amount: finalAmount,
       status: finalStatus,
       processedDate: finalProcessedDate,
       roiRate: `${effectiveRoiRate}%`,
