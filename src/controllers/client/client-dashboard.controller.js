@@ -20,7 +20,7 @@ const calculateDashboardData = async (userId) => {
 
   // 1) Batch 1: parallel fetch primary resources (querying by userId OR clientCode)
   const Transaction = require('../../models/Transaction.model');
-  const [profile, rawInvestments, clientRoiPayouts, approvedDeposits] = await Promise.all([
+  const [profile, rawInvestments, clientRoiPayouts, approvedDeposits, approvedWithdrawals] = await Promise.all([
     ClientProfile.findOne({ userId }),
     Investment.find({
       $or: [{ clientId: userId }, ...(clientCode ? [{ clientCode }] : [])]
@@ -29,6 +29,11 @@ const calculateDashboardData = async (userId) => {
     Transaction.find({
       $or: [{ clientId: userId }, ...(clientCode ? [{ clientCode }] : [])],
       type: 'deposit',
+      status: 'approved'
+    }).lean(),
+    Transaction.find({
+      $or: [{ clientId: userId }, ...(clientCode ? [{ clientCode }] : [])],
+      type: 'withdrawal',
       status: 'approved'
     }).lean()
   ]);
@@ -41,9 +46,13 @@ const calculateDashboardData = async (userId) => {
   const validInvestments = rawInvestments.filter(inv => inv.status !== 'cancelled');
   const investmentsSum = validInvestments.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
   const approvedDepositsSum = approvedDeposits.reduce((sum, tx) => sum + (tx.amount || 0), 0);
+  const approvedWithdrawalsSum = approvedWithdrawals.reduce((sum, tx) => sum + (tx.amount || 0), 0);
 
-  // Total investment is the max of investmentsSum, profile.totalInvestment, and approvedDepositsSum
-  const totalInvestment = Math.max(investmentsSum, profile.totalInvestment || 0, approvedDepositsSum);
+  const netCapital = Math.max(0, approvedDepositsSum - approvedWithdrawalsSum);
+
+  // If full capital has been withdrawn (or approved withdrawals >= deposits), net total investment is 0
+  const isFullCapitalWithdrawn = approvedWithdrawalsSum >= approvedDepositsSum && approvedDepositsSum > 0;
+  const totalInvestment = isFullCapitalWithdrawn ? 0 : Math.max(investmentsSum, netCapital);
 
   // Define effective investments array (with fallback for clients with capital but no segment allocations yet)
   const roiRateVal = parseFloat(profile.monthlyRoi) || 1.5;

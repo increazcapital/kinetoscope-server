@@ -26,6 +26,7 @@ const getAdminDashboard = asyncHandler(async (req, res, next) => {
     paidRoiPayouts,
     paidPayouts,
     approvedDepositsList,
+    approvedWithdrawalsList,
     closedInvestmentsCount,
     pendingDepositsCount
   ] = await Promise.all([
@@ -40,14 +41,19 @@ const getAdminDashboard = asyncHandler(async (req, res, next) => {
     RoiPayout.find({ status: 'PAID' }).lean(),
     Payout.find({ recipientType: 'Client Return (ROI)', status: 'paid' }).lean(),
     Transaction.find({ type: 'deposit', status: 'approved' }).lean(),
+    Transaction.find({ type: 'withdrawal', status: 'approved' }).lean(),
     Investment.countDocuments({ status: { $in: ['completed', 'cancelled'] } }),
     Transaction.countDocuments({ type: 'deposit', status: 'pending' })
   ]);
 
-  // 2) Calculate total investment amount
+  // 2) Calculate total investment amount & approved withdrawals
   const invSum = activeInvestmentsList.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
   const depSum = (approvedDepositsList || []).reduce((sum, tx) => sum + (tx.amount || 0), 0);
-  const totalInvestmentAmount = Math.max(invSum, depSum);
+  const withSum = (approvedWithdrawalsList || []).reduce((sum, tx) => sum + (tx.amount || 0), 0);
+
+  const totalWithdrawalAmount = withSum;
+  const isFullCapitalWithdrawn = withSum >= depSum && depSum > 0;
+  const totalInvestmentAmount = isFullCapitalWithdrawn ? 0 : Math.max(0, Math.max(invSum, depSum) - withSum);
 
   // 3) Calculate total ROI paid (only for existing valid clients)
   let totalRoiPaid = 0;
@@ -385,6 +391,8 @@ const getAdminDashboard = asyncHandler(async (req, res, next) => {
       totalInvestmentsAmount: totalInvestmentAmount,
       totalRoiPaid,
       roiPaid: totalRoiPaid,
+      totalWithdrawals: totalWithdrawalAmount,
+      totalWithdrawalAmount,
       totalAgents: totalAgentsCount,
       pendingApprovals: pendingApprovalsCount,
       activeInvestments: activeInvestmentsCount,
@@ -401,6 +409,8 @@ const getAdminDashboard = asyncHandler(async (req, res, next) => {
         totalInvestmentsAmount: totalInvestmentAmount,
         totalRoiPaid,
         roiPaid: totalRoiPaid,
+        totalWithdrawals: totalWithdrawalAmount,
+        totalWithdrawalAmount,
         totalAgents: totalAgentsCount,
         pendingApprovals: pendingApprovalsCount,
         activeInvestments: activeInvestmentsCount,

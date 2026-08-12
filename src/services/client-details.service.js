@@ -67,7 +67,7 @@ const getClientDetailsData = async (clientId) => {
   const userIds = [user._id];
   const clientCodes = user.clientCode ? [user.clientCode] : [];
 
-  const [investments, approvedDeposits] = await Promise.all([
+  const [investments, approvedDeposits, approvedWithdrawals] = await Promise.all([
     Investment.find({
       $or: [
         { clientId: { $in: userIds } },
@@ -81,6 +81,14 @@ const getClientDetailsData = async (clientId) => {
       ],
       type: 'deposit',
       status: 'approved'
+    }).lean(),
+    Transaction.find({
+      $or: [
+        { clientId: { $in: userIds } },
+        { clientCode: { $in: clientCodes } }
+      ],
+      type: 'withdrawal',
+      status: 'approved'
     }).lean()
   ]);
 
@@ -88,10 +96,12 @@ const getClientDetailsData = async (clientId) => {
   const validInvestments = investments.filter(inv => inv.status !== 'cancelled');
   const invTotal = validInvestments.reduce((sum, inv) => sum + (inv.investmentAmount || inv.amount || 0), 0);
   const depTotal = approvedDeposits.reduce((sum, tx) => sum + (tx.amount || 0), 0);
-  const totalInvestment = Math.max(invTotal, depTotal);
+  const withTotal = approvedWithdrawals.reduce((sum, tx) => sum + (tx.amount || 0), 0);
 
   const activeInvestmentsList = investments.filter(inv => inv.status === 'active');
-  const activeInvestmentsCount = Math.max(activeInvestmentsList.length, (approvedDeposits.length > 0 && invTotal === 0) ? 1 : 0);
+  const isFullCapitalWithdrawn = withTotal >= depTotal && depTotal > 0;
+  const totalInvestment = isFullCapitalWithdrawn ? 0 : Math.max(0, Math.max(invTotal, depTotal) - withTotal);
+  const activeInvestmentsCount = isFullCapitalWithdrawn ? 0 : Math.max(activeInvestmentsList.length, (approvedDeposits.length > 0 && invTotal === 0) ? 1 : 0);
 
   const allocatedInvestmentsList = activeInvestmentsList.filter(inv => {
     const seg = String(inv.segment || inv.projectName || '').toLowerCase().trim();
