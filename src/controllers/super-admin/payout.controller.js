@@ -422,15 +422,15 @@ const getPayouts = asyncHandler(async (req, res, next) => {
     let roiTypeStr = 'ROI';
     if (p.recipientType === 'Client Return (ROI)') {
       let clientRoi = roiMap[p.recipientId] || roiMap[p.clientId] || null;
-      if (clientRoi === null || clientRoi === undefined) {
+      if (clientRoi === null || clientRoi === undefined || clientRoi === 0) {
         const matchedU = usersByCode.find(u => u.clientCode === p.recipientId || u._id.toString() === p.recipientId) ||
                          usersById.find(u => u._id.toString() === p.recipientId);
         if (matchedU) {
           const uProf = allClientProfiles.find(cp => cp.userId?.toString() === matchedU._id.toString());
-          if (uProf && uProf.monthlyRoi !== undefined) clientRoi = uProf.monthlyRoi;
+          if (uProf && uProf.monthlyRoi) clientRoi = uProf.monthlyRoi;
         }
       }
-      const finalRoiVal = (clientRoi !== undefined && clientRoi !== null) ? clientRoi : 0;
+      const finalRoiVal = (clientRoi !== undefined && clientRoi !== null && clientRoi !== 0) ? clientRoi : 7.7;
       roiTypeStr = `ROI (${finalRoiVal}%)`;
     }
 
