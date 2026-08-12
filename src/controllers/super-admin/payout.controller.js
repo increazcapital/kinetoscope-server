@@ -248,10 +248,32 @@ const recordPayout = asyncHandler(async (req, res, next) => {
     payoutStatus = 'paid';
   }
 
+  let finalCommissionType = commissionType || '';
+  if (normalizedRecipientType === 'Client Return (ROI)' && (!finalCommissionType || finalCommissionType === 'ROI' || finalCommissionType.includes('12%'))) {
+    const passedRoi = req.body.roiPercentage || req.body.monthlyRoi;
+    if (passedRoi) {
+      finalCommissionType = `ROI (${passedRoi}%)`;
+    } else {
+      try {
+        let uObj = await User.findOne({
+          $or: [
+            { clientCode: resolvedRecipientId },
+            { _id: mongoose.Types.ObjectId.isValid(recipientId) ? recipientId : null }
+          ]
+        });
+        if (uObj) {
+          const cProf = await ClientProfile.findOne({ userId: uObj._id });
+          const cRate = cProf ? (cProf.monthlyRoi || 1.2) : 1.2;
+          finalCommissionType = `ROI (${cRate}%)`;
+        }
+      } catch (e) {}
+    }
+  }
+
   const payout = await Payout.create({
     recipientType: normalizedRecipientType,
     recipientId: resolvedRecipientId,
-    commissionType: commissionType || '',
+    commissionType: finalCommissionType || commissionType || '',
     clientId: resolvedClientId,
     amount: numericAmount,
     payoutDate,
@@ -399,12 +421,17 @@ const getPayouts = asyncHandler(async (req, res, next) => {
 
     let roiTypeStr = 'ROI';
     if (p.recipientType === 'Client Return (ROI)') {
-      if (p.commissionType && String(p.commissionType).trim() !== '') {
-        roiTypeStr = String(p.commissionType).includes('ROI') ? p.commissionType : `ROI (${p.commissionType})`;
-      } else {
-        const clientRoi = roiMap[p.recipientId] || roiMap[p.clientId] || 1.2;
-        roiTypeStr = `ROI (${clientRoi}%)`;
+      let clientRoi = roiMap[p.recipientId] || roiMap[p.clientId] || null;
+      if (clientRoi === null || clientRoi === undefined) {
+        const matchedU = usersByCode.find(u => u.clientCode === p.recipientId || u._id.toString() === p.recipientId) ||
+                         usersById.find(u => u._id.toString() === p.recipientId);
+        if (matchedU) {
+          const uProf = allClientProfiles.find(cp => cp.userId?.toString() === matchedU._id.toString());
+          if (uProf && uProf.monthlyRoi !== undefined) clientRoi = uProf.monthlyRoi;
+        }
       }
+      const finalRoiVal = (clientRoi !== undefined && clientRoi !== null) ? clientRoi : 0;
+      roiTypeStr = `ROI (${finalRoiVal}%)`;
     }
 
     return {
