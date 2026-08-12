@@ -2,6 +2,8 @@ const User = require('../models/User.model');
 const ClientProfile = require('../models/ClientProfile.model');
 const Investment = require('../models/Investment.model');
 const RoiPayout = require('../models/RoiPayout.model');
+const Payout = require('../models/Payout.model');
+const Transaction = require('../models/Transaction.model');
 const { findClientUser } = require('./client-details.service');
 const AppError = require('../utils/AppError');
 const { ROLES } = require('../constants/roles');
@@ -81,7 +83,10 @@ const getRoiTab = async (clientId) => {
   const Payout = require('../models/Payout.model');
   const Transaction = require('../models/Transaction.model');
 
-  const clientObjectIds = [user._id, profile?._id].filter(id => id && mongoose.Types.ObjectId.isValid(String(id)));
+  const clientObjectIds = [user._id, profile?._id]
+    .filter(id => id && mongoose.Types.ObjectId.isValid(String(id)))
+    .map(id => new mongoose.Types.ObjectId(String(id)));
+
   const stringMatches = Array.from(new Set([
     String(realClientId),
     user.clientCode,
@@ -108,39 +113,54 @@ const getRoiTab = async (clientId) => {
     status: { $regex: /^(paid|approved|credited|completed)$/i }
   };
 
-  // Fetch paid payout distributions and transaction records across Payout, Transaction, and RoiPayout collections
-  const [paidPayouts, paidTxs, existingRoiPayouts, investments] = await Promise.all([
+  const depositQuery = {
+    $or: [
+      { clientId: { $in: clientObjectIds } },
+      { recipientId: { $in: stringMatches } },
+      { clientCode: { $in: stringMatches } }
+    ],
+    type: { $regex: /deposit/i },
+    status: { $regex: /^(paid|approved|credited|completed)$/i }
+  };
+
+  const invQuery = {
+    $or: [
+      { clientId: { $in: clientObjectIds } },
+      ...(user.clientCode ? [{ clientCode: user.clientCode }] : []),
+      ...(user.clientCode ? [{ clientCode: user.clientCode.toUpperCase() }] : [])
+    ],
+    status: { $ne: 'cancelled' }
+  };
+
+  // Fetch paid payout distributions, transaction records, investments, approved deposits, and profile
+  const [paidPayouts, paidTxs, existingRoiPayouts, investments, approvedDeposits, clientProfileDoc] = await Promise.all([
     Payout.find(payoutQuery).sort({ createdAt: -1 }).lean(),
     Transaction.find(txQuery).sort({ createdAt: -1 }).lean(),
     RoiPayout.find({ clientId: { $in: clientObjectIds } }).sort({ createdAt: 1 }).lean(),
-    Investment.find({
-      $or: [
-        { clientId: { $in: clientObjectIds } },
-        ...(user.clientCode ? [{ clientCode: user.clientCode }] : [])
-      ],
-      status: 'active'
-    }).lean()
+    Investment.find(invQuery).lean(),
+    Transaction.find(depositQuery).lean(),
+    ClientProfile.findOne({ userId: { $in: clientObjectIds } }).lean()
   ]);
 
-  const totalInv = investments.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
+  const invTotal = investments.reduce((sum, inv) => sum + (inv.investmentAmount || inv.amount || 0), 0);
+  const depTotal = approvedDeposits.reduce((sum, tx) => sum + (tx.amount || 0), 0);
+  const profileTotal = (profile?.totalInvestment || clientProfileDoc?.totalInvestment || 0);
+  const totalInv = Math.max(invTotal, depTotal, profileTotal);
+
   const calculatedRoiAmount = totalInv > 0 ? Math.round((totalInv * configuredRoiRate) / 100) : 0;
+
+  // If client has 0 active investment, do not show any ROI payout list
+  if (totalInv === 0) {
+    return {
+      totalRoiPaid: 0,
+      totalRoiPending: 0,
+      roiHistory: [],
+    };
+  }
 
   let payouts = existingRoiPayouts.length > 0 ? [...existingRoiPayouts] : [];
 
-  // If client has 0 active investments, return a clean PENDING payout entry with 0 amount
-  if (totalInv === 0) {
-    const currentMonthStr = new Date().toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
-    payouts = [{
-      _id: `gen_roi_${realClientId}`,
-      clientId: realClientId,
-      payoutMonth: currentMonthStr,
-      amount: 0,
-      status: 'PENDING',
-      processedDate: null,
-      createdAt: new Date(),
-      updatedAt: new Date()
-    }];
-  } else if (payouts.length === 0) {
+  if (payouts.length === 0) {
     const currentMonthStr = new Date().toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
     payouts.push({
       _id: `gen_roi_${realClientId}`,
@@ -154,13 +174,18 @@ const getRoiTab = async (clientId) => {
     });
   }
 
+  // Check if a real paid record exists in Payout collection for ROI
+  const hasRealPaidPayout = paidPayouts.some(p => 
+    p.recipientType === 'Client Return (ROI)' && 
+    String(p.status).toLowerCase() === 'paid'
+  );
+
   // Calculate dynamic ROI %
   let effectiveRoiRate = configuredRoiRate;
 
   // Enrich payouts with dynamic ROI %, status & processedDate
   const enrichedPayouts = payouts.map(p => {
-    let rawStatus = String(p.status || 'PENDING').toUpperCase();
-    let finalStatus = (totalInv > 0 && (rawStatus === 'PAID' || rawStatus === 'APPROVED')) ? 'PAID' : 'PENDING';
+    let finalStatus = (totalInv > 0 && hasRealPaidPayout) ? 'PAID' : 'PENDING';
     let finalProcessedDate = (finalStatus === 'PAID' && p.processedDate) 
       ? new Date(p.processedDate).toISOString().split('T')[0] 
       : '—';
