@@ -302,7 +302,8 @@ router.get('/client-dashboard/:clientId', requirePermission(['manageClients', 'c
 // 3. Investment Management — Read-only after assignment (immutable financial records)
 router.route('/investments')
   .get(requirePermission('manageInvestments', 'view'), getAllInvestments)
-  .post(requirePermission('manageInvestments', 'create'), createInvestmentValidationRules, createInvestment);
+  .post(requirePermission('manageInvestments', 'create'), createInvestmentValidationRules, createInvestment)
+  .delete(requirePermission('manageInvestments', 'delete'), clearAllInvestments);
 
 router.delete('/investments/clear', requirePermission('manageInvestments', 'delete'), clearAllInvestments);
 
