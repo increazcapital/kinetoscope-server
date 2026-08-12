@@ -15,7 +15,7 @@ const AppError = require('../../utils/AppError');
 const { ROLES } = require('../../constants/roles');
 
 const verifyAgentClientAccess = async (clientId, agentId) => {
-  const clientUser = await User.findById(clientId);
+  const clientUser = await findClientUser(clientId);
   if (!clientUser || clientUser.role !== ROLES.CLIENT) {
     throw new AppError('Client not found.', 404);
   }

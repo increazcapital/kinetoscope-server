@@ -394,16 +394,21 @@ const deleteInvestment = asyncHandler(async (req, res, next) => {
     }
   }
 
-  // Recalculate client total investment in profile
+  // Recalculate client total investment in profile & clean up pending AgentCommissions if total is 0
   if (investment.clientId) {
     try {
-      const remainingInvestments = await Investment.find({ clientId: investment.clientId });
+      const remainingInvestments = await Investment.find({ clientId: investment.clientId, status: 'active' });
       const newTotal = remainingInvestments.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
       const ClientProfile = require('../../models/ClientProfile.model');
       await ClientProfile.findOneAndUpdate(
         { userId: investment.clientId },
         { $set: { totalInvestment: newTotal } }
       );
+
+      if (newTotal === 0) {
+        const AgentCommission = require('../../models/AgentCommission.model');
+        await AgentCommission.deleteMany({ clientId: investment.clientId, status: 'PENDING' });
+      }
     } catch (profileErr) {
       console.error('Failed to recalculate client total investment:', profileErr);
     }
@@ -422,6 +427,13 @@ const deleteInvestment = asyncHandler(async (req, res, next) => {
  */
 const clearAllInvestments = asyncHandler(async (req, res, next) => {
   const result = await Investment.deleteMany({});
+
+  try {
+    const AgentCommission = require('../../models/AgentCommission.model');
+    await AgentCommission.deleteMany({ status: 'PENDING' });
+  } catch (commErr) {
+    console.error('Failed to clear pending agent commissions on clear all investments:', commErr);
+  }
 
   res.status(200).json({
     success: true,

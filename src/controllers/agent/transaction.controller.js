@@ -158,14 +158,31 @@ const requestAgentWithdrawal = asyncHandler(async (req, res, next) => {
     return next(new AppError('Amount must be a positive number.', 400));
   }
 
-  // 1. Calculate Agent Available Balance
-  const commissions = await AgentCommission.find({ agentId, status: 'PAID' });
-  const totalEarned = commissions.reduce((sum, c) => sum + c.amount, 0);
+  // 1. Calculate Agent Available Balance (Sum of commissions + Super Admin recorded payouts minus previous agent withdrawals)
+  const Payout = require('../../models/Payout.model');
+  const agentUser = await User.findById(agentId).lean();
+  const agentCode = agentUser ? (agentUser.clientCode || '') : '';
+  const agentName = agentUser ? (agentUser.name || '') : '';
 
-  const withdrawals = await Transaction.find({ agentId, isAgentWithdrawal: true, status: { $in: ['PENDING', 'APPROVED'] } });
-  const totalWithdrawn = withdrawals.reduce((sum, w) => sum + w.amount, 0);
+  const [commissions, recordedPayouts, withdrawals] = await Promise.all([
+    AgentCommission.find({ agentId, status: { $in: ['PAID', 'PENDING'] } }).lean(),
+    Payout.find({
+      status: { $regex: /^paid$/i },
+      $or: [
+        { recipientId: String(agentId) },
+        ...(agentCode ? [{ recipientId: agentCode }] : []),
+        ...(agentName ? [{ recipientId: agentName }] : [])
+      ]
+    }).lean(),
+    Transaction.find({ agentId, isAgentWithdrawal: true, status: { $in: ['PENDING', 'APPROVED'] } }).lean()
+  ]);
 
-  const availableBalance = totalEarned - totalWithdrawn;
+  const commEarned = commissions.reduce((sum, c) => sum + (c.amount || 0), 0);
+  const payoutEarned = recordedPayouts.reduce((sum, p) => sum + (p.amount || 0), 0);
+  const totalEarned = Math.max(commEarned, payoutEarned);
+
+  const totalWithdrawn = withdrawals.reduce((sum, w) => sum + (w.amount || 0), 0);
+  const availableBalance = Math.max(0, totalEarned - totalWithdrawn);
 
   if (numericAmount > availableBalance) {
     return next(new AppError(`Withdrawal request exceeds your available balance of ₹${availableBalance.toLocaleString('en-IN')}`, 400));
@@ -202,14 +219,31 @@ const requestAgentWithdrawal = asyncHandler(async (req, res, next) => {
 const getAgentWithdrawals = asyncHandler(async (req, res, next) => {
   const agentId = req.user.id || req.user._id;
 
-  // 1. Calculate Agent Available Balance
-  const commissions = await AgentCommission.find({ agentId, status: 'PAID' });
-  const totalEarned = commissions.reduce((sum, c) => sum + c.amount, 0);
+  // 1. Calculate Agent Available Balance (Sum of commissions + Super Admin recorded payouts minus previous agent withdrawals)
+  const Payout = require('../../models/Payout.model');
+  const agentUser = await User.findById(agentId).lean();
+  const agentCode = agentUser ? (agentUser.clientCode || '') : '';
+  const agentName = agentUser ? (agentUser.name || '') : '';
 
-  const withdrawals = await Transaction.find({ agentId, isAgentWithdrawal: true, status: { $in: ['PENDING', 'APPROVED'] } });
-  const totalWithdrawn = withdrawals.reduce((sum, w) => sum + w.amount, 0);
+  const [commissions, recordedPayouts, withdrawals] = await Promise.all([
+    AgentCommission.find({ agentId, status: { $in: ['PAID', 'PENDING'] } }).lean(),
+    Payout.find({
+      status: { $regex: /^paid$/i },
+      $or: [
+        { recipientId: String(agentId) },
+        ...(agentCode ? [{ recipientId: agentCode }] : []),
+        ...(agentName ? [{ recipientId: agentName }] : [])
+      ]
+    }).lean(),
+    Transaction.find({ agentId, isAgentWithdrawal: true, status: { $in: ['PENDING', 'APPROVED'] } }).lean()
+  ]);
 
-  const availableBalance = totalEarned - totalWithdrawn;
+  const commEarned = commissions.reduce((sum, c) => sum + (c.amount || 0), 0);
+  const payoutEarned = recordedPayouts.reduce((sum, p) => sum + (p.amount || 0), 0);
+  const totalEarned = Math.max(commEarned, payoutEarned);
+
+  const totalWithdrawn = withdrawals.reduce((sum, w) => sum + (w.amount || 0), 0);
+  const availableBalance = Math.max(0, totalEarned - totalWithdrawn);
 
   // 2. Get Bank Account
   const agentProfile = await AgentProfile.findOne({ userId: agentId });

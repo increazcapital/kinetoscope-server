@@ -14,23 +14,35 @@ process.on('uncaughtException', (err) => {
 const port = process.env.PORT || 5000;
 const server = http.createServer(app);
 
-// Handle server startup / port errors
+// Initialize Socket.io
+socketService.init(server);
+
+// Handle server startup / port errors cleanly
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
-    console.error(`❌ Port ${port} is already in use (EADDRINUSE). Exiting process so nodemon can restart cleanly...`);
-    process.exit(1);
+    console.error(`[Port ${port} in use] Waiting 1s for socket release...`);
+    process.exit(0);
   } else {
     console.error('Server error:', err);
     process.exit(1);
   }
 });
 
-// Initialize Socket.io (for future use)
-socketService.init(server);
+// Handle nodemon restart signal gracefully
+process.once('SIGUSR2', () => {
+  server.close(() => {
+    process.kill(process.pid, 'SIGUSR2');
+  });
+});
+
+process.on('SIGINT', () => {
+  server.close(() => {
+    process.exit(0);
+  });
+});
 
 const startServer = async () => {
   try {
-    // Await database connection before listening and running background jobs
     await connectDB();
 
     server.listen(port, '0.0.0.0', () => {
@@ -45,7 +57,6 @@ const startServer = async () => {
       }
     });
 
-    // Handle unhandled rejections — log but DON'T crash server
     process.on('unhandledRejection', (err) => {
       console.error('UNHANDLED REJECTION:', err?.message || err);
     });

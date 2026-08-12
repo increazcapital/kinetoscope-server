@@ -13,7 +13,6 @@ const payoutSchema = new mongoose.Schema(
     },
     commissionType: {
       type: String,
-      enum: ['Monthly', 'One-Time', 'Special', ''],
       default: ''
     },
     clientId: {

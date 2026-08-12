@@ -357,6 +357,45 @@ const approveRejectTransaction = asyncHandler(async (req, res, next) => {
     }
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // CRITICAL: When a WITHDRAWAL is APPROVED, recalculate client net capital.
+  // If net capital reaches 0, close active investments & delete pending commissions.
+  // ═══════════════════════════════════════════════════════════════════════
+  if (status === TRANSACTION_STATUS.APPROVED && transaction.type === TRANSACTION_TYPES.WITHDRAWAL && !transaction.isAgentWithdrawal) {
+    try {
+      const allApprovedDeposits = await Transaction.find({ clientId: transaction.clientId, type: 'deposit', status: 'APPROVED' }).lean();
+      const allApprovedWithdrawals = await Transaction.find({ clientId: transaction.clientId, type: 'withdrawal', status: 'APPROVED' }).lean();
+      const depSum = allApprovedDeposits.reduce((sum, t) => sum + Number(t.amount || 0), 0);
+      const withSum = allApprovedWithdrawals.reduce((sum, t) => sum + Number(t.amount || 0), 0);
+      const netCapital = Math.max(0, depSum - withSum);
+
+      const ClientProfile = require('../../models/ClientProfile.model');
+      await Promise.all([
+        ClientProfile.findOneAndUpdate(
+          { userId: transaction.clientId },
+          { $set: { totalInvestment: netCapital } }
+        ),
+        User.findByIdAndUpdate(
+          transaction.clientId,
+          { $set: { totalInvestment: netCapital } }
+        )
+      ]);
+
+      if (netCapital <= 0) {
+        await Investment.updateMany(
+          { clientId: transaction.clientId, status: 'active' },
+          { $set: { status: 'withdrawn' } }
+        );
+
+        const AgentCommission = require('../../models/AgentCommission.model');
+        await AgentCommission.deleteMany({ clientId: transaction.clientId, status: 'PENDING' });
+        console.log(`[Capital Withdrawal Approved] Client ${transaction.clientId} net capital is ₹0. Pending commissions deleted.`);
+      }
+    } catch (wErr) {
+      console.error('[Withdrawal Approval Error]:', wErr.message);
+    }
+  }
+
   // Notify client or agent of the outcome via email
   try {
     const recipientUser = await User.findById(transaction.clientId || transaction.agentId);

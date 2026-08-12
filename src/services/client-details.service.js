@@ -24,12 +24,23 @@ const slugifyName = (name) => {
 const findClientUser = async (clientId) => {
   if (!clientId) return null;
   const str = String(clientId).trim();
+  const slugTarget = slugifyName(str);
+
   if (/^[0-9a-fA-F]{24}$/.test(str)) {
-    const user = await User.findById(str).populate('assignedAgent', 'name email');
+    let user = await User.findById(str).populate('assignedAgent', 'name email');
     if (user && user.role === ROLES.CLIENT) return user;
+    
+    // Check if str is a ClientProfile _id
+    const prof = await ClientProfile.findById(str);
+    if (prof && prof.userId) {
+      user = await User.findById(prof.userId).populate('assignedAgent', 'name email');
+      if (user && user.role === ROLES.CLIENT) return user;
+    }
   }
+
   let user = await User.findOne({ clientCode: str.toUpperCase(), role: ROLES.CLIENT }).populate('assignedAgent', 'name email');
   if (!user) user = await User.findOne({ clientCode: str, role: ROLES.CLIENT }).populate('assignedAgent', 'name email');
+
   if (!user) {
     const prof = await ClientProfile.findOne({
       $or: [
@@ -39,17 +50,20 @@ const findClientUser = async (clientId) => {
         { clientId: str }
       ]
     });
-    if (prof) user = await User.findById(prof.userId).populate('assignedAgent', 'name email');
+    if (prof && prof.userId) user = await User.findById(prof.userId).populate('assignedAgent', 'name email');
   }
-  if (!user) {
+
+  if (!user && slugTarget) {
     const allClients = await User.find({ role: ROLES.CLIENT }).populate('assignedAgent', 'name email');
-    user = allClients.find(c => slugifyName(c.name) === str.toLowerCase() || slugifyName(c.email) === str.toLowerCase());
+    user = allClients.find(c => slugifyName(c.name) === slugTarget || slugifyName(c.email) === slugTarget);
   }
-  if (!user) {
+
+  if (!user && slugTarget) {
     const allProfiles = await ClientProfile.find();
-    const matchedProf = allProfiles.find(p => slugifyName(p.fullName) === str.toLowerCase());
-    if (matchedProf) user = await User.findById(matchedProf.userId).populate('assignedAgent', 'name email');
+    const matchedProf = allProfiles.find(p => slugifyName(p.fullName) === slugTarget);
+    if (matchedProf && matchedProf.userId) user = await User.findById(matchedProf.userId).populate('assignedAgent', 'name email');
   }
+
   return user;
 };
 
@@ -140,6 +154,8 @@ const getClientDetailsData = async (clientId) => {
 
   return {
     header: {
+      _id: profile._id,
+      userId: user._id,
       clientName: user.name,
       clientCode: user.clientCode || '',
       tier: profile.tier ? profile.tier.toUpperCase() : (totalInvestment >= 1500000 ? 'PLATINUM' : 'SILVER'),
@@ -157,6 +173,8 @@ const getClientDetailsData = async (clientId) => {
       kycStatus: kycStatusVal,
     },
     profile: {
+      _id: profile._id,
+      userId: user._id,
       fullName: profile.fullName || user.name,
       email: profile.email || user.email,
       phone: profile.phone || '',

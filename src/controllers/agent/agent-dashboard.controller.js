@@ -25,32 +25,40 @@ const getAgentDashboard = asyncHandler(async (req, res, next) => {
   ]);
 
   const clientIds = new Set(clients.map(c => String(c._id)));
-  const clientIdsArray = Array.from(clientIds);
-  const [investmentsList, clientProfiles, clientTransactions] = await Promise.all([
-    Investment.find({ status: 'active', clientId: { $in: clientIdsArray } }).lean(),
-    ClientProfile.find({ userId: { $in: clientIdsArray } }).lean(),
-    clientIdsArray.length > 0
-      ? Transaction.find({ clientId: { $in: clientIdsArray } }).sort({ createdAt: -1 }).limit(10).lean()
-      : []
-  ]);
+  const investmentsList = allActiveInvestments.filter(inv => clientIds.has(String(inv.clientId)));
+
+  const clientActiveInvMap = {};
+  investmentsList.forEach(inv => {
+    const cidStr = String(inv.clientId);
+    clientActiveInvMap[cidStr] = (clientActiveInvMap[cidStr] || 0) + (inv.investmentAmount || 0);
+  });
+
+  const validCommissions = commissions.filter(c => {
+    if (!c.clientId) return true;
+    const cidStr = String(c.clientId);
+    const activeInvAmt = clientActiveInvMap[cidStr] || 0;
+    if (activeInvAmt === 0 && String(c.status).toUpperCase() === 'PENDING') {
+      return false;
+    }
+    return true;
+  });
 
   const totalClientsInvestment = investmentsList.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
 
   // 3) Calculate commissions
-  const realPaidComms = commissions.filter(c => String(c.status).toUpperCase() === 'PAID').reduce((sum, c) => sum + (c.amount || 0), 0);
-  const realPendingComms = commissions.filter(c => String(c.status).toUpperCase() === 'PENDING').reduce((sum, c) => sum + (c.amount || 0), 0);
-  const totalCommsSum = commissions.reduce((sum, c) => sum + (c.amount || 0), 0);
+  const realPaidComms = validCommissions.filter(c => String(c.status).toUpperCase() === 'PAID').reduce((sum, c) => sum + (c.amount || 0), 0);
+  const realPendingComms = validCommissions.filter(c => String(c.status).toUpperCase() === 'PENDING').reduce((sum, c) => sum + (c.amount || 0), 0);
 
   const commissionPaid = realPaidComms;
-  const commissionPending = realPaidComms > 0 ? realPendingComms : (realPendingComms || totalCommsSum);
+  const commissionPending = realPendingComms;
   
   const now = new Date();
-  const thisMonthCommission = commissions
+  const thisMonthCommission = validCommissions
     .filter(c => {
-      const d = new Date(c.date);
+      const d = new Date(c.date || c.createdAt);
       return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
     })
-    .reduce((sum, c) => sum + c.amount, 0);
+    .reduce((sum, c) => sum + (c.amount || 0), 0);
 
   // 4) Dynamically compute reward milestones status and progress
   const milestones = [
@@ -474,6 +482,27 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
     hasPaidPayout = count > 0;
   } catch (e) {}
 
+  // Fetch all active investments of related clients to map investmentAmount & slab %
+  const clientIds = commissions.map(c => c.clientId ? (c.clientId._id || c.clientId) : null).filter(Boolean);
+  const investments = await Investment.find({ clientId: { $in: clientIds }, status: 'active' }).lean();
+
+  const investmentMap = {};
+  investments.forEach(inv => {
+    const cid = inv.clientId.toString();
+    investmentMap[cid] = (investmentMap[cid] || 0) + (inv.investmentAmount || 0);
+  });
+
+  // Exclude pending commissions for clients with 0 active investment (deleted/cancelled investments)
+  const validCommissions = commissions.filter(c => {
+    if (!c.clientId) return true;
+    const cidStr = c.clientId._id ? c.clientId._id.toString() : String(c.clientId);
+    const activeInvAmount = investmentMap[cidStr] || 0;
+    if (activeInvAmount === 0 && c.status === 'PENDING') {
+      return false;
+    }
+    return true;
+  });
+
   let totalCommissionEarned = 0;
   let totalCommissionPaid = 0;
   let totalCommissionPending = 0;
@@ -485,7 +514,7 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
   let recurringPayoutCount = 0;
   let specialBonusCount = 0;
 
-  commissions.forEach(c => {
+  validCommissions.forEach(c => {
     totalCommissionEarned += c.amount;
     if (c.status === 'PAID') {
       totalCommissionPaid += c.amount;
@@ -495,7 +524,7 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
 
     if (c.type === 'ONE TIME') {
       oneTimeAmount += c.amount;
-      if (c.clientId) uniqueOneTimeClients.add(c.clientId._id.toString());
+      if (c.clientId) uniqueOneTimeClients.add(c.clientId._id ? c.clientId._id.toString() : String(c.clientId));
     } else if (c.type === 'MONTHLY') {
       monthlyAmount += c.amount;
       recurringPayoutCount++;
@@ -503,15 +532,6 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
       specialAmount += c.amount;
       specialBonusCount++;
     }
-  });
-
-  // Fetch all active investments of related clients to map investmentAmount & slab %
-  const clientIds = commissions.map(c => c.clientId ? c.clientId._id : null).filter(Boolean);
-  const investments = await Investment.find({ clientId: { $in: clientIds }, status: 'active' }).lean();
-
-  const investmentMap = {};
-  investments.forEach(inv => {
-    investmentMap[inv.clientId.toString()] = inv.investmentAmount;
   });
 
   const getSlabPct = (amount) => {
@@ -523,9 +543,10 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
     return '4%';
   };
 
-  const enrichedCommissions = commissions.map(c => {
+  const enrichedCommissions = validCommissions.map(c => {
     const client = c.clientId || {};
-    const invAmount = client._id ? (investmentMap[client._id.toString()] || 0) : 0;
+    const cidStr = client._id ? client._id.toString() : String(client);
+    const invAmount = investmentMap[cidStr] || 0;
     const slabPct = invAmount ? getSlabPct(invAmount) : '—';
 
     return {

@@ -820,17 +820,38 @@ const deleteAgent = asyncHandler(async (req, res, next) => {
 const getAgentClients = asyncHandler(async (req, res, next) => {
   const agentId = req.params.id;
 
-  // 1) Verify agent exists (check by User ID, AgentProfile ID, or agentCode)
-  let agentUser = await User.findById(agentId);
+  // 1) Verify agent exists (check by User ID, AgentProfile ID, agentCode, or name slug)
+  let agentUser = null;
   let agentProfile = null;
 
-  if (!agentUser) {
-    agentProfile = await AgentProfile.findById(agentId);
-    if (agentProfile) {
-      agentUser = await User.findById(agentProfile.userId);
+  if (mongoose.Types.ObjectId.isValid(agentId)) {
+    agentUser = await User.findById(agentId);
+    if (!agentUser) {
+      agentProfile = await AgentProfile.findById(agentId);
+      if (agentProfile) agentUser = await User.findById(agentProfile.userId);
     }
-  } else {
-    agentProfile = await AgentProfile.findOne({ userId: agentUser._id });
+  }
+
+  if (!agentUser) {
+    agentUser = await User.findOne({
+      $or: [
+        { clientCode: agentId },
+        { name: { $regex: new RegExp(`^${agentId.replace(/-/g, ' ')}$`, 'i') } },
+        { name: { $regex: new RegExp(`^${agentId.replace(/-/g, '.*')}$`, 'i') } }
+      ],
+      role: ROLES.AGENT
+    });
+  }
+
+  if (!agentUser) {
+    const AgentProfileModel = require('../../models/AgentProfile.model');
+    agentProfile = await AgentProfileModel.findOne({
+      $or: [
+        { agentCode: agentId },
+        { clientCode: agentId }
+      ]
+    });
+    if (agentProfile) agentUser = await User.findById(agentProfile.userId);
   }
 
   if (!agentUser && !agentProfile) {
@@ -975,41 +996,42 @@ const getAgentClients = asyncHandler(async (req, res, next) => {
  * GET /api/super-admin/agents/:id/commissions
  */
 const getAgentCommissions = asyncHandler(async (req, res, next) => {
-  const agentId = req.params.id;
+  const agentParam = req.params.id;
 
-  // 1) Verify agent exists
-  const agent = await User.findById(agentId);
+  // 1) Verify agent exists (by ObjectId, clientCode, agentCode, or name/slug)
+  let agent = null;
+  if (mongoose.Types.ObjectId.isValid(agentParam)) {
+    agent = await User.findById(agentParam);
+  }
+  if (!agent) {
+    agent = await User.findOne({
+      $or: [
+        { clientCode: agentParam },
+        { name: { $regex: new RegExp(`^${agentParam.replace(/-/g, ' ')}$`, 'i') } },
+        { name: { $regex: new RegExp(`^${agentParam.replace(/-/g, '.*')}$`, 'i') } }
+      ],
+      role: ROLES.AGENT
+    });
+  }
+  if (!agent) {
+    const AgentProfile = require('../../models/AgentProfile.model');
+    const profile = await AgentProfile.findOne({
+      $or: [
+        { agentCode: agentParam },
+        { clientCode: agentParam }
+      ]
+    });
+    if (profile) agent = await User.findById(profile.userId);
+  }
+
   if (!agent || agent.role !== ROLES.AGENT) {
     return next(new AppError('Agent account not found.', 404));
   }
 
-  // Preserve individual commission statuses (PENDING vs PAID) as set by Super Admin
-  try {
-    // Keep individual commission statuses pristine - no bulk override to PAID
-  } catch (err) {
-    console.error('Failed to sync agent payouts in super-admin getAgentCommissions:', err);
-  }
+  const agentId = agent._id;
 
   // 2) Find commission records in DB
   let commissions = await AgentCommission.find({ agentId }).sort({ createdAt: -1 });
-
-  // Double check if any paid payout exists for this agent to guarantee PAID status output
-  try {
-    const Payout = require('../../models/Payout.model');
-    const hasPaidPayout = await Payout.exists({
-      status: { $regex: /^paid$/i },
-      $or: [
-        { recipientType: { $regex: /agent/i } }
-      ]
-    });
-    if (hasPaidPayout && commissions.length > 0) {
-      commissions = commissions.map(c => {
-        const cObj = c.toObject ? c.toObject() : c;
-        cObj.status = 'PAID';
-        return cObj;
-      });
-    }
-  } catch (e) {}
 
   res.status(200).json({
     success: true,

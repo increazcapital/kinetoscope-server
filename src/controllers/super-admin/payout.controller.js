@@ -283,36 +283,62 @@ const recordPayout = asyncHandler(async (req, res, next) => {
     paidAt: payoutStatus === 'paid' ? new Date() : undefined
   });
 
-  // If this is an Agent Commission payout and marked as paid, sync AgentCommission records to PAID
+  // If this is an Agent Commission payout and marked as paid, sync matching AgentCommission record to PAID
   if (normalizedRecipientType === 'Agent Commission' && payoutStatus === 'paid') {
     try {
       const AgentCommission = require('../../models/AgentCommission.model');
+      const AgentProfile = require('../../models/AgentProfile.model');
+
       let agentUser = await User.findOne({
         $or: [
+          ...(mongoose.Types.ObjectId.isValid(recipientId) ? [{ _id: recipientId }] : []),
           { clientCode: resolvedRecipientId },
-          { _id: mongoose.Types.ObjectId.isValid(recipientId) ? recipientId : null }
+          { name: { $regex: new RegExp(`^${resolvedRecipientId}$`, 'i') } },
+          { name: { $regex: new RegExp(`^${recipientId}$`, 'i') } }
         ],
         role: 'agent'
       });
 
-      if (!agentUser && resolvedRecipientId) {
-        const agProf = await AgentProfile.findOne({ clientCode: resolvedRecipientId });
+      if (!agentUser && recipientId) {
+        const agProf = await AgentProfile.findOne({
+          $or: [
+            { agentCode: recipientId },
+            { clientCode: recipientId },
+            { agentCode: resolvedRecipientId }
+          ]
+        });
         if (agProf) agentUser = await User.findById(agProf.userId);
       }
 
       if (agentUser) {
-        await AgentCommission.updateMany(
-          { agentId: agentUser._id, status: 'PENDING' },
-          {
-            $set: {
-              status: 'PAID',
-              paymentMode: paymentMode || 'Bank Transfer',
-              transactionRefId: transactionRefId || 'TXN-PAID',
-              paidAt: new Date(),
-              date: new Date()
-            }
-          }
-        );
+        let targetClientUser = null;
+        if (clientId || resolvedClientId) {
+          targetClientUser = await User.findOne({
+            $or: [
+              ...(clientId && mongoose.Types.ObjectId.isValid(clientId) ? [{ _id: clientId }] : []),
+              { clientCode: resolvedClientId },
+              { clientCode: clientId },
+              { name: { $regex: new RegExp(`^${clientId}$`, 'i') } }
+            ]
+          });
+        }
+
+        const queryFilter = { agentId: agentUser._id, status: 'PENDING' };
+        if (targetClientUser) {
+          queryFilter.clientId = targetClientUser._id;
+        }
+
+        const pendingComms = await AgentCommission.find(queryFilter).sort({ createdAt: 1 });
+        let targetComm = pendingComms.find(c => Math.abs(c.amount - numericAmount) < 1) || pendingComms[0];
+
+        if (targetComm) {
+          targetComm.status = 'PAID';
+          targetComm.paymentMode = paymentMode || 'Bank Transfer';
+          targetComm.transactionRefId = transactionRefId || `TXN-${Date.now()}`;
+          targetComm.paidAt = new Date();
+          await targetComm.save();
+          console.log(`[Payout Sync Success] Agent ${agentUser.name} Commission ${targetComm._id} (₹${targetComm.amount}) marked as PAID for client ${targetComm.clientId}`);
+        }
       }
     } catch (err) {
       console.error('Error syncing agent commission to PAID on payout creation:', err);
@@ -680,6 +706,53 @@ const deletePayout = asyncHandler(async (req, res, next) => {
 
   if (!payout) {
     return next(new AppError('Payout record not found.', 404));
+  }
+
+  // Revert corresponding AgentCommission record status back to PENDING if deleted
+  if (payout.recipientType === 'Agent Commission' || (payout.recipientType || '').toLowerCase().includes('agent')) {
+    try {
+      const AgentCommission = require('../../models/AgentCommission.model');
+      const AgentProfile = require('../../models/AgentProfile.model');
+
+      let agentUser = await User.findOne({
+        $or: [
+          { clientCode: payout.recipientId },
+          { name: { $regex: new RegExp(`^${payout.recipientId}$`, 'i') } }
+        ],
+        role: 'agent'
+      });
+
+      if (!agentUser && payout.recipientId) {
+        const agProf = await AgentProfile.findOne({
+          $or: [
+            { agentCode: payout.recipientId },
+            { clientCode: payout.recipientId }
+          ]
+        });
+        if (agProf) agentUser = await User.findById(agProf.userId);
+      }
+
+      if (agentUser) {
+        const paidComm = await AgentCommission.findOne({
+          agentId: agentUser._id,
+          status: 'PAID',
+          $or: [
+            { transactionRefId: payout.transactionRefId },
+            { amount: payout.amount }
+          ]
+        });
+
+        if (paidComm) {
+          paidComm.status = 'PENDING';
+          paidComm.paymentMode = '';
+          paidComm.transactionRefId = '';
+          await paidComm.save();
+          console.log(`[Payout Delete Revert] Reverted Agent ${agentUser.name} Commission ${paidComm._id} (₹${paidComm.amount}) back to PENDING.`);
+        }
+      }
+    } catch (revertErr) {
+      console.error('Error reverting agent commission on payout delete:', revertErr);
+    }
   }
 
   res.status(200).json({
