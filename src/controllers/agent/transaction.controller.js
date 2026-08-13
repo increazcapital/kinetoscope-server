@@ -179,7 +179,7 @@ const requestAgentWithdrawal = asyncHandler(async (req, res, next) => {
 
   const commEarned = commissions.reduce((sum, c) => sum + (c.amount || 0), 0);
   const payoutEarned = recordedPayouts.reduce((sum, p) => sum + (p.amount || 0), 0);
-  const totalEarned = Math.max(commEarned, payoutEarned, 2000);
+  const totalEarned = Math.max(commEarned, payoutEarned);
 
   const totalWithdrawn = withdrawals.reduce((sum, w) => sum + (w.amount || 0), 0);
   const availableBalance = Math.max(0, totalEarned - totalWithdrawn);
@@ -262,7 +262,7 @@ const getAgentWithdrawals = asyncHandler(async (req, res, next) => {
 
   const commEarned = commissions.reduce((sum, c) => sum + (c.amount || 0), 0);
   const payoutEarned = recordedPayouts.reduce((sum, p) => sum + (p.amount || 0), 0);
-  const totalEarned = Math.max(commEarned, payoutEarned, 2000);
+  const totalEarned = Math.max(commEarned, payoutEarned);
 
   const totalWithdrawn = withdrawals.reduce((sum, w) => sum + (w.amount || 0), 0);
   const availableBalance = Math.max(0, totalEarned - totalWithdrawn);
