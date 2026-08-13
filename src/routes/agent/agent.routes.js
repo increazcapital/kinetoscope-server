@@ -137,7 +137,9 @@ router.route('/transactions')
 router.route('/withdrawal')
   .get(getAgentWithdrawals)
   .post(requestAgentWithdrawal);
-router.get('/withdrawals', getAgentWithdrawals);
+router.route('/withdrawals')
+  .get(getAgentWithdrawals)
+  .post(requestAgentWithdrawal);
 
 // 10. Agent direct messaging/notifications
 const { sendAgentNotificationEmail, getAgentNotifications, markAgentNotificationRead, deleteAgentNotification } = require('../../controllers/agent/notification.controller');

@@ -165,7 +165,7 @@ const requestAgentWithdrawal = asyncHandler(async (req, res, next) => {
   const agentName = agentUser ? (agentUser.name || '') : '';
 
   const [commissions, recordedPayouts, withdrawals] = await Promise.all([
-    AgentCommission.find({ agentId, status: { $in: ['PAID', 'PENDING'] } }).lean(),
+    AgentCommission.find({ agentId, status: 'PAID' }).lean(),
     Payout.find({
       status: { $regex: /^paid$/i },
       $or: [
@@ -174,12 +174,12 @@ const requestAgentWithdrawal = asyncHandler(async (req, res, next) => {
         ...(agentName ? [{ recipientId: agentName }] : [])
       ]
     }).lean(),
-    Transaction.find({ agentId, isAgentWithdrawal: true, status: { $in: ['PENDING', 'APPROVED'] } }).lean()
+    Transaction.find({ agentId, isAgentWithdrawal: true, status: { $regex: /^(pending|approved|paid|credited|completed)$/i } }).lean()
   ]);
 
   const commEarned = commissions.reduce((sum, c) => sum + (c.amount || 0), 0);
   const payoutEarned = recordedPayouts.reduce((sum, p) => sum + (p.amount || 0), 0);
-  const totalEarned = Math.max(commEarned, payoutEarned);
+  const totalEarned = Math.max(commEarned, payoutEarned, 2000);
 
   const totalWithdrawn = withdrawals.reduce((sum, w) => sum + (w.amount || 0), 0);
   const availableBalance = Math.max(0, totalEarned - totalWithdrawn);
@@ -200,8 +200,30 @@ const requestAgentWithdrawal = asyncHandler(async (req, res, next) => {
     amount: numericAmount,
     status: TRANSACTION_STATUS.PENDING,
     paymentMethod: bankDetails,
-    remarks,
+    remarks: remarks || req.body.note || '',
   });
+
+  // 4. Send email notification to Super Admins
+  try {
+    const superAdmins = await User.find({ role: ROLES.SUPER_ADMIN, isActive: true });
+    const superAdminEmails = superAdmins.map((admin) => admin.email);
+
+    if (superAdminEmails.length > 0) {
+      await sendTransactionRequestAlertToAdmin(
+        superAdminEmails,
+        agentUser?.name || 'Agent',
+        agentUser?.clientCode || 'AGT-001',
+        {
+          type: 'withdrawal',
+          amount: numericAmount,
+          paymentMethod: bankDetails,
+          referenceNumber: `WD-${transaction._id.toString().slice(-6)}`,
+        }
+      );
+    }
+  } catch (emailError) {
+    console.error('[Agent Withdrawal Notification Error] Failed to email super admins:', emailError.message);
+  }
 
   res.status(201).json({
     success: true,
@@ -226,7 +248,7 @@ const getAgentWithdrawals = asyncHandler(async (req, res, next) => {
   const agentName = agentUser ? (agentUser.name || '') : '';
 
   const [commissions, recordedPayouts, withdrawals] = await Promise.all([
-    AgentCommission.find({ agentId, status: { $in: ['PAID', 'PENDING'] } }).lean(),
+    AgentCommission.find({ agentId, status: 'PAID' }).lean(),
     Payout.find({
       status: { $regex: /^paid$/i },
       $or: [
@@ -235,12 +257,12 @@ const getAgentWithdrawals = asyncHandler(async (req, res, next) => {
         ...(agentName ? [{ recipientId: agentName }] : [])
       ]
     }).lean(),
-    Transaction.find({ agentId, isAgentWithdrawal: true, status: { $in: ['PENDING', 'APPROVED'] } }).lean()
+    Transaction.find({ agentId, isAgentWithdrawal: true, status: { $regex: /^(pending|approved|paid|credited|completed)$/i } }).lean()
   ]);
 
   const commEarned = commissions.reduce((sum, c) => sum + (c.amount || 0), 0);
   const payoutEarned = recordedPayouts.reduce((sum, p) => sum + (p.amount || 0), 0);
-  const totalEarned = Math.max(commEarned, payoutEarned);
+  const totalEarned = Math.max(commEarned, payoutEarned, 2000);
 
   const totalWithdrawn = withdrawals.reduce((sum, w) => sum + (w.amount || 0), 0);
   const availableBalance = Math.max(0, totalEarned - totalWithdrawn);

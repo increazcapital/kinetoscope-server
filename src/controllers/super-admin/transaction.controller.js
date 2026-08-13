@@ -60,10 +60,18 @@ const getPendingApprovals = asyncHandler(async (req, res, next) => {
   const formattedTransactions = transactions.map(tx => {
     const isAgent = tx.isAgentWithdrawal;
     const user = isAgent ? (tx.agentId || {}) : (tx.clientId || {});
+    let code = '—';
+    if (isAgent) {
+      code = user.clientCode || user.agentCode || (user._id ? `KFPL-AG-${user._id.toString().slice(-4)}` : 'KFPL-AG-1001');
+    } else {
+      code = user.clientCode || tx.clientCode || '—';
+    }
     return {
       ...tx,
-      investorName: user.name || tx.clientName || 'Unknown User',
-      investorCode: isAgent ? (user.clientCode ? `AGT-${user.clientCode.replace('AGT-', '')}` : '—') : (user.clientCode || tx.clientCode || '—'),
+      investorName: user.name || tx.clientName || (isAgent ? 'Agent' : 'Client'),
+      investorCode: code,
+      clientCode: code,
+      agentCode: code,
       projectName: tx.projectName || (tx.projectId ? tx.projectId.name : ''),
     };
   });

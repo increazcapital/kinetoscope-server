@@ -44,7 +44,6 @@ const syncAgentCommissionsHelper = async (agentId) => {
         }
       }
       if (slabType === 'one-time') {
-        if (amount <= 1500000) return 1;
         if (amount <= 2500000) return 2;
         if (amount <= 5000000) return 3;
         if (amount <= 10000000) return 4;
@@ -120,6 +119,73 @@ const syncAgentCommissionsHelper = async (agentId) => {
           });
         }
       }
+
+      // 3. Deduplicate DB: Remove duplicate AgentCommission records for the same client & type
+      const allComms = await AgentCommission.find({ agentId }).sort({ createdAt: -1 });
+      const seenKeys = new Set();
+      const duplicateIdsToDelete = [];
+
+      for (const com of allComms) {
+        const cid = com.clientId ? com.clientId.toString() : '';
+        const cType = String(com.type || com.slabType || '').toUpperCase().includes('ONE') ? 'ONE TIME' : 'MONTHLY';
+        const k = `${cid}_${cType}_${com.period || ''}`;
+
+        if (seenKeys.has(k)) {
+          duplicateIdsToDelete.push(com._id);
+        } else {
+          seenKeys.add(k);
+        }
+      }
+
+      if (duplicateIdsToDelete.length > 0) {
+        await AgentCommission.deleteMany({ _id: { $in: duplicateIdsToDelete } });
+      }
+
+      // 4. Sync any PAID payouts from Super Admin to AgentCommission records
+      const Payout = require('../../models/Payout.model');
+      const agentUser = await User.findById(agentId).lean();
+      const agProf = await AgentProfile.findOne({ userId: agentId }).lean();
+
+      const searchCodes = [
+        agentId.toString(),
+        ...(agentUser ? [agentUser.clientCode, agentUser.name] : []),
+        ...(agProf ? [agProf.agentCode, agProf.agentId, agProf.clientCode] : [])
+      ].filter(Boolean);
+
+      const paidPayouts = await Payout.find({
+        status: { $regex: /^paid$/i },
+        $or: [
+          { recipientType: { $regex: /agent/i } },
+          { recipientId: { $in: searchCodes } }
+        ]
+      }).lean();
+
+      for (const payout of paidPayouts) {
+        const pAmt = Number(payout.amount) || 0;
+        const isOneTime = String(payout.commissionType || payout.payoutDetail || payout.type || '').toLowerCase().includes('one');
+
+        let matchComm = await AgentCommission.findOne({
+          agentId,
+          type: isOneTime ? 'ONE TIME' : 'MONTHLY',
+          status: 'PENDING'
+        });
+
+        if (!matchComm) {
+          matchComm = await AgentCommission.findOne({
+            agentId,
+            type: isOneTime ? 'ONE TIME' : 'MONTHLY'
+          });
+        }
+
+        if (matchComm) {
+          matchComm.status = 'PAID';
+          if (pAmt > 0) matchComm.amount = pAmt;
+          matchComm.paymentMode = payout.paymentMode || 'Bank Transfer';
+          matchComm.transactionRefId = payout.transactionRefId || payout.referenceNumber || 'TXN-PAID';
+          matchComm.paidAt = payout.paidAt || payout.createdAt || new Date();
+          await matchComm.save();
+        }
+      }
     }
   } catch (err) {
     console.error('[syncAgentCommissionsHelper] Error:', err);
@@ -147,7 +213,7 @@ const getAgentDashboard = asyncHandler(async (req, res, next) => {
   ]);
 
   const clientObjectIds = clients.map(c => c._id);
-  const [clientProfiles, clientDeposits, clientTransactions] = await Promise.all([
+  const [clientProfiles, clientDeposits, clientTransactions, approvedAgentWithdrawals] = await Promise.all([
     ClientProfile.find({ userId: { $in: clientObjectIds } }).lean(),
     Transaction.find({
       clientId: { $in: clientObjectIds },
@@ -156,8 +222,15 @@ const getAgentDashboard = asyncHandler(async (req, res, next) => {
     }).lean(),
     Transaction.find({
       clientId: { $in: clientObjectIds }
-    }).sort({ createdAt: -1 }).lean()
+    }).sort({ createdAt: -1 }).lean(),
+    Transaction.find({
+      agentId,
+      isAgentWithdrawal: true,
+      status: { $regex: /^(paid|approved|credited|completed)$/i }
+    }).lean()
   ]);
+
+  const totalWithdrawn = approvedAgentWithdrawals.reduce((sum, w) => sum + (w.amount || 0), 0);
 
   const clientObjectIdsStr = clientObjectIds.map(id => String(id));
   const investmentsList = allActiveInvestments.filter(inv => {
@@ -207,25 +280,18 @@ const getAgentDashboard = asyncHandler(async (req, res, next) => {
 
   const uniqueCommissionsMap = new Map();
   commissions.forEach(c => {
-    if (String(c.status).toUpperCase() === 'PAID') {
-      uniqueCommissionsMap.set(c._id ? c._id.toString() : Math.random(), c);
-      return;
-    }
-    const cidStr = c.clientId ? (c.clientId._id ? c.clientId._id.toString() : String(c.clientId)) : null;
-    if (!cidStr) return;
-    const activeInvAmt = clientActiveInvMap[cidStr] || 0;
-    if (activeInvAmt === 0) return;
-
+    const cidStr = c.clientId ? (c.clientId._id ? c.clientId._id.toString() : String(c.clientId)) : 'no_client';
     const slabTypeNorm = (c.slabType || (c.type === 'MONTHLY' ? 'monthly' : 'one-time')).toLowerCase();
-    const key = `${cidStr}_${slabTypeNorm}_${c.period || 'Aug 2026'}`;
-    const rate = getSlabRate(activeInvAmt, slabTypeNorm);
-    const dynamicAmt = Math.round((activeInvAmt * rate) / 100);
+    const periodStr = c.period || 'Aug 2026';
+    const key = `${cidStr}_${slabTypeNorm}_${periodStr}`;
 
     if (!uniqueCommissionsMap.has(key)) {
-      uniqueCommissionsMap.set(key, {
-        ...c,
-        amount: dynamicAmt > 0 ? dynamicAmt : c.amount,
-      });
+      uniqueCommissionsMap.set(key, c);
+    } else {
+      const existing = uniqueCommissionsMap.get(key);
+      if (String(c.status).toUpperCase() === 'PAID' && String(existing.status).toUpperCase() !== 'PAID') {
+        uniqueCommissionsMap.set(key, c);
+      }
     }
   });
 
@@ -443,6 +509,9 @@ const getAgentDashboard = asyncHandler(async (req, res, next) => {
       commissionPending,
       totalCommissionPending: commissionPending,
       commissionsPending: commissionPending,
+      totalWithdrawn,
+      totalWithdrawals: totalWithdrawn,
+      withdrawnAmount: totalWithdrawn,
       rewardsEarned: rewardsEarnedCount,
       rewardsEarnedCount,
       totalRewards: rewardsEarnedCount,
@@ -461,6 +530,7 @@ const getAgentDashboard = asyncHandler(async (req, res, next) => {
         thisMonthCommission,
         commissionPaid,
         commissionPending,
+        totalWithdrawn,
         rewardsEarned: rewardsEarnedCount
       },
 

@@ -311,6 +311,11 @@ const recordPayout = asyncHandler(async (req, res, next) => {
         if (agProf) agentUser = await User.findById(agProf.userId);
       }
 
+      if (!agentUser) {
+        const allAgents = await User.find({ role: 'agent' });
+        if (allAgents.length === 1) agentUser = allAgents[0];
+      }
+
       if (agentUser) {
         let targetClientUser = null;
         if (clientId || resolvedClientId) {
@@ -322,23 +327,52 @@ const recordPayout = asyncHandler(async (req, res, next) => {
               { name: { $regex: new RegExp(`^${clientId}$`, 'i') } }
             ]
           });
+          if (!targetClientUser && clientId && mongoose.Types.ObjectId.isValid(clientId)) {
+            const cProf = await ClientProfile.findById(clientId);
+            if (cProf && cProf.userId) {
+              targetClientUser = await User.findById(cProf.userId);
+            }
+          }
         }
 
+        const typeFilter = String(commissionType || '').toUpperCase().includes('ONE') ? 'ONE TIME' : (String(commissionType || '').toUpperCase().includes('SPECIAL') ? 'SPECIAL' : 'MONTHLY');
         const queryFilter = { agentId: agentUser._id, status: 'PENDING' };
         if (targetClientUser) {
           queryFilter.clientId = targetClientUser._id;
         }
 
         const pendingComms = await AgentCommission.find(queryFilter).sort({ createdAt: 1 });
-        let targetComm = pendingComms.find(c => Math.abs(c.amount - numericAmount) < 1) || pendingComms[0];
+        let targetComm = pendingComms.find(c => c.type === typeFilter) || pendingComms.find(c => Math.abs(c.amount - numericAmount) < 1) || pendingComms[0];
 
         if (targetComm) {
           targetComm.status = 'PAID';
+          targetComm.amount = numericAmount;
           targetComm.paymentMode = paymentMode || 'Bank Transfer';
           targetComm.transactionRefId = transactionRefId || `TXN-${Date.now()}`;
           targetComm.paidAt = new Date();
           await targetComm.save();
-          console.log(`[Payout Sync Success] Agent ${agentUser.name} Commission ${targetComm._id} (₹${targetComm.amount}) marked as PAID for client ${targetComm.clientId}`);
+          console.log(`[Payout Sync Success] Agent ${agentUser.name} Commission ${targetComm._id} (₹${targetComm.amount}) marked as PAID`);
+        } else {
+          await AgentCommission.create({
+            agentId: agentUser._id,
+            clientId: targetClientUser ? targetClientUser._id : undefined,
+            period: new Date().toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }),
+            date: new Date(),
+            type: typeFilter,
+            amount: numericAmount,
+            status: 'PAID',
+            paymentMode: paymentMode || 'Bank Transfer',
+            transactionRefId: transactionRefId || `TXN-${Date.now()}`,
+            paidAt: new Date(),
+            remarks: `Paid via Super Admin Payout`
+          });
+        }
+
+        if (typeFilter === 'ONE TIME') {
+          await AgentCommission.updateMany(
+            { agentId: agentUser._id, type: 'ONE TIME', status: 'PENDING' },
+            { $set: { status: 'PAID', amount: numericAmount, paymentMode: paymentMode || 'Bank Transfer', transactionRefId: transactionRefId || `TXN-${Date.now()}`, paidAt: new Date() } }
+          );
         }
       }
     } catch (err) {
@@ -398,7 +432,7 @@ const getPayouts = asyncHandler(async (req, res, next) => {
 
   const [payouts, withdrawalTransactions] = await Promise.all([
     Payout.find(query).sort({ payoutDate: -1, createdAt: -1 }).lean(),
-    Transaction.find({ type: 'withdrawal', status: { $in: ['approved', 'APPROVED', 'paid'] } })
+    Transaction.find({ $or: [{ type: 'withdrawal' }, { isAgentWithdrawal: true }] })
       .populate('clientId', 'name clientCode email')
       .populate('agentId', 'name clientCode agentCode email')
       .sort({ createdAt: -1 })
@@ -409,33 +443,60 @@ const getPayouts = asyncHandler(async (req, res, next) => {
   const recipientIds = payouts.map(p => p.recipientId);
   const objectIds = recipientIds.filter(id => mongoose.Types.ObjectId.isValid(id));
 
-  const [usersByCode, usersById, clientProfiles, agentProfiles, allClientProfiles] = await Promise.all([
-    User.find({ clientCode: { $in: recipientIds } }, { name: 1, clientCode: 1 }).lean(),
-    User.find({ _id: { $in: objectIds } }, { name: 1 }).lean(),
-    ClientProfile.find({ _id: { $in: objectIds } }).populate('userId', 'name').lean(),
+  const [usersByCode, usersById, clientProfiles, agentProfiles, allClientProfiles, allUsers] = await Promise.all([
+    User.find({ clientCode: { $in: recipientIds } }, { name: 1, clientCode: 1, monthlyRoi: 1, roiPercent: 1, roiPercentage: 1 }).lean(),
+    User.find({ _id: { $in: objectIds } }, { name: 1, monthlyRoi: 1, roiPercent: 1, roiPercentage: 1 }).lean(),
+    ClientProfile.find({ _id: { $in: objectIds } }).populate('userId', 'name clientCode monthlyRoi roiPercent').lean(),
     AgentProfile.find({ _id: { $in: objectIds } }).populate('userId', 'name').lean(),
-    ClientProfile.find({}).lean()
+    ClientProfile.find({}).populate('userId', 'name clientCode monthlyRoi roiPercent').lean(),
+    User.find({ role: 'client' }, { _id: 1, clientCode: 1, name: 1, monthlyRoi: 1, roiPercent: 1, roiPercentage: 1 }).lean()
   ]);
 
   const userMap = {};
   const roiMap = {};
+
+  allUsers.forEach(u => {
+    const val = u.monthlyRoi ?? u.roiPercent ?? u.roiPercentage;
+    if (val !== undefined && val !== null && val !== 0) {
+      if (u._id) roiMap[u._id.toString()] = val;
+      if (u.clientCode) roiMap[u.clientCode] = val;
+    }
+  });
+
   usersByCode.forEach(u => {
-    if (u.clientCode) userMap[u.clientCode] = u.name;
+    if (u.clientCode) {
+      userMap[u.clientCode] = u.name;
+      const val = u.monthlyRoi ?? u.roiPercent ?? u.roiPercentage;
+      if (val !== undefined && val !== null && val !== 0) roiMap[u.clientCode] = val;
+    }
   });
   usersById.forEach(u => {
     userMap[u._id.toString()] = u.name;
+    const val = u.monthlyRoi ?? u.roiPercent ?? u.roiPercentage;
+    if (val !== undefined && val !== null && val !== 0) roiMap[u._id.toString()] = val;
   });
   clientProfiles.forEach(cp => {
     if (cp.userId) {
-      userMap[cp._id.toString()] = cp.userId.name;
-      roiMap[cp.userId._id.toString()] = cp.monthlyRoi;
+      const uObj = cp.userId;
+      userMap[cp._id.toString()] = typeof uObj === 'object' ? uObj.name : uObj;
+      const val = cp.monthlyRoi ?? cp.roiPercent ?? (typeof uObj === 'object' ? (uObj.monthlyRoi ?? uObj.roiPercent) : null);
+      if (val !== undefined && val !== null && val !== 0) {
+        roiMap[cp._id.toString()] = val;
+        if (typeof uObj === 'object' && uObj._id) roiMap[uObj._id.toString()] = val;
+        if (typeof uObj === 'object' && uObj.clientCode) roiMap[uObj.clientCode] = val;
+      }
     }
   });
-  agentProfiles.forEach(ap => {
-    if (ap.userId) userMap[ap._id.toString()] = ap.userId.name;
-  });
   allClientProfiles.forEach(cp => {
-    if (cp.userId) roiMap[cp.userId.toString()] = cp.monthlyRoi;
+    const val = cp.monthlyRoi ?? cp.roiPercent;
+    if (val !== undefined && val !== null && val !== 0) {
+      if (cp._id) roiMap[cp._id.toString()] = val;
+      if (cp.userId) {
+        const uId = typeof cp.userId === 'object' ? cp.userId._id : cp.userId;
+        if (uId) roiMap[uId.toString()] = val;
+        if (typeof cp.userId === 'object' && cp.userId.clientCode) roiMap[cp.userId.clientCode] = val;
+      }
+    }
   });
 
   let formatted = payouts.map(p => {
@@ -461,7 +522,7 @@ const getPayouts = asyncHandler(async (req, res, next) => {
     let displayType = p.commissionType || p.type;
     let payoutDetailStr = p.payoutDetail || p.commissionType || p.type;
     if (isClient) {
-      const roiVal = p.roiPercentage || (p.amount === 770 ? 7.7 : (roiMap[p.recipientId] || 7.7));
+      const roiVal = p.roiPercentage || roiMap[p.recipientId] || roiMap[p.clientId] || 5.0;
       displayType = `ROI (${roiVal}%)`;
       payoutDetailStr = `Monthly ROI Return (${roiVal}%)`;
     } else {

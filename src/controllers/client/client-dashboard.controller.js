@@ -47,7 +47,7 @@ const calculateDashboardData = async (userId) => {
   const investmentsSum = validInvestments.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
   const approvedDepositsSum = approvedDeposits.reduce((sum, tx) => sum + (tx.amount || 0), 0);
   const capitalWithdrawalsSum = approvedWithdrawals.filter(w => w.withdrawalType === 'capital').reduce((sum, tx) => sum + (tx.amount || 0), 0);
-  const roiWithdrawalsSum = approvedWithdrawals.filter(w => w.withdrawalType === 'roi' || String(w.description || w.remarks || '').toLowerCase().includes('roi')).reduce((sum, tx) => sum + (tx.amount || 0), 0);
+  const totalApprovedWithdrawalsSum = approvedWithdrawals.reduce((sum, tx) => sum + (tx.amount || 0), 0);
 
   const netCapital = Math.max(0, approvedDepositsSum - capitalWithdrawalsSum);
 
@@ -263,7 +263,7 @@ const calculateDashboardData = async (userId) => {
   });
 
   const totalRoiPaidVal = clientRoiPayouts.reduce((sum, p) => sum + Number(p.amount || 0), 0);
-  const netRoiReceivedVal = Math.max(0, totalRoiPaidVal - roiWithdrawalsSum);
+  const netRoiReceivedVal = Math.max(0, totalRoiPaidVal - totalApprovedWithdrawalsSum);
 
   return {
     // Flat root-level properties
