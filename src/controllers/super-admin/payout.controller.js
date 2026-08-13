@@ -856,9 +856,15 @@ const deletePayout = asyncHandler(async (req, res, next) => {
 
   if (!payout) {
     payout = await Transaction.findByIdAndDelete(id);
-    if (!payout) {
-      return next(new AppError('Payout or transaction record not found.', 404));
-    }
+  }
+
+  if (!payout) {
+    const DividendAllotment = require('../../models/DividendAllotment.model');
+    payout = await DividendAllotment.findByIdAndDelete(id);
+  }
+
+  if (!payout) {
+    return next(new AppError('Payout or transaction record not found.', 404));
   }
 
   // Revert corresponding AgentCommission record status back to PENDING if deleted
