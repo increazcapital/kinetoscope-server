@@ -318,19 +318,37 @@ const getAllAgents = asyncHandler(async (req, res, next) => {
 
   const agentIds = users.map(u => u._id).filter(Boolean);
 
-  // Fetch agent profiles and assigned clients in parallel in bulk
-  const [profiles, allClients] = await Promise.all([
+  // Fetch agent profiles, assigned clients, and agent commissions in parallel in bulk
+  const [profiles, allClients, allCommissions] = await Promise.all([
     AgentProfile.find({ userId: { $in: agentIds } }).lean(),
     User.find(
       { role: { $in: [ROLES.CLIENT, 'client', 'CLIENT'] }, assignedAgent: { $in: agentIds } },
       { _id: 1, assignedAgent: 1 }
-    ).lean()
+    ).lean(),
+    AgentCommission.find({ agentId: { $in: agentIds } }).lean()
   ]);
 
   const profileMap = {};
   profiles.forEach(p => {
     if (p && p.userId) {
       profileMap[p.userId.toString()] = p;
+    }
+  });
+
+  // Map agent ID to their total commissions
+  const agentCommissionMap = {};
+  agentIds.forEach(id => {
+    if (id) {
+      agentCommissionMap[id.toString()] = 0;
+    }
+  });
+
+  allCommissions.forEach(com => {
+    if (com && com.agentId) {
+      const agId = com.agentId.toString();
+      if (agentCommissionMap[agId] !== undefined) {
+        agentCommissionMap[agId] += (Number(com.amount) || 0);
+      }
     }
   });
 
@@ -412,11 +430,12 @@ const getAllAgents = asyncHandler(async (req, res, next) => {
     const profile = profileMap[userIdStr] || null;
     const clientIdsForAgent = agentClientsMap[userIdStr] || [];
     const clientsCount = clientIdsForAgent.length;
-    
     let totalInvestment = 0;
     clientIdsForAgent.forEach(cid => {
       totalInvestment += (investmentMap[cid] || 0);
     });
+
+    const commissionPaidVal = totalInvestment > 0 ? (agentCommissionMap[userIdStr] || 0) : 0;
 
     return {
       _id: user._id,
@@ -432,6 +451,9 @@ const getAllAgents = asyncHandler(async (req, res, next) => {
       profile,
       clientsCount,
       totalInvestment,
+      commissionPaid: Math.round(commissionPaidVal),
+      totalCommissionsPaid: Math.round(commissionPaidVal),
+      totalCommission: Math.round(commissionPaidVal),
     };
   }).filter(Boolean);
 
@@ -1119,34 +1141,20 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
       continue;
     }
 
-    // Deduplicate PENDING commissions per client, slabType, & period
+    // Deduplicate PENDING commissions per client (Option A: 1 One-Time commission per client ever)
     const slabTypeNorm = (c.slabType || (c.type === 'MONTHLY' ? 'monthly' : 'one-time')).toLowerCase();
     const periodNorm = (c.period || 'Sep 2026').replace('Sept', 'Sep');
     c.period = periodNorm;
     c.month = periodNorm;
-    const key = `${cidStr}_${slabTypeNorm}_${periodNorm}`;
+    
+    const key = slabTypeNorm === 'one-time' ? `${cidStr}_onetime` : `${cidStr}_monthly_${periodNorm}`;
+
     if (processedKeys.has(key)) {
       // Duplicate PENDING record => delete from DB
       await AgentCommission.deleteOne({ _id: c._id });
       continue;
     }
     processedKeys.add(key);
-
-    // Calculate correct rate & amount
-    const rate = getSlabRate(activeInvAmt, slabTypeNorm);
-    const expectedAmount = Math.round((activeInvAmt * rate) / 100);
-
-    // Update DB record if amount or investment metadata was wrong/stale
-    if (c.amount !== expectedAmount || c.investmentAmount !== activeInvAmt || c.slabPercentage !== rate) {
-      await AgentCommission.findByIdAndUpdate(c._id, {
-        amount: expectedAmount,
-        investmentAmount: activeInvAmt,
-        slabPercentage: rate
-      });
-      c.amount = expectedAmount;
-      c.investmentAmount = activeInvAmt;
-      c.slabPercentage = rate;
-    }
 
     validCommissions.push(c);
   }

@@ -147,7 +147,12 @@ const getRoiTab = async (clientId) => {
   const profileTotal = (profile?.totalInvestment || clientProfileDoc?.totalInvestment || 0);
   const totalInv = Math.max(invTotal, depTotal, profileTotal);
 
-  const calculatedRoiAmount = totalInv > 0 ? Math.round((totalInv * configuredRoiRate) / 100) : 0;
+  const sumInvRoi = investments.reduce((sum, inv) => {
+    const rate = (inv.roiPercentage !== undefined && inv.roiPercentage !== null) ? Number(inv.roiPercentage) : configuredRoiRate;
+    return sum + Math.round(((inv.investmentAmount || inv.amount || 0) * rate) / 100);
+  }, 0);
+
+  const calculatedRoiAmount = sumInvRoi > 0 ? sumInvRoi : Math.round((totalInv * configuredRoiRate) / 100);
 
   // If client has 0 active investment, do not show any ROI payout list
   if (totalInv === 0) {
@@ -167,6 +172,7 @@ const getRoiTab = async (clientId) => {
       clientId: realClientId,
       payoutMonth: currentMonthStr,
       amount: calculatedRoiAmount,
+      roiRate: `${configuredRoiRate}%`,
       status: 'PENDING',
       processedDate: null,
       createdAt: new Date(),
@@ -180,22 +186,23 @@ const getRoiTab = async (clientId) => {
     String(p.status).toLowerCase() === 'paid'
   );
 
-  // Calculate dynamic ROI %
-  let effectiveRoiRate = configuredRoiRate;
-
-  // Enrich payouts with dynamic ROI %, status & processedDate
+  // Enrich payouts with locked ROI %, status & processedDate
   const enrichedPayouts = payouts.map(p => {
-    let finalStatus = (totalInv > 0 && hasRealPaidPayout) ? 'PAID' : 'PENDING';
-    let finalProcessedDate = (finalStatus === 'PAID' && p.processedDate) 
-      ? new Date(p.processedDate).toISOString().split('T')[0] 
+    const isPaidInDb = String(p.status || '').toUpperCase() === 'PAID' || String(p.status || '').toUpperCase() === 'APPROVED';
+    let finalStatus = isPaidInDb ? String(p.status).toUpperCase() : ((totalInv > 0 && hasRealPaidPayout) ? 'PAID' : 'PENDING');
+    let finalProcessedDate = (finalStatus === 'PAID' || finalStatus === 'APPROVED') 
+      ? (p.processedDate ? new Date(p.processedDate).toISOString().split('T')[0] : (p.paidAt ? new Date(p.paidAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0])) 
       : '—';
 
     let finalAmount = Number(p.amount || 0);
     if (totalInv === 0) {
       finalAmount = 0;
-    } else if (finalAmount <= 0 || finalAmount >= totalInv) {
+    } else if (finalAmount <= 0) {
       finalAmount = calculatedRoiAmount;
     }
+
+    const storedRate = p.roiRate || p.roiPercentage || p.rate;
+    const finalRateStr = storedRate ? (String(storedRate).endsWith('%') ? String(storedRate) : `${storedRate}%`) : `${configuredRoiRate}%`;
 
     return {
       _id: p._id,
@@ -204,7 +211,7 @@ const getRoiTab = async (clientId) => {
       amount: finalAmount,
       status: finalStatus,
       processedDate: finalProcessedDate,
-      roiRate: `${effectiveRoiRate}%`,
+      roiRate: finalRateStr,
       createdAt: p.createdAt,
       updatedAt: p.updatedAt,
     };

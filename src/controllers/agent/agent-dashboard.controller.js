@@ -62,27 +62,34 @@ const syncAgentCommissionsHelper = async (agentId) => {
     for (const client of clients) {
       const cidStr = client._id.toString();
       const invs = activeInvs.filter(i => String(i.clientId) === cidStr);
-      const invSum = invs.reduce((s, i) => s + (i.investmentAmount || i.amount || 0), 0);
       const deps = approvedDeposits.filter(t => String(t.clientId) === cidStr);
-      const depSum = deps.reduce((s, t) => s + (t.amount || 0), 0);
       const prof = clientProfiles.find(p => String(p.userId) === cidStr);
+
+      const invSum = invs.reduce((s, i) => s + (i.investmentAmount || i.amount || 0), 0);
+      const depSum = deps.reduce((s, t) => s + (t.amount || 0), 0);
       const profSum = prof ? (prof.totalInvestment || 0) : 0;
-
       const activeAmount = Math.max(invSum, depSum, profSum);
-      if (activeAmount <= 0) continue;
 
-      const depositDate = deps[0]?.createdAt || invs[0]?.investmentDate || new Date();
-      const depositMonth = new Date(depositDate);
-      const oneTimePeriod = new Intl.DateTimeFormat('en-IN', { month: 'short', year: 'numeric' }).format(depositMonth);
+      const firstDepAmt = Number(deps[0]?.amount || invs[0]?.investmentAmount || invs[0]?.amount || prof?.totalInvestment || 0);
 
-      const nextMonthDate = new Date(depositMonth.getFullYear(), depositMonth.getMonth() + 1, 1);
-      const monthlyPeriod = new Intl.DateTimeFormat('en-IN', { month: 'short', year: 'numeric' }).format(nextMonthDate);
+      // If client has 0 active investment, purge stale commission records for this client
+      if (activeAmount <= 0 && firstDepAmt <= 0) {
+        await AgentCommission.deleteMany({ clientId: client._id });
+        continue;
+      }
 
-      // 1. One-time (Awarded in deposit month)
-      const hasOneTime = existingComms.some(c => String(c.clientId) === cidStr && (c.slabType === 'one-time' || c.type === 'ONE TIME' || c.type === 'ONE_TIME'));
-      if (!hasOneTime) {
-        const rate = getSlabRate(activeAmount, 'one-time');
-        const amt = Math.round((activeAmount * rate) / 100);
+      // 1. One-Time Commission (Awarded ONCE per client on initial onboarding deposit)
+      const hasOneTimeForClient = existingComms.some(c => 
+        String(c.clientId) === cidStr && 
+        (c.slabType === 'one-time' || c.type === 'ONE TIME' || c.type === 'ONE_TIME')
+      );
+
+      if (!hasOneTimeForClient && firstDepAmt > 0) {
+        const depDate = deps[0]?.createdAt || invs[0]?.investmentDate || new Date();
+        const oneTimePeriod = new Intl.DateTimeFormat('en-IN', { month: 'short', year: 'numeric' }).format(new Date(depDate));
+        const rate = getSlabRate(firstDepAmt, 'one-time');
+        const amt = Math.round((firstDepAmt * rate) / 100);
+
         if (amt > 0) {
           await AgentCommission.create({
             agentId,
@@ -90,37 +97,49 @@ const syncAgentCommissionsHelper = async (agentId) => {
             type: 'ONE TIME',
             slabType: 'one-time',
             period: oneTimePeriod,
-            investmentAmount: activeAmount,
+            investmentAmount: firstDepAmt,
             slabRate: rate,
             amount: amt,
             status: 'PENDING',
-            date: new Date()
+            date: depDate
           });
         }
       }
 
-      // 2. Monthly (Starts from NEXT month after capital deposit)
-      const hasMonthly = existingComms.some(c => String(c.clientId) === cidStr && (c.slabType === 'monthly' || c.type === 'MONTHLY') && c.period === monthlyPeriod);
-      if (!hasMonthly) {
-        const rate = getSlabRate(activeAmount, 'monthly');
-        const amt = Math.round((activeAmount * rate) / 100);
-        if (amt > 0) {
-          await AgentCommission.create({
-            agentId,
-            clientId: client._id,
-            type: 'MONTHLY',
-            slabType: 'monthly',
-            period: monthlyPeriod,
-            investmentAmount: activeAmount,
-            slabRate: rate,
-            amount: amt,
-            status: 'PENDING',
-            date: new Date()
-          });
+      // 2. Monthly Commission (Starts from NEXT month after capital deposit, activates on 1st of next month)
+      if (activeAmount > 0) {
+        const depositDate = deps[0]?.createdAt || invs[0]?.investmentDate || new Date();
+        const depositMonth = new Date(depositDate);
+        const nextMonthDate = new Date(depositMonth.getFullYear(), depositMonth.getMonth() + 1, 1);
+        const now = new Date();
+
+        // Monthly commission begins from the NEXT month (e.g. Sept 1st for Aug deposit)
+        if (now >= nextMonthDate) {
+          const monthlyPeriod = new Intl.DateTimeFormat('en-IN', { month: 'short', year: 'numeric' }).format(now);
+
+          const hasMonthly = existingComms.some(c => String(c.clientId) === cidStr && (c.slabType === 'monthly' || c.type === 'MONTHLY') && c.period === monthlyPeriod);
+          if (!hasMonthly) {
+            const rate = getSlabRate(activeAmount, 'monthly');
+            const amt = Math.round((activeAmount * rate) / 100);
+            if (amt > 0) {
+              await AgentCommission.create({
+                agentId,
+                clientId: client._id,
+                type: 'MONTHLY',
+                slabType: 'monthly',
+                period: monthlyPeriod,
+                investmentAmount: activeAmount,
+                slabRate: rate,
+                amount: amt,
+                status: 'PENDING',
+                date: new Date()
+              });
+            }
+          }
         }
       }
 
-      // 3. Deduplicate DB: Remove duplicate AgentCommission records for the same client & type
+      // 3. Deduplicate DB: Ensure only 1 ONE TIME commission per client exists in DB
       const allComms = await AgentCommission.find({ agentId }).sort({ createdAt: -1 });
       const seenKeys = new Set();
       const duplicateIdsToDelete = [];
@@ -128,7 +147,7 @@ const syncAgentCommissionsHelper = async (agentId) => {
       for (const com of allComms) {
         const cid = com.clientId ? com.clientId.toString() : '';
         const cType = String(com.type || com.slabType || '').toUpperCase().includes('ONE') ? 'ONE TIME' : 'MONTHLY';
-        const k = `${cid}_${cType}_${com.period || ''}`;
+        const k = cType === 'ONE TIME' ? `${cid}_ONE_TIME` : `${cid}_MONTHLY_${com.period || ''}`;
 
         if (seenKeys.has(k)) {
           duplicateIdsToDelete.push(com._id);
@@ -281,6 +300,9 @@ const getAgentDashboard = asyncHandler(async (req, res, next) => {
   const uniqueCommissionsMap = new Map();
   commissions.forEach(c => {
     const cidStr = c.clientId ? (c.clientId._id ? c.clientId._id.toString() : String(c.clientId)) : 'no_client';
+    const activeInvAmt = clientActiveInvMap[cidStr] || 0;
+    if (activeInvAmt <= 0) return;
+
     const slabTypeNorm = (c.slabType || (c.type === 'MONTHLY' ? 'monthly' : 'one-time')).toLowerCase();
     const periodStr = c.period || 'Aug 2026';
     const key = `${cidStr}_${slabTypeNorm}_${periodStr}`;
@@ -576,8 +598,8 @@ const getAgentClients = asyncHandler(async (req, res, next) => {
 
   const clientCodes = clients.map(c => c.clientCode).filter(Boolean);
 
-  // 3) Bulk fetch client profiles, active investments, and approved deposit transactions in parallel
-  const [profiles, investments, approvedDeposits] = await Promise.all([
+  // 3) Bulk fetch client profiles, active investments, approved deposit transactions, and agent commissions in parallel
+  const [profiles, investments, approvedDeposits, agentCommissions] = await Promise.all([
     ClientProfile.find({
       $or: [
         { userId: { $in: clientIds } },
@@ -598,10 +620,11 @@ const getAgentClients = asyncHandler(async (req, res, next) => {
       ],
       type: 'deposit',
       status: 'approved'
-    }).lean()
+    }).lean(),
+    AgentCommission.find({ agentId }).lean()
   ]);
 
-  // 4) Map profiles, investments, and deposits for O(1) in-memory lookup
+  // 4) Map profiles, investments, deposits, and commissions for O(1) in-memory lookup
   const profileMap = {};
   profiles.forEach(p => {
     if (p.userId) profileMap[p.userId.toString()] = p;
@@ -610,6 +633,7 @@ const getAgentClients = asyncHandler(async (req, res, next) => {
 
   const investmentsMap = {};
   const depositsMap = {};
+  const commMap = {};
 
   investments.forEach(inv => {
     const amt = inv.investmentAmount || inv.amount || 0;
@@ -627,6 +651,13 @@ const getAgentClients = asyncHandler(async (req, res, next) => {
     if (codeKey) depositsMap[codeKey] = (depositsMap[codeKey] || 0) + amt;
   });
 
+  agentCommissions.forEach(c => {
+    const cidStr = c.clientId ? c.clientId.toString() : '';
+    if (cidStr) {
+      commMap[cidStr] = (commMap[cidStr] || 0) + (Number(c.amount) || 0);
+    }
+  });
+
   // 5) Assemble client records
   const clientRecords = clients.map(client => {
     const clientIdStr = client._id.toString();
@@ -637,7 +668,7 @@ const getAgentClients = asyncHandler(async (req, res, next) => {
     const invTotal = Math.max(investmentsMap[clientIdStr] || 0, investmentsMap[codeStr] || 0);
     const depTotal = Math.max(depositsMap[clientIdStr] || 0, depositsMap[codeStr] || 0);
     const totalInvestment = Math.max(invTotal, depTotal);
-    const commissionPaid = totalInvestment * (monthlySlabPct / 100) * months;
+    const realCommissionEarned = totalInvestment > 0 ? (commMap[clientIdStr] || 0) : 0;
     
     // Parse monthlyRoi safely directly from DB profile — exact value without fallback
     const monthlyRoi = profile && profile.monthlyRoi !== undefined ? (parseFloat(profile.monthlyRoi) || 0) : 0;
@@ -655,10 +686,10 @@ const getAgentClients = asyncHandler(async (req, res, next) => {
       monthlyRoiRate: monthlyRoi,
       roiPercentage: monthlyRoi,
       roiRate: monthlyRoi,
-      commissionPaid: Math.round(commissionPaid),
-      commissionEarned: Math.round(commissionPaid),
-      commission: Math.round(commissionPaid),
-      totalCommission: Math.round(commissionPaid),
+      commissionPaid: Math.round(realCommissionEarned),
+      commissionEarned: Math.round(realCommissionEarned),
+      commission: Math.round(realCommissionEarned),
+      totalCommission: Math.round(realCommissionEarned),
       status: profile ? (profile.status || 'ACTIVE').toUpperCase() : 'ACTIVE',
       isActive: client.isActive !== false,
       perk: profile ? (profile.tier || 'GOLD').toUpperCase() : 'GOLD',
