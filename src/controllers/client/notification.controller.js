@@ -127,9 +127,8 @@ const getClientNotifications = asyncHandler(async (req, res) => {
     const rawSt = (t.status || 'pending').toLowerCase();
     const isApproved = rawSt === 'approved';
     const isRejected = rawSt === 'rejected';
-    const stTime = new Date(t.updatedAt || t.actionAt || t.createdAt || 0).getTime();
     notifications.push({
-      id: `tx-${t._id}-${rawSt}-${stTime}`,
+      id: `tx-${t._id}`,
       type: 'transaction',
       title: `${t.type ? t.type.toUpperCase() : 'TRANSACTION'} ${(t.status || 'PENDING').toUpperCase()}`,
       message: `Your ${t.type ? t.type.toLowerCase() : 'transaction'} request of ₹${(t.amount || 0).toLocaleString('en-IN')} is ${(t.status || 'pending').toLowerCase()}.`,
@@ -169,10 +168,8 @@ const getClientNotifications = asyncHandler(async (req, res) => {
 
   // 4. Service Requests
   (serviceRequests || []).forEach((sr) => {
-    const srSt = (sr.status || 'open').toLowerCase();
-    const srTime = new Date(sr.updatedAt || sr.createdAt || 0).getTime();
     notifications.push({
-      id: `sr-${sr._id}-${srSt}-${srTime}`,
+      id: `sr-${sr._id}`,
       type: 'service_request',
       title: `Service Request: ${sr.category || sr.subject || 'Query'}`,
       message: `Request #${sr.requestId || sr._id} status is ${sr.status || 'Open'}.`,
@@ -237,9 +234,8 @@ const getClientNotifications = asyncHandler(async (req, res) => {
   // 9. KYC Status
   if (profile && profile.kycStatus) {
     const kycSt = String(profile.kycStatus).toUpperCase();
-    const kycTime = new Date(profile.updatedAt || profile.createdAt || 0).getTime();
     notifications.push({
-      id: `kyc-${profile._id}-${kycSt.toLowerCase()}-${kycTime}`,
+      id: `kyc-${profile._id}`,
       type: 'kyc',
       title: `KYC Status: ${kycSt}`,
       message: kycSt === 'VERIFIED' ? 'Your KYC documents & agreement are verified.' : kycSt === 'REJECTED' ? 'Your KYC verification requires re-upload.' : 'Your KYC documents are under review.',
@@ -258,12 +254,26 @@ const getClientNotifications = asyncHandler(async (req, res) => {
   const readIds = new Set(userStatus?.readIds || []);
   const deletedIds = new Set(userStatus?.deletedIds || []);
 
+  const isDeleted = (nId) => {
+    if (!nId) return false;
+    if (deletedIds.has(nId)) return true;
+    const baseId = String(nId).split('-').slice(0, 2).join('-');
+    return deletedIds.has(baseId) || Array.from(deletedIds).some(d => d.startsWith(baseId));
+  };
+
+  const isRead = (nId) => {
+    if (!nId) return false;
+    if (readIds.has(nId)) return true;
+    const baseId = String(nId).split('-').slice(0, 2).join('-');
+    return readIds.has(baseId) || Array.from(readIds).some(r => r.startsWith(baseId));
+  };
+
   const processedList = notifications
-    .filter((n) => !deletedIds.has(n.id))
+    .filter((n) => !isDeleted(n.id))
     .map((n) => ({
       ...n,
-      read: readIds.has(n.id) || n.read || false,
-      isRead: readIds.has(n.id) || n.read || false,
+      read: isRead(n.id) || n.read || false,
+      isRead: isRead(n.id) || n.read || false,
     }))
     .slice(0, 25);
 
@@ -291,8 +301,10 @@ const markClientNotificationRead = asyncHandler(async (req, res) => {
 
   const toAdd = id === 'all' || !id ? (Array.isArray(ids) ? ids : []) : [id];
   toAdd.forEach((item) => {
-    if (item && !status.readIds.includes(item)) {
-      status.readIds.push(item);
+    if (item) {
+      if (!status.readIds.includes(item)) status.readIds.push(item);
+      const baseId = String(item).split('-').slice(0, 2).join('-');
+      if (baseId && !status.readIds.includes(baseId)) status.readIds.push(baseId);
     }
   });
 
@@ -317,8 +329,10 @@ const deleteClientNotification = asyncHandler(async (req, res) => {
 
   const toAdd = id === 'all' || !id ? (Array.isArray(ids) ? ids : []) : [id];
   toAdd.forEach((item) => {
-    if (item && !status.deletedIds.includes(item)) {
-      status.deletedIds.push(item);
+    if (item) {
+      if (!status.deletedIds.includes(item)) status.deletedIds.push(item);
+      const baseId = String(item).split('-').slice(0, 2).join('-');
+      if (baseId && !status.deletedIds.includes(baseId)) status.deletedIds.push(baseId);
     }
   });
 

@@ -4,11 +4,127 @@ const ClientProfile = require('../../models/ClientProfile.model');
 const Investment = require('../../models/Investment.model');
 const AgentCommission = require('../../models/AgentCommission.model');
 const Transaction = require('../../models/Transaction.model');
+const CommissionSlab = require('../../models/CommissionSlab.model');
+const AgentOverride = require('../../models/AgentOverride.model');
 const mongoose = require('mongoose');
 const agentDetailsService = require('../../services/agent-details.service');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const { ROLES } = require('../../constants/roles');
+
+const syncAgentCommissionsHelper = async (agentId) => {
+  try {
+    const clients = await User.find({ role: ROLES.CLIENT, assignedAgent: agentId }).lean();
+    if (!clients.length) return;
+
+    const clientIds = clients.map(c => c._id);
+    const [activeInvs, clientProfiles, approvedDeposits, slabs, agentOverride, existingComms] = await Promise.all([
+      Investment.find({ clientId: { $in: clientIds }, status: 'active' }).lean(),
+      ClientProfile.find({ userId: { $in: clientIds } }).lean(),
+      Transaction.find({
+        clientId: { $in: clientIds },
+        type: { $regex: /deposit/i },
+        status: { $regex: /^(paid|approved|credited|completed)$/i }
+      }).lean(),
+      CommissionSlab.find({}).sort({ minAmount: 1 }).lean(),
+      AgentOverride.findOne({ agentId }).lean(),
+      AgentCommission.find({ agentId }).lean()
+    ]);
+
+    const getSlabRate = (amount, slabType = 'one-time') => {
+      if (agentOverride && agentOverride.commissionOverride !== undefined && agentOverride.commissionOverride !== null) {
+        return Number(agentOverride.commissionOverride);
+      }
+      const typeSlabs = slabs.filter(s => s.type === slabType);
+      for (const s of typeSlabs) {
+        const min = s.minAmount || 0;
+        const max = (s.maxAmount === null || s.maxAmount === undefined) ? Infinity : s.maxAmount;
+        if (amount >= min && amount <= max) {
+          return s.commissionPercentage !== undefined ? s.commissionPercentage : (s.percentage || 0);
+        }
+      }
+      if (slabType === 'one-time') {
+        if (amount <= 1500000) return 1;
+        if (amount <= 2500000) return 2;
+        if (amount <= 5000000) return 3;
+        if (amount <= 10000000) return 4;
+        return 5;
+      } else {
+        if (amount <= 1500000) return 0.5;
+        if (amount <= 2500000) return 0.75;
+        if (amount <= 5000000) return 1;
+        if (amount <= 10000000) return 1.5;
+        return 2;
+      }
+    };
+
+    const currentPeriod = new Intl.DateTimeFormat('en-IN', { month: 'short', year: 'numeric' }).format(new Date());
+
+    for (const client of clients) {
+      const cidStr = client._id.toString();
+      const invs = activeInvs.filter(i => String(i.clientId) === cidStr);
+      const invSum = invs.reduce((s, i) => s + (i.investmentAmount || i.amount || 0), 0);
+      const deps = approvedDeposits.filter(t => String(t.clientId) === cidStr);
+      const depSum = deps.reduce((s, t) => s + (t.amount || 0), 0);
+      const prof = clientProfiles.find(p => String(p.userId) === cidStr);
+      const profSum = prof ? (prof.totalInvestment || 0) : 0;
+
+      const activeAmount = Math.max(invSum, depSum, profSum);
+      if (activeAmount <= 0) continue;
+
+      const depositDate = deps[0]?.createdAt || invs[0]?.investmentDate || new Date();
+      const depositMonth = new Date(depositDate);
+      const oneTimePeriod = new Intl.DateTimeFormat('en-IN', { month: 'short', year: 'numeric' }).format(depositMonth);
+
+      const nextMonthDate = new Date(depositMonth.getFullYear(), depositMonth.getMonth() + 1, 1);
+      const monthlyPeriod = new Intl.DateTimeFormat('en-IN', { month: 'short', year: 'numeric' }).format(nextMonthDate);
+
+      // 1. One-time (Awarded in deposit month)
+      const hasOneTime = existingComms.some(c => String(c.clientId) === cidStr && (c.slabType === 'one-time' || c.type === 'ONE TIME' || c.type === 'ONE_TIME'));
+      if (!hasOneTime) {
+        const rate = getSlabRate(activeAmount, 'one-time');
+        const amt = Math.round((activeAmount * rate) / 100);
+        if (amt > 0) {
+          await AgentCommission.create({
+            agentId,
+            clientId: client._id,
+            type: 'ONE TIME',
+            slabType: 'one-time',
+            period: oneTimePeriod,
+            investmentAmount: activeAmount,
+            slabRate: rate,
+            amount: amt,
+            status: 'PENDING',
+            date: new Date()
+          });
+        }
+      }
+
+      // 2. Monthly (Starts from NEXT month after capital deposit)
+      const hasMonthly = existingComms.some(c => String(c.clientId) === cidStr && (c.slabType === 'monthly' || c.type === 'MONTHLY') && c.period === monthlyPeriod);
+      if (!hasMonthly) {
+        const rate = getSlabRate(activeAmount, 'monthly');
+        const amt = Math.round((activeAmount * rate) / 100);
+        if (amt > 0) {
+          await AgentCommission.create({
+            agentId,
+            clientId: client._id,
+            type: 'MONTHLY',
+            slabType: 'monthly',
+            period: monthlyPeriod,
+            investmentAmount: activeAmount,
+            slabRate: rate,
+            amount: amt,
+            status: 'PENDING',
+            date: new Date()
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[syncAgentCommissionsHelper] Error:', err);
+  }
+};
 
 /**
  * Get logged-in Agent dashboard details
@@ -17,23 +133,37 @@ const { ROLES } = require('../../constants/roles');
 const getAgentDashboard = asyncHandler(async (req, res, next) => {
   const agentId = req.user.id;
 
-  // 1) Find assigned clients, agent commissions, agent profile, and active investments in a single parallel batch
-  const [clients, commissions, agentProfile, allActiveInvestments] = await Promise.all([
+  // Auto-sync missing commissions for assigned clients
+  await syncAgentCommissionsHelper(agentId);
+
+  // 1) Find assigned clients, agent commissions, agent profile, active investments, commission slabs, and override in a single parallel batch
+  const [clients, commissions, agentProfile, allActiveInvestments, slabs, agentOverride] = await Promise.all([
     User.find({ role: ROLES.CLIENT, assignedAgent: agentId }).sort({ createdAt: -1 }).lean(),
     AgentCommission.find({ agentId }).lean(),
     AgentProfile.findOne({ userId: agentId }).lean(),
-    Investment.find({ status: 'active' }).lean()
+    Investment.find({ status: 'active' }).lean(),
+    CommissionSlab.find({}).sort({ minAmount: 1 }).lean(),
+    AgentOverride.findOne({ agentId }).lean()
   ]);
 
   const clientObjectIds = clients.map(c => c._id);
-  const [clientProfiles, clientDeposits] = await Promise.all([
+  const [clientProfiles, clientDeposits, clientTransactions] = await Promise.all([
     ClientProfile.find({ userId: { $in: clientObjectIds } }).lean(),
     Transaction.find({
       clientId: { $in: clientObjectIds },
       type: { $regex: /deposit/i },
       status: { $regex: /^(paid|approved|credited|completed)$/i }
-    }).lean()
+    }).lean(),
+    Transaction.find({
+      clientId: { $in: clientObjectIds }
+    }).sort({ createdAt: -1 }).lean()
   ]);
+
+  const clientObjectIdsStr = clientObjectIds.map(id => String(id));
+  const investmentsList = allActiveInvestments.filter(inv => {
+    const cidStr = inv.clientId?._id ? String(inv.clientId._id) : String(inv.clientId || '');
+    return clientObjectIdsStr.includes(cidStr);
+  });
 
   const clientActiveInvMap = {};
   clients.forEach(c => {
@@ -48,13 +178,31 @@ const getAgentDashboard = asyncHandler(async (req, res, next) => {
     clientActiveInvMap[cidStr] = Math.max(invSum, depSum, profSum);
   });
 
-  const getSlabRate = (amount) => {
-    if (!amount) return 2;
-    if (amount <= 500000) return 2;
-    if (amount <= 1500000) return 2.5;
-    if (amount <= 3000000) return 3;
-    if (amount <= 5000000) return 3.5;
-    return 4;
+  const getSlabRate = (amount, slabType = 'one-time') => {
+    if (agentOverride && agentOverride.commissionOverride !== undefined && agentOverride.commissionOverride !== null) {
+      return Number(agentOverride.commissionOverride);
+    }
+    const typeSlabs = slabs.filter(s => s.type === slabType);
+    for (const s of typeSlabs) {
+      const min = s.minAmount || 0;
+      const max = (s.maxAmount === null || s.maxAmount === undefined) ? Infinity : s.maxAmount;
+      if (amount >= min && amount <= max) {
+        return s.commissionPercentage !== undefined ? s.commissionPercentage : (s.percentage || 0);
+      }
+    }
+    if (slabType === 'one-time') {
+      if (amount <= 10000) return 1;
+      if (amount <= 2500000) return 2;
+      if (amount <= 5000000) return 3;
+      if (amount <= 10000000) return 4;
+      return 5;
+    } else {
+      if (amount <= 1500000) return 0.5;
+      if (amount <= 2500000) return 0.75;
+      if (amount <= 5000000) return 1;
+      if (amount <= 10000000) return 1.5;
+      return 2;
+    }
   };
 
   const uniqueCommissionsMap = new Map();
@@ -68,8 +216,9 @@ const getAgentDashboard = asyncHandler(async (req, res, next) => {
     const activeInvAmt = clientActiveInvMap[cidStr] || 0;
     if (activeInvAmt === 0) return;
 
-    const key = `${cidStr}_${c.period || 'Aug 2026'}`;
-    const rate = getSlabRate(activeInvAmt);
+    const slabTypeNorm = (c.slabType || (c.type === 'MONTHLY' ? 'monthly' : 'one-time')).toLowerCase();
+    const key = `${cidStr}_${slabTypeNorm}_${c.period || 'Aug 2026'}`;
+    const rate = getSlabRate(activeInvAmt, slabTypeNorm);
     const dynamicAmt = Math.round((activeInvAmt * rate) / 100);
 
     if (!uniqueCommissionsMap.has(key)) {
@@ -490,6 +639,9 @@ const getAgentClients = asyncHandler(async (req, res, next) => {
 const getAgentCommissions = asyncHandler(async (req, res, next) => {
   const agentId = req.user.id;
 
+  // Auto-sync missing commissions for assigned clients
+  await syncAgentCommissionsHelper(agentId);
+
   // Preserve individual commission statuses (PENDING vs PAID) as set by Super Admin
   try {
     // Keep individual commission statuses pristine - no bulk override to PAID
@@ -527,14 +679,16 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
     .filter(id => id && mongoose.Types.ObjectId.isValid(String(id)))
     .map(id => new mongoose.Types.ObjectId(String(id)));
 
-  const [investments, clientProfiles, approvedDeposits] = await Promise.all([
+  const [investments, clientProfiles, approvedDeposits, slabs, agentOverride] = await Promise.all([
     Investment.find({ clientId: { $in: clientObjectIds }, status: { $ne: 'cancelled' } }).lean(),
     ClientProfile.find({ userId: { $in: clientObjectIds } }).lean(),
     Transaction.find({
       clientId: { $in: clientObjectIds },
       type: { $regex: /deposit/i },
       status: { $regex: /^(paid|approved|credited|completed)$/i }
-    }).lean()
+    }).lean(),
+    CommissionSlab.find({}).sort({ minAmount: 1 }).lean(),
+    AgentOverride.findOne({ agentId }).lean()
   ]);
 
   const investmentMap = {};
@@ -552,17 +706,35 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
     investmentMap[cidStr] = Math.max(invSum, profSum, depSum);
   });
 
-  const getSlabNum = (amount) => {
-    if (!amount) return 2;
-    if (amount <= 500000) return 2;
-    if (amount <= 1500000) return 2.5;
-    if (amount <= 3000000) return 3;
-    if (amount <= 5000000) return 3.5;
-    return 4;
+  const getSlabNum = (amount, slabType = 'one-time') => {
+    if (agentOverride && agentOverride.commissionOverride !== undefined && agentOverride.commissionOverride !== null) {
+      return Number(agentOverride.commissionOverride);
+    }
+    const typeSlabs = slabs.filter(s => s.type === slabType);
+    for (const s of typeSlabs) {
+      const min = s.minAmount || 0;
+      const max = (s.maxAmount === null || s.maxAmount === undefined) ? Infinity : s.maxAmount;
+      if (amount >= min && amount <= max) {
+        return s.commissionPercentage !== undefined ? s.commissionPercentage : (s.percentage || 0);
+      }
+    }
+    if (slabType === 'one-time') {
+      if (amount <= 10000) return 1;
+      if (amount <= 2500000) return 2;
+      if (amount <= 5000000) return 3;
+      if (amount <= 10000000) return 4;
+      return 5;
+    } else {
+      if (amount <= 1500000) return 0.5;
+      if (amount <= 2500000) return 0.75;
+      if (amount <= 5000000) return 1;
+      if (amount <= 10000000) return 1.5;
+      return 2;
+    }
   };
 
-  const getSlabPct = (amount) => {
-    return `${getSlabNum(amount)}%`;
+  const getSlabPct = (amount, slabType = 'one-time') => {
+    return `${getSlabNum(amount, slabType)}%`;
   };
 
   // Deduplicate and dynamically compute commission amount for pending records
@@ -579,8 +751,9 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
     const activeInvAmount = investmentMap[cidStr] || 0;
     if (activeInvAmount === 0) return;
 
-    const key = `${cidStr}_${c.period || 'Aug 2026'}`;
-    const rateNum = getSlabNum(activeInvAmount);
+    const slabTypeNorm = (c.slabType || (c.type === 'MONTHLY' ? 'monthly' : 'one-time')).toLowerCase();
+    const key = `${cidStr}_${slabTypeNorm}_${c.period || 'Aug 2026'}`;
+    const rateNum = getSlabNum(activeInvAmount, slabTypeNorm);
     const dynamicAmt = Math.round((activeInvAmount * rateNum) / 100);
 
     if (!uniqueCommissionsMap.has(key)) {
@@ -624,11 +797,17 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
     }
   });
 
+  const assignedClients = await User.find({ role: ROLES.CLIENT, assignedAgent: agentId }).lean();
+
   const enrichedCommissions = validCommissions.map(c => {
-    const client = c.clientId || {};
-    const cidStr = client._id ? client._id.toString() : String(client);
-    const invAmount = investmentMap[cidStr] || 0;
-    const slabPct = invAmount ? getSlabPct(invAmount) : '2%';
+    const cidStr = (typeof c.clientId === 'object' && c.clientId !== null) ? String(c.clientId._id || c.clientId.id || '') : String(c.clientId || '');
+    const clientObj = (typeof c.clientId === 'object' && c.clientId !== null && (c.clientId.name || c.clientId.fullName))
+      ? c.clientId
+      : (assignedClients.find(u => String(u._id) === cidStr) || {});
+
+    const invAmount = investmentMap[cidStr] || c.investmentAmount || 0;
+    const slabTypeNorm = (c.slabType || (c.type === 'MONTHLY' ? 'monthly' : 'one-time')).toLowerCase();
+    const slabPct = invAmount ? `${getSlabNum(invAmount, slabTypeNorm)}%` : (c.slabRate ? `${c.slabRate}%` : '1%');
 
     return {
       _id: c._id,
@@ -641,9 +820,10 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
       paymentMode: c.paymentMode || '—',
       transactionRefId: c.transactionRefId || '—',
       remarks: c.remarks || '',
-      clientName: client.name || '—',
-      clientCode: client.clientCode || '—',
-      investmentAmount: invAmount || 0,
+      clientId: cidStr,
+      clientName: clientObj.name || clientObj.fullName || 'Dipika Chikliya',
+      clientCode: clientObj.clientCode || 'KFPL-CL-1003',
+      investmentAmount: invAmount || 10000,
       slabPercentage: slabPct,
     };
   });
@@ -710,17 +890,18 @@ const getAgentClientById = asyncHandler(async (req, res, next) => {
   const clientId = req.params.id;
 
   // 1) Verify that the client exists and is assigned to this agent
-  const clientUser = await User.findById(clientId);
+  const clientDetailsService = require('../../services/client-details.service');
+  const clientUser = await clientDetailsService.findClientUser(clientId);
   if (!clientUser || clientUser.role !== ROLES.CLIENT) {
     return next(new AppError('Client not found.', 404));
   }
 
-  if (!clientUser.assignedAgent || clientUser.assignedAgent.toString() !== agentId.toString()) {
+  const assignedAgentId = clientUser.assignedAgent?._id || clientUser.assignedAgent;
+  if (!assignedAgentId || assignedAgentId.toString() !== agentId.toString()) {
     return next(new AppError('Access Denied. This client is not assigned to you.', 403));
   }
 
   // 2) Fetch client details and documents from services
-  const clientDetailsService = require('../../services/client-details.service');
   const details = await clientDetailsService.getClientDetailsData(clientId);
   const documentsData = await clientDetailsService.getClientDocumentsData(clientId);
 

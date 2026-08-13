@@ -80,6 +80,8 @@ router.get('/clients', getAgentClients);
 router.get('/clients/:id', getAgentClientById);
 router.get('/clients/:id/investments', getClientInvestmentsTab);
 router.get('/clients/:id/roi/payouts', getClientRoiTab);
+router.get('/clients/:id/payouts', getClientRoiTab);
+router.get('/clients/:id/roi', getClientRoiTab);
 router.get('/clients/:id/documents', getClientDocumentsTab);
 router.get('/clients/:id/perks', getClientPerksTab);
 

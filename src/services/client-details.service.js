@@ -102,7 +102,8 @@ const getClientDetailsData = async (clientId) => {
         { clientCode: { $in: clientCodes } }
       ],
       type: 'withdrawal',
-      status: 'approved'
+      status: 'approved',
+      withdrawalType: { $ne: 'roi' }
     }).lean()
   ]);
 
@@ -114,7 +115,7 @@ const getClientDetailsData = async (clientId) => {
 
   const activeInvestmentsList = investments.filter(inv => inv.status === 'active');
   const isFullCapitalWithdrawn = withTotal >= depTotal && depTotal > 0;
-  const totalInvestment = isFullCapitalWithdrawn ? 0 : Math.max(0, Math.max(invTotal, depTotal) - withTotal);
+  const totalInvestment = isFullCapitalWithdrawn ? 0 : Math.max(invTotal, depTotal);
   const activeInvestmentsCount = isFullCapitalWithdrawn ? 0 : Math.max(activeInvestmentsList.length, (approvedDeposits.length > 0 && invTotal === 0) ? 1 : 0);
 
   const allocatedInvestmentsList = activeInvestmentsList.filter(inv => {

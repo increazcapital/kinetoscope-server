@@ -302,7 +302,7 @@ const getAllAgents = asyncHandler(async (req, res, next) => {
   } else {
     // Paginated table fetch
     const pageNum = parseInt(page, 10) || 1;
-    const limitNum = parseInt(limit, 10) || 10;
+    const limitNum = parseInt(limit, 10) || 10000;
     const skip = (pageNum - 1) * limitNum;
     
     [users, total] = await Promise.all([
@@ -1030,14 +1030,132 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
 
   const agentId = agent._id;
 
-  // 2) Find commission records in DB
-  let commissions = await AgentCommission.find({ agentId }).sort({ createdAt: -1 });
+  // 2) Fetch assigned clients for this agent
+  const clients = await User.find({ role: ROLES.CLIENT, assignedAgent: agentId }).lean();
+  const clientObjectIds = clients.map(c => c._id);
+
+  // 3) Fetch DB records in parallel: investments, profiles, deposits, slabs, agent override, existing commissions
+  const CommissionSlab = require('../../models/CommissionSlab.model');
+  const AgentOverride = require('../../models/AgentOverride.model');
+  const Investment = require('../../models/Investment.model');
+  const ClientProfile = require('../../models/ClientProfile.model');
+  const Transaction = require('../../models/Transaction.model');
+
+  const [investments, clientProfiles, approvedDeposits, slabs, agentOverride, existingComms] = await Promise.all([
+    Investment.find({ clientId: { $in: clientObjectIds }, status: { $ne: 'cancelled' } }).lean(),
+    ClientProfile.find({ userId: { $in: clientObjectIds } }).lean(),
+    Transaction.find({
+      clientId: { $in: clientObjectIds },
+      type: { $regex: /deposit/i },
+      status: { $regex: /^(paid|approved|credited|completed)$/i }
+    }).lean(),
+    CommissionSlab.find({}).sort({ minAmount: 1 }).lean(),
+    AgentOverride.findOne({ agentId }).lean(),
+    AgentCommission.find({ agentId }).populate('clientId', 'name email clientCode').sort({ createdAt: -1 })
+  ]);
+
+  // 4) Map each client's active investment amount
+  const clientInvestmentMap = {};
+  clients.forEach(c => {
+    const cidStr = String(c._id);
+    const invs = investments.filter(i => String(i.clientId) === cidStr);
+    const invSum = invs.reduce((s, i) => s + (i.investmentAmount || i.amount || 0), 0);
+    const prof = clientProfiles.find(p => String(p.userId) === cidStr);
+    const profSum = prof ? (prof.totalInvestment || 0) : 0;
+    const deps = approvedDeposits.filter(d => String(d.clientId) === cidStr);
+    const depSum = deps.reduce((s, d) => s + (d.amount || 0), 0);
+
+    clientInvestmentMap[cidStr] = Math.max(invSum, profSum, depSum);
+  });
+
+  // Helper: calculate commission rate from DB slabs or agent override
+  const getSlabRate = (amount, slabType = 'one-time') => {
+    if (agentOverride && agentOverride.commissionOverride !== undefined && agentOverride.commissionOverride !== null) {
+      return Number(agentOverride.commissionOverride);
+    }
+    const typeSlabs = slabs.filter(s => s.type === slabType);
+    for (const s of typeSlabs) {
+      const min = s.minAmount || 0;
+      const max = (s.maxAmount === null || s.maxAmount === undefined) ? Infinity : s.maxAmount;
+      if (amount >= min && amount <= max) {
+        return s.commissionPercentage !== undefined ? s.commissionPercentage : (s.percentage || 0);
+      }
+    }
+    if (slabType === 'one-time') {
+      if (amount <= 10000) return 1;
+      if (amount <= 2500000) return 2;
+      if (amount <= 5000000) return 3;
+      if (amount <= 10000000) return 4;
+      return 5;
+    } else {
+      if (amount <= 1500000) return 0.5;
+      if (amount <= 2500000) return 0.75;
+      if (amount <= 5000000) return 1;
+      if (amount <= 10000000) return 1.5;
+      return 2;
+    }
+  };
+
+  // 5) Sync and clean up PENDING commissions in database
+  const validCommissions = [];
+  const processedKeys = new Set();
+
+  for (const doc of existingComms) {
+    const c = doc.toObject ? doc.toObject() : doc;
+
+    // Keep PAID commissions as pristine history
+    if (String(c.status).toUpperCase() === 'PAID') {
+      validCommissions.push(c);
+      continue;
+    }
+
+    // For PENDING commissions:
+    const cidStr = c.clientId ? (c.clientId._id ? String(c.clientId._id) : String(c.clientId)) : null;
+    const activeInvAmt = cidStr ? (clientInvestmentMap[cidStr] || 0) : 0;
+
+    // If client is missing, unassigned, or has 0 active investment => delete stale record from DB
+    if (!cidStr || activeInvAmt <= 0) {
+      await AgentCommission.deleteOne({ _id: c._id });
+      continue;
+    }
+
+    // Deduplicate PENDING commissions per client, slabType, & period
+    const slabTypeNorm = (c.slabType || (c.type === 'MONTHLY' ? 'monthly' : 'one-time')).toLowerCase();
+    const periodNorm = (c.period || 'Sep 2026').replace('Sept', 'Sep');
+    c.period = periodNorm;
+    c.month = periodNorm;
+    const key = `${cidStr}_${slabTypeNorm}_${periodNorm}`;
+    if (processedKeys.has(key)) {
+      // Duplicate PENDING record => delete from DB
+      await AgentCommission.deleteOne({ _id: c._id });
+      continue;
+    }
+    processedKeys.add(key);
+
+    // Calculate correct rate & amount
+    const rate = getSlabRate(activeInvAmt, slabTypeNorm);
+    const expectedAmount = Math.round((activeInvAmt * rate) / 100);
+
+    // Update DB record if amount or investment metadata was wrong/stale
+    if (c.amount !== expectedAmount || c.investmentAmount !== activeInvAmt || c.slabPercentage !== rate) {
+      await AgentCommission.findByIdAndUpdate(c._id, {
+        amount: expectedAmount,
+        investmentAmount: activeInvAmt,
+        slabPercentage: rate
+      });
+      c.amount = expectedAmount;
+      c.investmentAmount = activeInvAmt;
+      c.slabPercentage = rate;
+    }
+
+    validCommissions.push(c);
+  }
 
   res.status(200).json({
     success: true,
-    count: commissions.length,
+    count: validCommissions.length,
     data: {
-      commissions,
+      commissions: validCommissions,
     },
   });
 });

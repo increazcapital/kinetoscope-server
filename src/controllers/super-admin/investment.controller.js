@@ -241,7 +241,7 @@ const createInvestment = asyncHandler(async (req, res, next) => {
  */
 const getAllInvestments = asyncHandler(async (req, res, next) => {
   const page = parseInt(req.query.page, 10) || 1;
-  const limit = parseInt(req.query.limit, 10) || 500;
+  const limit = parseInt(req.query.limit, 10) || 10000;
   const skip = (page - 1) * limit;
 
   const queryObj = {};

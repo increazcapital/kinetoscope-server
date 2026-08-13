@@ -313,7 +313,7 @@ const getAllClients = asyncHandler(async (req, res, next) => {
   } else {
     // Paginated table fetch
     const pageNum = parseInt(page, 10) || 1;
-    const limitNum = parseInt(limit, 10) || 10;
+    const limitNum = parseInt(limit, 10) || 10000;
     const skip = (pageNum - 1) * limitNum;
     
     [users, total] = await Promise.all([
@@ -502,12 +502,20 @@ const slugifyName = (name) => {
 const findClientUser = async (identifier) => {
   if (!identifier) return null;
   const str = String(identifier).trim();
+  
   if (/^[0-9a-fA-F]{24}$/.test(str)) {
-    const user = await User.findById(str);
-    if (user && user.role === ROLES.CLIENT) return user;
+    let user = await User.findById(str);
+    if (user && (user.role === ROLES.CLIENT || String(user.role).toLowerCase() === 'client')) return user;
+
+    const profById = await ClientProfile.findById(str);
+    if (profById && profById.userId) {
+      user = await User.findById(profById.userId);
+      if (user) return user;
+    }
   }
-  let user = await User.findOne({ clientCode: str.toUpperCase(), role: ROLES.CLIENT });
-  if (!user) user = await User.findOne({ clientCode: str, role: ROLES.CLIENT });
+
+  let user = await User.findOne({ clientCode: str.toUpperCase() });
+  if (!user) user = await User.findOne({ clientCode: str });
   if (!user) {
     const prof = await ClientProfile.findOne({
       $or: [
@@ -519,15 +527,18 @@ const findClientUser = async (identifier) => {
     });
     if (prof) user = await User.findById(prof.userId);
   }
+
   if (!user) {
-    const allClients = await User.find({ role: ROLES.CLIENT });
+    const allClients = await User.find({});
     user = allClients.find(c => slugifyName(c.name) === str.toLowerCase() || slugifyName(c.email) === str.toLowerCase());
   }
+
   if (!user) {
     const allProfiles = await ClientProfile.find();
     const matchedProf = allProfiles.find(p => slugifyName(p.fullName) === str.toLowerCase());
     if (matchedProf) user = await User.findById(matchedProf.userId);
   }
+
   return user;
 };
 

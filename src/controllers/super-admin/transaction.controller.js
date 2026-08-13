@@ -14,7 +14,7 @@ const asyncHandler = require('../../utils/asyncHandler');
  */
 const getPendingApprovals = asyncHandler(async (req, res, next) => {
   const page = parseInt(req.query.page, 10) || 1;
-  const limit = parseInt(req.query.limit, 10) || 10;
+  const limit = parseInt(req.query.limit, 10) || 10000;
   const skip = (page - 1) * limit;
 
   // 1. Calculate Approvals Stats
@@ -361,35 +361,106 @@ const approveRejectTransaction = asyncHandler(async (req, res, next) => {
   // CRITICAL: When a WITHDRAWAL is APPROVED, recalculate client net capital.
   // If net capital reaches 0, close active investments & delete pending commissions.
   // ═══════════════════════════════════════════════════════════════════════
-  if (status === TRANSACTION_STATUS.APPROVED && transaction.type === TRANSACTION_TYPES.WITHDRAWAL && !transaction.isAgentWithdrawal) {
+  if ((status === TRANSACTION_STATUS.APPROVED || String(status).toLowerCase() === 'approved') && transaction.type === TRANSACTION_TYPES.WITHDRAWAL && !transaction.isAgentWithdrawal) {
     try {
-      const allApprovedDeposits = await Transaction.find({ clientId: transaction.clientId, type: 'deposit', status: 'APPROVED' }).lean();
-      const allApprovedWithdrawals = await Transaction.find({ clientId: transaction.clientId, type: 'withdrawal', status: 'APPROVED' }).lean();
-      const depSum = allApprovedDeposits.reduce((sum, t) => sum + Number(t.amount || 0), 0);
-      const withSum = allApprovedWithdrawals.reduce((sum, t) => sum + Number(t.amount || 0), 0);
-      const netCapital = Math.max(0, depSum - withSum);
+      const isCapitalWithdrawal = transaction.withdrawalCategory === 'capital' ||
+        (transaction.remarks && /capital/i.test(transaction.remarks));
 
-      const ClientProfile = require('../../models/ClientProfile.model');
-      await Promise.all([
-        ClientProfile.findOneAndUpdate(
-          { userId: transaction.clientId },
-          { $set: { totalInvestment: netCapital } }
-        ),
-        User.findByIdAndUpdate(
-          transaction.clientId,
-          { $set: { totalInvestment: netCapital } }
-        )
-      ]);
+      if (isCapitalWithdrawal) {
+        const allApprovedDeposits = await Transaction.find({
+          clientId: transaction.clientId,
+          type: 'deposit',
+          status: { $in: ['APPROVED', 'approved', 'paid'] }
+        }).lean();
 
-      if (netCapital <= 0) {
-        await Investment.updateMany(
-          { clientId: transaction.clientId, status: 'active' },
-          { $set: { status: 'withdrawn' } }
-        );
+        const allApprovedCapitalWithdrawals = await Transaction.find({
+          clientId: transaction.clientId,
+          type: 'withdrawal',
+          status: { $in: ['APPROVED', 'approved', 'paid'] },
+          $or: [
+            { withdrawalCategory: 'capital' },
+            { remarks: { $regex: /capital/i } }
+          ]
+        }).lean();
 
-        const AgentCommission = require('../../models/AgentCommission.model');
-        await AgentCommission.deleteMany({ clientId: transaction.clientId, status: 'PENDING' });
-        console.log(`[Capital Withdrawal Approved] Client ${transaction.clientId} net capital is ₹0. Pending commissions deleted.`);
+        const depSum = allApprovedDeposits.reduce((sum, t) => sum + Number(t.amount || 0), 0);
+        const capitalWithSum = allApprovedCapitalWithdrawals.reduce((sum, t) => sum + Number(t.amount || 0), 0);
+        const netCapital = Math.max(0, depSum - capitalWithSum);
+
+        const ClientProfile = require('../../models/ClientProfile.model');
+        await Promise.all([
+          ClientProfile.findOneAndUpdate(
+            { userId: transaction.clientId },
+            { $set: { totalInvestment: netCapital } }
+          ),
+          User.findByIdAndUpdate(
+            transaction.clientId,
+            { $set: { totalInvestment: netCapital } }
+          )
+        ]);
+
+        if (netCapital <= 0) {
+          await Investment.updateMany(
+            { clientId: transaction.clientId, status: 'active' },
+            { $set: { status: 'withdrawn' } }
+          );
+
+          const AgentCommission = require('../../models/AgentCommission.model');
+          await AgentCommission.deleteMany({ clientId: transaction.clientId, status: 'PENDING' });
+          console.log(`[Capital Withdrawal Approved] Client ${transaction.clientId} net capital is ₹0. Pending commissions deleted.`);
+        }
+      }
+
+      // Auto-record Payout entry so it appears under Complete Transaction Details (Record Payout)
+      try {
+        const Payout = require('../../models/Payout.model');
+        const RoiPayout = require('../../models/RoiPayout.model');
+        const clientUser = await User.findById(transaction.clientId);
+        
+        if (clientUser) {
+          const payoutMonth = new Date().toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+          const payoutDateStr = new Date().toISOString().split('T')[0];
+
+          let roiRecord = await RoiPayout.findOne({
+            clientId: clientUser._id,
+            amount: transaction.amount,
+            status: 'PAID'
+          });
+          if (!roiRecord) {
+            roiRecord = await RoiPayout.create({
+              clientId: clientUser._id,
+              payoutMonth,
+              amount: transaction.amount,
+              status: 'PAID',
+              processedDate: new Date(),
+              paymentMode: transaction.paymentMethod || 'Bank Transfer',
+              transactionRefId: transaction.referenceNumber || `WD-${Date.now()}`
+            });
+          }
+
+          let payoutRecord = await Payout.findOne({
+            recipientId: clientUser.clientCode || String(clientUser._id),
+            amount: transaction.amount,
+            status: 'paid'
+          });
+          if (!payoutRecord) {
+            payoutRecord = await Payout.create({
+              recipientType: 'Client Return (ROI)',
+              recipientId: clientUser.clientCode || String(clientUser._id),
+              commissionType: `ROI (${clientUser.monthlyRoi || 7.7}%)`,
+              clientId: clientUser.clientCode || String(clientUser._id),
+              amount: transaction.amount,
+              payoutDate: payoutDateStr,
+              paymentMode: transaction.paymentMethod || 'Bank Transfer',
+              transactionRefId: transaction.referenceNumber || `WD-${Date.now()}`,
+              status: 'paid',
+              paidAt: new Date()
+            });
+          }
+          console.log(`[Withdrawal Approved Sync] Auto-recorded Payout entry for client ${clientUser.name} (${clientUser.clientCode}) amount ₹${transaction.amount}`);
+        }
+      } catch (pSyncErr) {
+        console.error('[Withdrawal Payout Sync Error]:', pSyncErr.message);
       }
     } catch (wErr) {
       console.error('[Withdrawal Approval Error]:', wErr.message);
@@ -430,7 +501,7 @@ const approveRejectTransaction = asyncHandler(async (req, res, next) => {
  */
 const getApprovalsHistory = asyncHandler(async (req, res, next) => {
   const page = parseInt(req.query.page, 10) || 1;
-  const limit = parseInt(req.query.limit, 10) || 10;
+  const limit = parseInt(req.query.limit, 10) || 10000;
   const skip = (page - 1) * limit;
 
   const query = { status: { $in: [TRANSACTION_STATUS.APPROVED, TRANSACTION_STATUS.REJECTED] } };

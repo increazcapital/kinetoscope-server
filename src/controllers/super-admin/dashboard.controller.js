@@ -40,8 +40,8 @@ const getAdminDashboard = asyncHandler(async (req, res, next) => {
     Transaction.find().sort({ createdAt: -1 }).limit(100).lean(),
     RoiPayout.find({ status: 'PAID' }).lean(),
     Payout.find({ recipientType: 'Client Return (ROI)', status: 'paid' }).lean(),
-    Transaction.find({ type: 'deposit', status: 'approved' }).lean(),
-    Transaction.find({ type: 'withdrawal', status: 'approved' }).lean(),
+    Transaction.find({ type: 'deposit', status: { $in: ['approved', 'APPROVED', 'paid'] } }).lean(),
+    Transaction.find({ type: 'withdrawal', status: { $in: ['approved', 'APPROVED', 'paid'] } }).lean(),
     Investment.countDocuments({ status: { $in: ['completed', 'cancelled'] } }),
     Transaction.countDocuments({ type: 'deposit', status: 'pending' })
   ]);
@@ -52,26 +52,73 @@ const getAdminDashboard = asyncHandler(async (req, res, next) => {
   const withSum = (approvedWithdrawalsList || []).reduce((sum, tx) => sum + (tx.amount || 0), 0);
 
   const totalWithdrawalAmount = withSum;
-  const isFullCapitalWithdrawn = withSum >= depSum && depSum > 0;
-  const totalInvestmentAmount = isFullCapitalWithdrawn ? 0 : Math.max(0, Math.max(invSum, depSum) - withSum);
+  const totalInvestmentAmount = invSum > 0 ? invSum : Math.max(0, depSum);
 
-  // 3) Calculate total ROI paid (only for existing valid clients)
-  let totalRoiPaid = 0;
+  // 3) Calculate total ROI paid (deduplicated & filtered for active client investments)
+  const uniqueRoiPaidMap = new Map();
+
   if (totalClientsCount > 0) {
     const validClientIds = new Set(allClients.map(c => String(c._id)));
     const validClientCodes = new Set(allClients.map(c => c.clientCode).filter(Boolean));
 
+    const clientActiveInvMap = {};
+    allClients.forEach(c => {
+      const cidStr = String(c._id);
+      const invs = activeInvestmentsList.filter(i => String(i.clientId) === cidStr);
+      const invSum = invs.reduce((s, i) => s + (i.investmentAmount || i.amount || 0), 0);
+      clientActiveInvMap[cidStr] = invSum;
+      if (c.clientCode) clientActiveInvMap[c.clientCode] = invSum;
+    });
+
+    const getNormalizedCid = (rawId) => {
+      if (!rawId) return '';
+      const str = typeof rawId === 'object' && rawId !== null ? String(rawId._id || rawId.id || '') : String(rawId);
+      const matched = allClients.find(c => String(c._id) === str || c.clientCode === str);
+      return matched ? String(matched._id) : str;
+    };
+
+    const getMonthKeyStr = (p) => {
+      if (p.payoutMonth) return p.payoutMonth.trim();
+      if (p.month) return p.month.trim();
+      const dateVal = p.payoutDate || p.processedDate || p.paidAt || p.createdAt;
+      if (dateVal) {
+        const d = new Date(dateVal);
+        if (!isNaN(d.getTime())) {
+          return d.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+        }
+      }
+      return 'Aug 2026';
+    };
+
     paidRoiPayouts.forEach(p => {
-      if (p.clientId && validClientIds.has(String(p.clientId))) {
-        totalRoiPaid += (p.amount || 0);
+      const matchedCid = getNormalizedCid(p.clientId);
+      if (matchedCid && validClientIds.has(matchedCid)) {
+        if ((clientActiveInvMap[matchedCid] || 0) > 0) {
+          const monthStr = getMonthKeyStr(p);
+          const key = `${matchedCid}_${monthStr}_${p.amount}`;
+          if (!uniqueRoiPaidMap.has(key)) {
+            uniqueRoiPaidMap.set(key, p);
+          }
+        }
       }
     });
+
     paidPayouts.forEach(p => {
-      if (p.recipientId && (validClientIds.has(String(p.recipientId)) || validClientCodes.has(String(p.recipientId)))) {
-        totalRoiPaid += (p.amount || 0);
+      const matchedCid = getNormalizedCid(p.recipientId || p.clientId);
+      if (matchedCid && validClientIds.has(matchedCid)) {
+        if ((clientActiveInvMap[matchedCid] || 0) > 0) {
+          const monthStr = getMonthKeyStr(p);
+          const key = `${matchedCid}_${monthStr}_${p.amount}`;
+          if (!uniqueRoiPaidMap.has(key)) {
+            uniqueRoiPaidMap.set(key, p);
+          }
+        }
       }
     });
   }
+
+  const validRoiPayouts = Array.from(uniqueRoiPaidMap.values());
+  const totalRoiPaid = validRoiPayouts.reduce((sum, p) => sum + (p.amount || 0), 0);
 
   // 4) Investment by Segment (Pie Chart / Donut Chart)
   // Aggregate active allocations across the 6 main segments:
@@ -139,51 +186,25 @@ const getAdminDashboard = asyncHandler(async (req, res, next) => {
     monthlyInflowMap[monthIndex] += (inv.investmentAmount || 0);
   });
 
-  // Group paid ROI payouts by month ONLY for valid existing clients
-  if (totalClientsCount > 0) {
-    const validClientIds = new Set(allClients.map(c => String(c._id)));
-    const validClientCodes = new Set(allClients.map(c => c.clientCode).filter(Boolean));
-
-    paidRoiPayouts.forEach(p => {
-      if (p.clientId && validClientIds.has(String(p.clientId))) {
-        let monthIndex = -1;
-        if (p.payoutMonth) {
-          const part = p.payoutMonth.split(' ')[0];
-          monthIndex = monthNames.indexOf(part);
-        }
-        if (monthIndex === -1 && p.processedDate) {
-          const d = new Date(p.processedDate);
-          if (!isNaN(d.getTime())) monthIndex = d.getMonth();
-        }
-        if (monthIndex === -1 && p.createdAt) {
-          const d = new Date(p.createdAt);
-          if (!isNaN(d.getTime())) monthIndex = d.getMonth();
-        }
-        if (monthIndex >= 0 && monthIndex < 12) {
-          monthlyRoiMap[monthIndex] += (p.amount || 0);
-        }
-      }
-    });
-
-    paidPayouts.forEach(p => {
-      if (p.recipientId && (validClientIds.has(String(p.recipientId)) || validClientCodes.has(String(p.recipientId)))) {
-        let monthIndex = -1;
-        if (p.payoutDate) {
-          const parts = p.payoutDate.split('-');
-          if (parts.length === 3) {
-            monthIndex = parseInt(parts[1], 10) - 1;
-          }
-        }
-        if (monthIndex === -1 && p.paidAt) {
-          const d = new Date(p.paidAt);
-          if (!isNaN(d.getTime())) monthIndex = d.getMonth();
-        }
-        if (monthIndex >= 0 && monthIndex < 12) {
-          monthlyRoiMap[monthIndex] += (p.amount || 0);
-        }
-      }
-    });
-  }
+  // Group paid ROI payouts by month from deduplicated valid paid ROI list
+  validRoiPayouts.forEach(p => {
+    let monthIndex = -1;
+    if (p.payoutMonth) {
+      const part = p.payoutMonth.split(' ')[0];
+      monthIndex = monthNames.indexOf(part);
+    }
+    if (monthIndex === -1 && p.payoutDate) {
+      const parts = p.payoutDate.split('-');
+      if (parts.length === 3) monthIndex = parseInt(parts[1], 10) - 1;
+    }
+    if (monthIndex === -1 && (p.processedDate || p.paidAt || p.createdAt)) {
+      const d = new Date(p.processedDate || p.paidAt || p.createdAt);
+      if (!isNaN(d.getTime())) monthIndex = d.getMonth();
+    }
+    if (monthIndex >= 0 && monthIndex < 12) {
+      monthlyRoiMap[monthIndex] += (p.amount || 0);
+    }
+  });
 
   // Group approved withdrawals by month
   allTransactions.forEach(tx => {
@@ -324,25 +345,17 @@ const getAdminDashboard = asyncHandler(async (req, res, next) => {
     });
   });
 
-  // Track recent approved ROI payouts (only for valid existing clients)
+  // Track recent approved ROI payouts (only for valid active clients)
   if (totalClientsCount > 0) {
-    const validClientIds = new Set(allClients.map(c => String(c._id)));
-    const validClientCodes = new Set(allClients.map(c => c.clientCode).filter(Boolean));
-
-    const validPaidRois = [...paidRoiPayouts, ...paidPayouts].filter(p => {
-      const cId = String(p.clientId || p.recipientId || '');
-      return validClientIds.has(cId) || validClientCodes.has(cId);
-    });
-
-    const allPaidRois = validPaidRois
-      .sort((a, b) => new Date(b.createdAt || b.paidAt) - new Date(a.createdAt || a.paidAt))
+    const allPaidRois = [...validRoiPayouts]
+      .sort((a, b) => new Date(b.createdAt || b.paidAt || b.processedDate) - new Date(a.createdAt || a.paidAt || a.processedDate))
       .slice(0, 5);
 
     allPaidRois.forEach(roi => {
       recentActivities.push({
         type: 'roi_payment',
         message: `ROI payment of ₹${(roi.amount || 0).toLocaleString('en-IN')} marked as paid`,
-        timestamp: roi.createdAt || roi.paidAt
+        timestamp: roi.createdAt || roi.paidAt || roi.processedDate
       });
     });
   }

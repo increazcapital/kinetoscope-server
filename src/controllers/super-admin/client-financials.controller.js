@@ -19,7 +19,8 @@ const verifyAgentClientAccess = async (clientId, agentId) => {
   if (!clientUser || clientUser.role !== ROLES.CLIENT) {
     throw new AppError('Client not found.', 404);
   }
-  if (!clientUser.assignedAgent || clientUser.assignedAgent.toString() !== agentId.toString()) {
+  const assignedAgentId = clientUser.assignedAgent?._id || clientUser.assignedAgent;
+  if (!assignedAgentId || assignedAgentId.toString() !== agentId.toString()) {
     throw new AppError('Access Denied. This client is not assigned to you.', 403);
   }
 };

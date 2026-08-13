@@ -83,6 +83,10 @@ const getAgentDetailsData = async (agentId) => {
     computedKycStatus = 'VERIFIED';
   }
 
+  const AgentCommission = require('../models/AgentCommission.model');
+  const agentComms = await AgentCommission.find({ agentId: user._id }).lean();
+  const totalCommissionVal = agentComms.reduce((s, c) => s + (c.amount || 0), 0);
+
   return {
     header: {
       agentName: user.name,
@@ -93,6 +97,7 @@ const getAgentDetailsData = async (agentId) => {
     summaryCards: {
       clientsCount,
       totalInvestment,
+      totalCommission: totalCommissionVal,
       oneTimeCommission: profile.oneTimeCommission || 0,
       monthlySlab: profile.monthlySlab || '',
       specialCommission: profile.specialCommission || 0,

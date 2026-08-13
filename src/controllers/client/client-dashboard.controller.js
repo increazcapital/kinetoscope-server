@@ -46,12 +46,13 @@ const calculateDashboardData = async (userId) => {
   const validInvestments = rawInvestments.filter(inv => inv.status !== 'cancelled');
   const investmentsSum = validInvestments.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
   const approvedDepositsSum = approvedDeposits.reduce((sum, tx) => sum + (tx.amount || 0), 0);
-  const approvedWithdrawalsSum = approvedWithdrawals.reduce((sum, tx) => sum + (tx.amount || 0), 0);
+  const capitalWithdrawalsSum = approvedWithdrawals.filter(w => w.withdrawalType === 'capital').reduce((sum, tx) => sum + (tx.amount || 0), 0);
+  const roiWithdrawalsSum = approvedWithdrawals.filter(w => w.withdrawalType === 'roi' || String(w.description || w.remarks || '').toLowerCase().includes('roi')).reduce((sum, tx) => sum + (tx.amount || 0), 0);
 
-  const netCapital = Math.max(0, approvedDepositsSum - approvedWithdrawalsSum);
+  const netCapital = Math.max(0, approvedDepositsSum - capitalWithdrawalsSum);
 
-  // If full capital has been withdrawn (or approved withdrawals >= deposits), net total investment is 0
-  const isFullCapitalWithdrawn = approvedWithdrawalsSum >= approvedDepositsSum && approvedDepositsSum > 0;
+  // If full capital has been withdrawn (or approved capital withdrawals >= deposits), net total investment is 0
+  const isFullCapitalWithdrawn = capitalWithdrawalsSum >= approvedDepositsSum && approvedDepositsSum > 0;
   const totalInvestment = isFullCapitalWithdrawn ? 0 : Math.max(investmentsSum, netCapital);
 
   // Define effective investments array (with fallback for clients with capital but no segment allocations yet)
@@ -261,6 +262,9 @@ const calculateDashboardData = async (userId) => {
     };
   });
 
+  const totalRoiPaidVal = clientRoiPayouts.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+  const netRoiReceivedVal = Math.max(0, totalRoiPaidVal - roiWithdrawalsSum);
+
   return {
     // Flat root-level properties
     totalInvestment,
@@ -275,6 +279,7 @@ const calculateDashboardData = async (userId) => {
     annualRoiRate: roiRate * 12,
     expectedMonthlyRoi,
     monthlyRoi: expectedMonthlyRoi,
+    roiReceived: netRoiReceivedVal,
     perkTier: (profile.tier || 'GOLD').toUpperCase(),
     nextRoiDate: nextRoiDate ? nextRoiDate.toISOString().split('T')[0] : null,
     nextRoiDateFormatted,
@@ -318,6 +323,7 @@ const calculateDashboardData = async (userId) => {
       annualRoiRate: roiRate * 12,
       expectedMonthlyRoi,
       monthlyRoi: expectedMonthlyRoi,
+      roiReceived: netRoiReceivedVal,
       perkTier: (profile.tier || 'GOLD').toUpperCase()
     }
   };
