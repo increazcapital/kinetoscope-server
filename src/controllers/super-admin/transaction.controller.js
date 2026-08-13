@@ -419,57 +419,7 @@ const approveRejectTransaction = asyncHandler(async (req, res, next) => {
         }
       }
 
-      // Auto-record Payout entry so it appears under Complete Transaction Details (Record Payout)
-      try {
-        const Payout = require('../../models/Payout.model');
-        const RoiPayout = require('../../models/RoiPayout.model');
-        const clientUser = await User.findById(transaction.clientId);
-        
-        if (clientUser) {
-          const payoutMonth = new Date().toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
-          const payoutDateStr = new Date().toISOString().split('T')[0];
-
-          let roiRecord = await RoiPayout.findOne({
-            clientId: clientUser._id,
-            amount: transaction.amount,
-            status: 'PAID'
-          });
-          if (!roiRecord) {
-            roiRecord = await RoiPayout.create({
-              clientId: clientUser._id,
-              payoutMonth,
-              amount: transaction.amount,
-              status: 'PAID',
-              processedDate: new Date(),
-              paymentMode: transaction.paymentMethod || 'Bank Transfer',
-              transactionRefId: transaction.referenceNumber || `WD-${Date.now()}`
-            });
-          }
-
-          let payoutRecord = await Payout.findOne({
-            recipientId: clientUser.clientCode || String(clientUser._id),
-            amount: transaction.amount,
-            status: 'paid'
-          });
-          if (!payoutRecord) {
-            payoutRecord = await Payout.create({
-              recipientType: 'Client Return (ROI)',
-              recipientId: clientUser.clientCode || String(clientUser._id),
-              commissionType: `ROI (${clientUser.monthlyRoi || 7.7}%)`,
-              clientId: clientUser.clientCode || String(clientUser._id),
-              amount: transaction.amount,
-              payoutDate: payoutDateStr,
-              paymentMode: transaction.paymentMethod || 'Bank Transfer',
-              transactionRefId: transaction.referenceNumber || `WD-${Date.now()}`,
-              status: 'paid',
-              paidAt: new Date()
-            });
-          }
-          console.log(`[Withdrawal Approved Sync] Auto-recorded Payout entry for client ${clientUser.name} (${clientUser.clientCode}) amount ₹${transaction.amount}`);
-        }
-      } catch (pSyncErr) {
-        console.error('[Withdrawal Payout Sync Error]:', pSyncErr.message);
-      }
+      // Note: Withdrawal transactions update capital/available balance, but do NOT create fake ROI Payout statement records.
     } catch (wErr) {
       console.error('[Withdrawal Approval Error]:', wErr.message);
     }
