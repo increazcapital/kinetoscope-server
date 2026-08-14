@@ -79,8 +79,8 @@ const syncAgentCommissionsHelper = async (agentId) => {
       }
 
       // 1. One-Time Commission (Awarded ONCE per client on initial onboarding deposit)
-      const hasOneTimeForClient = existingComms.some(c => 
-        String(c.clientId) === cidStr && 
+      const hasOneTimeForClient = existingComms.some(c =>
+        String(c.clientId) === cidStr &&
         (c.slabType === 'one-time' || c.type === 'ONE TIME' || c.type === 'ONE_TIME')
       );
 
@@ -327,7 +327,7 @@ const getAgentDashboard = asyncHandler(async (req, res, next) => {
 
   const commissionPaid = realPaidComms;
   const commissionPending = realPendingComms;
-  
+
   const now = new Date();
   const thisMonthCommission = validCommissions
     .filter(c => {
@@ -669,7 +669,7 @@ const getAgentClients = asyncHandler(async (req, res, next) => {
     const depTotal = Math.max(depositsMap[clientIdStr] || 0, depositsMap[codeStr] || 0);
     const totalInvestment = Math.max(invTotal, depTotal);
     const realCommissionEarned = totalInvestment > 0 ? (commMap[clientIdStr] || 0) : 0;
-    
+
     // Parse monthlyRoi safely directly from DB profile — exact value without fallback
     const monthlyRoi = profile && profile.monthlyRoi !== undefined ? (parseFloat(profile.monthlyRoi) || 0) : 0;
 
@@ -698,7 +698,7 @@ const getAgentClients = asyncHandler(async (req, res, next) => {
       contractEndDate: profile ? profile.contractEndDate : '',
       contractEnd: profile ? profile.contractEndDate : '',
       profilePic: (profile && profile.profilePic) || client.profilePic || '',
-      
+
       // Dual-compatibility nested structure
       user: {
         _id: client._id,
@@ -772,7 +772,7 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
       ]
     });
     hasPaidPayout = count > 0;
-  } catch (e) {}
+  } catch (e) { }
 
   // Fetch all active investments, profiles, and deposits of related clients to map investmentAmount & slab %
   const clientObjectIds = commissions
@@ -898,17 +898,31 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
     }
   });
 
-  const assignedClients = await User.find({ role: ROLES.CLIENT, assignedAgent: agentId }).lean();
+  const allCommissionClientIds = validCommissions
+    .map(c => (typeof c.clientId === 'object' && c.clientId !== null) ? String(c.clientId._id || c.clientId.id || '') : String(c.clientId || ''))
+    .filter(id => id && mongoose.Types.ObjectId.isValid(id));
+
+  const [assignedClients, fetchedClients] = await Promise.all([
+    User.find({ role: ROLES.CLIENT, assignedAgent: agentId }).lean(),
+    User.find({ _id: { $in: allCommissionClientIds } }).lean()
+  ]);
+
+  const clientLookupMap = {};
+  assignedClients.forEach(u => { if (u && u._id) clientLookupMap[String(u._id)] = u; });
+  fetchedClients.forEach(u => { if (u && u._id) clientLookupMap[String(u._id)] = u; });
 
   const enrichedCommissions = validCommissions.map(c => {
     const cidStr = (typeof c.clientId === 'object' && c.clientId !== null) ? String(c.clientId._id || c.clientId.id || '') : String(c.clientId || '');
     const clientObj = (typeof c.clientId === 'object' && c.clientId !== null && (c.clientId.name || c.clientId.fullName))
       ? c.clientId
-      : (assignedClients.find(u => String(u._id) === cidStr) || {});
+      : (clientLookupMap[cidStr] || {});
 
     const invAmount = investmentMap[cidStr] || c.investmentAmount || 0;
     const slabTypeNorm = (c.slabType || (c.type === 'MONTHLY' ? 'monthly' : 'one-time')).toLowerCase();
     const slabPct = invAmount ? `${getSlabNum(invAmount, slabTypeNorm)}%` : (c.slabRate ? `${c.slabRate}%` : '1%');
+
+    const resolvedName = clientObj.name || clientObj.fullName || c.clientName || 'Client';
+    const resolvedCode = clientObj.clientCode || c.clientCode || '—';
 
     return {
       _id: c._id,
@@ -922,9 +936,9 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
       transactionRefId: c.transactionRefId || '—',
       remarks: c.remarks || '',
       clientId: cidStr,
-      clientName: clientObj.name || clientObj.fullName || 'Dipika Chikliya',
-      clientCode: clientObj.clientCode || 'KFPL-CL-1003',
-      investmentAmount: invAmount || 10000,
+      clientName: resolvedName,
+      clientCode: resolvedCode,
+      investmentAmount: invAmount || 0,
       slabPercentage: slabPct,
     };
   });
@@ -960,7 +974,7 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
  */
 const getAgentProfile = asyncHandler(async (req, res, next) => {
   const details = await agentDetailsService.getAgentDetailsData(req.user.id);
-  
+
   res.status(200).json({
     success: true,
     data: details.profile,
