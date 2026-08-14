@@ -22,6 +22,10 @@ const allowedOrigins = [
   'http://127.0.0.1:5173',
   'http://127.0.0.1:5174',
   'http://127.0.0.1:5175',
+  'https://partner.kinetoscopefilms.com',
+  'https://cp.kinetoscopefilms.com',
+  'https://superadmin.kinetoscopefilms.com',
+  'https://server.kinetoscopefilms.com',
   'https://kinetoscope-superadmin-seven.vercel.app',
   'https://kinetoscope-clientadmin.vercel.app',
   'https://kinetoscope-agentadmin.vercel.app',
@@ -29,18 +33,29 @@ const allowedOrigins = [
   process.env.SUPER_ADMIN_URL,
   process.env.CLIENT_ADMIN_URL,
   process.env.AGENT_ADMIN_URL,
-].filter(Boolean);
+  ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : [])
+].flat().filter(Boolean);
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps, curl, postman) or matching allowedOrigins/vercel.app
-    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV === 'development' || origin.includes('postman') || origin.startsWith('chrome-extension://') || origin.endsWith('.vercel.app')) {
+    // Allow requests with no origin (like mobile apps, curl, postman) or matching allowedOrigins / kinetoscopefilms.com / vercel.app
+    if (
+      !origin ||
+      allowedOrigins.includes(origin) ||
+      process.env.NODE_ENV === 'development' ||
+      origin.includes('postman') ||
+      origin.startsWith('chrome-extension://') ||
+      origin.endsWith('.kinetoscopefilms.com') ||
+      origin.endsWith('.vercel.app')
+    ) {
       callback(null, true);
     } else {
-      callback(new Error('Not allowed by CORS'));
+      callback(new Error(`Not allowed by CORS: ${origin}`));
     }
   },
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'Access-Control-Allow-Headers'],
   maxAge: 86400 // Cache preflight response for 24 hours (86400 seconds)
 }));
 
