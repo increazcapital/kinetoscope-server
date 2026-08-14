@@ -179,7 +179,7 @@ const approveRejectTransaction = asyncHandler(async (req, res, next) => {
         const newInvestment = await Investment.create({
           clientId: transaction.clientId,
           clientName: transaction.clientName || (clientUser ? clientUser.name : 'Unknown'),
-          clientCode: transaction.clientCode || (clientUser ? clientUser.clientCode : ''),
+          clientCode: transaction.clientCode || (clientUser && clientUser.clientCode ? clientUser.clientCode : '') || (`KFPL-${String(transaction.clientId).slice(-6).toUpperCase()}`),
           projectId: transaction.projectId || undefined,
           projectName: transaction.projectName || projectObj?.name || '',
           segment: projectObj?.segment || transaction.segment || transaction.category || 'General',
@@ -189,7 +189,7 @@ const approveRejectTransaction = asyncHandler(async (req, res, next) => {
           riskLevel: projectObj?.riskLevel || 'Medium',
           investmentDate: transaction.actionAt || new Date(),
           status: 'active',
-          createdBy: req.user.id || req.user._id,
+          createdBy: (req.user && (req.user.id || req.user._id)) || transaction.clientId,
           remarks: `Auto-created from approved deposit transaction #${transaction._id}${transaction.projectName ? ` for project "${transaction.projectName}"` : ''}`,
           sourceTransactionId: transaction._id
         });
@@ -213,7 +213,6 @@ const approveRejectTransaction = asyncHandler(async (req, res, next) => {
       }
 
       // Recalculate ClientProfile and User total investment balance from approved deposits and active investments
-      const ClientProfile = require('../../models/ClientProfile.model');
       const allApprovedDeposits = await Transaction.find({ clientId: transaction.clientId, type: 'deposit', status: 'APPROVED' }).lean();
       const approvedDepositsSum = allApprovedDeposits.reduce((sum, t) => sum + Number(t.amount || 0), 0);
 
@@ -395,7 +394,6 @@ const approveRejectTransaction = asyncHandler(async (req, res, next) => {
         const capitalWithSum = allApprovedCapitalWithdrawals.reduce((sum, t) => sum + Number(t.amount || 0), 0);
         const netCapital = Math.max(0, depSum - capitalWithSum);
 
-        const ClientProfile = require('../../models/ClientProfile.model');
         await Promise.all([
           ClientProfile.findOneAndUpdate(
             { userId: transaction.clientId },

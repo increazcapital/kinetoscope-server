@@ -255,8 +255,50 @@ const getAllInvestments = asyncHandler(async (req, res, next) => {
   if (req.query.segment) {
     queryObj.segment = req.query.segment;
   }
-  if (req.query.status) {
-    queryObj.status = req.query.status;
+  // Auto-heal: Ensure all APPROVED deposit transactions have a corresponding Investment record
+  try {
+    const approvedDeposits = await Transaction.find({ type: 'deposit', status: 'APPROVED' }).lean();
+    for (const tx of approvedDeposits) {
+      if (!tx.clientId) continue;
+      const existing = await Investment.findOne({
+        $or: [
+          { sourceTransactionId: tx._id },
+          ...(tx.linkedInvestmentId ? [{ _id: tx.linkedInvestmentId }] : [])
+        ]
+      });
+      if (!existing) {
+        const clientUser = await User.findById(tx.clientId).lean();
+        const clientProfile = clientUser ? await ClientProfile.findOne({ userId: tx.clientId }).lean() : null;
+        let projectObj = null;
+        if (tx.projectId) {
+          projectObj = await Project.findById(tx.projectId).lean();
+        }
+        const roiPct = projectObj?.monthlyRoi ? parseFloat(projectObj.monthlyRoi) : (clientProfile ? (clientProfile.monthlyRoi || 1.5) : 1.5);
+        const codeVal = tx.clientCode || (clientUser && clientUser.clientCode ? clientUser.clientCode : '') || (`KFPL-${String(tx.clientId).slice(-6).toUpperCase()}`);
+        
+        const createdInv = await Investment.create({
+          clientId: tx.clientId,
+          clientName: tx.clientName || (clientUser ? clientUser.name : 'Unknown'),
+          clientCode: codeVal,
+          projectId: tx.projectId || undefined,
+          projectName: tx.projectName || projectObj?.name || '',
+          segment: projectObj?.segment || tx.segment || tx.category || 'General',
+          investmentAmount: Number(tx.amount || 0),
+          roiPercentage: roiPct,
+          riskPercentage: 0,
+          riskLevel: projectObj?.riskLevel || 'Medium',
+          investmentDate: tx.actionAt || tx.createdAt || new Date(),
+          status: 'active',
+          createdBy: req.user?.id || req.user?._id || tx.clientId,
+          remarks: `Auto-healed from approved deposit transaction #${tx._id}`,
+          sourceTransactionId: tx._id
+        });
+        await Transaction.findByIdAndUpdate(tx._id, { $set: { linkedInvestmentId: createdInv._id } });
+        console.log(`[Investment Auto-Heal] Created missing Investment ${createdInv._id} for approved deposit ${tx._id}`);
+      }
+    }
+  } catch (healErr) {
+    console.error('[Investment Auto-Heal Error]:', healErr.message);
   }
 
   const total = await Investment.countDocuments(queryObj);
