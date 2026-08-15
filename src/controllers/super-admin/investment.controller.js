@@ -255,6 +255,12 @@ const getAllInvestments = asyncHandler(async (req, res, next) => {
   if (req.query.segment) {
     queryObj.segment = req.query.segment;
   }
+  // Auto-migrate legacy General segment records to Unallocated
+  await Investment.updateMany(
+    { $or: [{ segment: 'General' }, { segment: 'General Capital Pool' }] },
+    { $set: { segment: 'Unallocated' } }
+  ).catch(e => console.error('[Segment Migration Error]:', e.message));
+
   // Auto-heal: Ensure all APPROVED deposit transactions have a corresponding Investment record
   try {
     const approvedDeposits = await Transaction.find({ type: 'deposit', status: 'APPROVED' }).lean();
