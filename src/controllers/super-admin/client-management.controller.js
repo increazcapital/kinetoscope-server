@@ -688,6 +688,7 @@ const updateClient = asyncHandler(async (req, res, next) => {
         profileUpdates.agreementDocumentVerified = false;
         profileUpdates.agreementVerified = false;
         profileUpdates.agreementDocumentVerifiedAt = null;
+        profileUpdates.agreementReuploadRequested = true;
       }
       if (['panDocument', 'aadhaarDocument', 'bankProofDocument', 'agreementDocument'].includes(cfg.field)) {
         profileUpdates.kycStatus = 'PENDING';

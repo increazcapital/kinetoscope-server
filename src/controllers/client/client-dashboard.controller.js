@@ -757,6 +757,7 @@ const uploadAgreementDocument = asyncHandler(async (req, res, next) => {
   profile.signedAgreementUrl = fileUrl;
   profile.agreementDocumentVerified = false;
   profile.agreementVerified = false;
+  profile.agreementReuploadRequested = false;
   profile.contractStartDate = uploadDate;
   
   const calcEndDate = new Date(uploadDate);
