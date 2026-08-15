@@ -275,7 +275,7 @@ const getAllInvestments = asyncHandler(async (req, res, next) => {
         }
         const roiPct = projectObj?.monthlyRoi ? parseFloat(projectObj.monthlyRoi) : (clientProfile ? (clientProfile.monthlyRoi || 1.5) : 1.5);
         const codeVal = tx.clientCode || (clientUser && clientUser.clientCode ? clientUser.clientCode : '') || (`KFPL-${String(tx.clientId).slice(-6).toUpperCase()}`);
-        
+
         const createdInv = await Investment.create({
           clientId: tx.clientId,
           clientName: tx.clientName || (clientUser ? clientUser.name : 'Unknown'),
@@ -502,8 +502,8 @@ const approveInvestment = asyncHandler(async (req, res, next) => {
     return next(new AppError('Client user not found.', 404));
   }
 
-  const approvedAmount = Number(investmentAmount) !== undefined && !isNaN(Number(investmentAmount)) && Number(investmentAmount) >= 0 
-    ? Number(investmentAmount) 
+  const approvedAmount = Number(investmentAmount) !== undefined && !isNaN(Number(investmentAmount)) && Number(investmentAmount) >= 0
+    ? Number(investmentAmount)
     : (investment.investmentAmount || 0);
 
   investment.status = 'active';

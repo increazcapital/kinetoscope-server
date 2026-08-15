@@ -20,7 +20,7 @@ const getPendingApprovals = asyncHandler(async (req, res, next) => {
   // 1. Calculate Approvals Stats
   const allPending = await Transaction.find({ status: TRANSACTION_STATUS.PENDING }).lean();
   const pendingRequests = allPending.length;
-  
+
   let pendingDepositsAmount = 0;
   let pendingDepositsCount = 0;
   let pendingWithdrawalsAmount = 0;
