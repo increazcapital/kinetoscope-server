@@ -45,17 +45,19 @@ const startServer = async () => {
   try {
     await connectDB();
 
-    server.listen(port, '0.0.0.0', () => {
-      console.log(`KFPL server running on port ${port}...`);
-      try {
-        const { startScheduledEmailCheck } = require('./controllers/super-admin/notification.controller');
-        startScheduledEmailCheck();
-        const { runInvestmentBackfill } = require('./controllers/super-admin/transaction.controller');
-        runInvestmentBackfill();
-      } catch (err) {
-        console.error('Failed to start scheduled services:', err.message);
-      }
-    });
+    if (!server.listening) {
+      server.listen(port, '0.0.0.0', () => {
+        console.log(`KFPL server running on port ${port}...`);
+        try {
+          const { startScheduledEmailCheck } = require('./controllers/super-admin/notification.controller');
+          startScheduledEmailCheck();
+          const { runInvestmentBackfill } = require('./controllers/super-admin/transaction.controller');
+          runInvestmentBackfill();
+        } catch (err) {
+          console.error('Failed to start scheduled services:', err.message);
+        }
+      });
+    }
 
     process.on('unhandledRejection', (err) => {
       console.error('UNHANDLED REJECTION:', err?.message || err);
@@ -66,6 +68,8 @@ const startServer = async () => {
   }
 };
 
-startServer();
+if (require.main === module) {
+  startServer();
+}
 
 module.exports = server;
