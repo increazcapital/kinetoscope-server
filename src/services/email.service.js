@@ -5,59 +5,89 @@ const COMPANY_NAME = 'Kinetoscope Films Pvt Ltd';
 const TAGLINE = 'A GLOBAL MEDIA FUND';
 
 /**
- * Universal Master Light Theme Email HTML Wrapper Generator
+ * Universal Master Light Theme Responsive Email HTML Wrapper Generator
+ * Built with Google Font 'Inter', responsive media queries, and sleek luxury aesthetics.
  */
 const buildLightEmailTemplate = ({ title, subtitle, contentHtml, bannerAccent = '#059669', actionButton }) => {
   return `
     <!DOCTYPE html>
-    <html>
+    <html lang="en">
       <head>
         <meta charset="utf-8"/>
         <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+        <meta http-equiv="X-UA-Encoding" content="IE=edge"/>
+        <title>${title || COMPANY_NAME}</title>
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+        <style>
+          @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+          body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif !important;
+          }
+          @media only screen and (max-width: 600px) {
+            .email-container {
+              width: 100% !important;
+              padding: 0 !important;
+              border-radius: 8px !important;
+            }
+            .content-padding {
+              padding: 24px 18px !important;
+            }
+            .header-padding {
+              padding: 20px 16px !important;
+            }
+            .cta-button {
+              width: 100% !important;
+              box-sizing: border-box !important;
+              text-align: center !important;
+            }
+          }
+        </style>
       </head>
-      <body style="margin: 0; padding: 24px 12px; background-color: #F1F5F9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased;">
-        <div style="max-width: 580px; margin: 0 auto; background-color: #FFFFFF; border-radius: 16px; overflow: hidden; border: 1px solid #E2E8F0; box-shadow: 0 10px 30px rgba(0,0,0,0.06);">
-          
-          <!-- Header Bar -->
-          <div style="background-color: #FFFFFF; padding: 28px 24px 20px 24px; text-align: center; border-bottom: 3px solid ${bannerAccent};">
-            <div style="display: inline-block; background-color: #F8FAFC; padding: 4px; border-radius: 12px; border: 1px solid #E2E8F0; box-shadow: 0 4px 12px rgba(0,0,0,0.05); margin-bottom: 12px;">
-              <img src="${LOGO_URL}" alt="KFPL Logo" style="width: 48px; height: 48px; border-radius: 8px; object-fit: contain; display: block;" />
-            </div>
-            <div style="font-size: 18px; font-weight: 800; color: #0F172A; letter-spacing: 0.5px; margin: 0;">
-              ${COMPANY_NAME}
-            </div>
-            <div style="font-size: 10px; font-weight: 700; color: #059669; letter-spacing: 1.5px; text-transform: uppercase; margin-top: 3px;">
-              ${TAGLINE}
-            </div>
-          </div>
-
-          <!-- Email Content Body -->
-          <div style="padding: 32px 28px; background-color: #FFFFFF; color: #1E293B;">
-            ${title ? `<h2 style="color: #0F172A; font-size: 20px; font-weight: 800; margin: 0 0 8px 0; text-align: center; letter-spacing: -0.3px;">${title}</h2>` : ''}
-            ${subtitle ? `<p style="color: #64748B; font-size: 14px; text-align: center; margin: 0 0 24px 0; line-height: 1.5;">${subtitle}</p>` : ''}
-
-            ${contentHtml}
-
-            ${actionButton ? `
-              <div style="text-align: center; margin: 28px 0 16px 0;">
-                <a href="${actionButton.url}" style="background: linear-gradient(135deg, #059669 0%, #047857 100%); color: #FFFFFF; padding: 14px 32px; border-radius: 10px; text-decoration: none; font-weight: 800; font-size: 14px; display: inline-block; box-shadow: 0 4px 16px rgba(5, 150, 105, 0.25); border: 1px solid #047857;">${actionButton.text}</a>
+      <body style="margin: 0; padding: 28px 12px; background-color: #F8FAFC; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; -webkit-font-smoothing: antialiased;">
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="max-width: 520px; width: 100%; margin: 0 auto;" class="email-container">
+          <tr>
+            <td style="background-color: #FFFFFF; border-radius: 14px; overflow: hidden; border: 1px solid #E2E8F0; box-shadow: 0 4px 20px rgba(15, 23, 42, 0.05);">
+              
+              <!-- Header Bar -->
+              <div class="header-padding" style="background-color: #FFFFFF; padding: 24px 24px 18px 24px; text-align: center; border-bottom: 2px solid ${bannerAccent};">
+                <div style="display: inline-block; background-color: #FFFFFF; padding: 2px; border-radius: 10px; border: 1px solid #E2E8F0; margin-bottom: 10px;">
+                  <img src="${LOGO_URL}" alt="KFPL Logo" style="width: 44px; height: 44px; border-radius: 8px; object-fit: contain; display: block;" />
+                </div>
+                <div style="font-size: 16px; font-weight: 700; color: #0F172A; letter-spacing: -0.2px; margin: 0;">
+                  ${COMPANY_NAME}
+                </div>
+                <div style="font-size: 9px; font-weight: 700; color: #059669; letter-spacing: 1.5px; text-transform: uppercase; margin-top: 2px;">
+                  ${TAGLINE}
+                </div>
               </div>
-            ` : ''}
-          </div>
 
-          <!-- Footer -->
-          <div style="padding: 20px 24px; background-color: #F8FAFC; border-top: 1px solid #E2E8F0; text-align: center;">
-            <div style="font-size: 12px; font-weight: 800; color: #0F172A; letter-spacing: 0.5px; margin: 0;">
-              ${COMPANY_NAME}
-            </div>
-            <div style="font-size: 9px; font-weight: 700; color: #059669; letter-spacing: 1px; text-transform: uppercase; margin-top: 2px;">
-              ${TAGLINE}
-            </div>
-            <p style="margin: 8px 0 0 0; font-size: 10.5px; color: #94A3B8; line-height: 1.4;">
-              Official Notification • ${COMPANY_NAME}. All rights reserved.<br/>Please do not reply directly to this automated system email.
-            </p>
-          </div>
-        </div>
+              <!-- Email Content Body -->
+              <div class="content-padding" style="padding: 28px 28px; background-color: #FFFFFF; color: #334155;">
+                ${title ? `<h1 style="color: #0F172A; font-size: 18px; font-weight: 700; margin: 0 0 6px 0; text-align: center; letter-spacing: -0.3px; line-height: 1.3;">${title}</h1>` : ''}
+                ${subtitle ? `<p style="color: #64748B; font-size: 13.5px; text-align: center; margin: 0 0 22px 0; line-height: 1.5; font-weight: 400;">${subtitle}</p>` : ''}
+
+                ${contentHtml}
+
+                ${actionButton ? `
+                  <div style="text-align: center; margin: 26px 0 10px 0;">
+                    <a href="${actionButton.url}" class="cta-button" style="background-color: #059669; color: #FFFFFF; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 13.5px; display: inline-block; letter-spacing: 0.2px; border: 1px solid #047857; box-shadow: 0 2px 8px rgba(5, 150, 105, 0.2);">${actionButton.text}</a>
+                  </div>
+                ` : ''}
+              </div>
+
+              <!-- Footer -->
+              <div style="padding: 18px 24px; background-color: #F8FAFC; border-top: 1px solid #F1F5F9; text-align: center;">
+                <div style="font-size: 11px; font-weight: 600; color: #475569; margin: 0;">
+                  ${COMPANY_NAME} &bull; Official Account Notification
+                </div>
+                <p style="margin: 6px 0 0 0; font-size: 10.5px; color: #94A3B8; line-height: 1.5;">
+                  Need assistance? Contact <a href="mailto:info@kinetoscopefilms.com" style="color: #059669; text-decoration: none; font-weight: 500;">info@kinetoscopefilms.com</a><br/>
+                  Please do not reply directly to this automated system email.
+                </p>
+              </div>
+            </td>
+          </tr>
+        </table>
       </body>
     </html>
   `;
@@ -69,23 +99,23 @@ const buildLightEmailTemplate = ({ title, subtitle, contentHtml, bannerAccent = 
 const buildOtpEmailHtml = ({ title, subtitle, otp, expiryMinutes = 5, note }) => {
   const contentHtml = `
     <!-- OTP Display Box -->
-    <div style="background-color: #F0FDF4; border: 2px solid #10B981; border-radius: 14px; padding: 22px 16px; text-align: center; margin: 0 0 20px 0; box-shadow: 0 4px 16px rgba(16, 185, 129, 0.1);">
-      <div style="font-size: 10px; font-weight: 800; color: #047857; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 8px;">
+    <div style="background-color: #ECFDF5; border: 1.5px solid #10B981; border-radius: 10px; padding: 18px 16px; text-align: center; margin: 0 0 18px 0;">
+      <div style="font-size: 9.5px; font-weight: 700; color: #047857; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 6px;">
         SECURE VERIFICATION CODE
       </div>
-      <div style="font-size: 38px; font-weight: 900; letter-spacing: 12px; color: #059669; font-family: 'Courier New', Consolas, monospace; margin-left: 12px;">
+      <div style="font-size: 34px; font-weight: 800; letter-spacing: 10px; color: #059669; font-family: 'Inter', monospace; margin-left: 10px;">
         ${otp}
       </div>
     </div>
 
-    <div style="background-color: #F8FAFC; border-left: 4px solid #10B981; padding: 14px 16px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #E2E8F0; border-left-width: 4px;">
-      <p style="margin: 0; color: #334155; font-size: 13px; line-height: 1.5;">
+    <div style="background-color: #F8FAFC; border-left: 3px solid #10B981; padding: 12px 14px; border-radius: 6px; margin-bottom: 18px; border: 1px solid #E2E8F0; border-left-width: 3px;">
+      <p style="margin: 0; color: #334155; font-size: 12.5px; line-height: 1.5;">
         🔒 This verification code is valid for <strong>${expiryMinutes} minutes</strong>. Never share this OTP with anyone.
       </p>
     </div>
 
-    ${note ? `<p style="color: #64748B; font-size: 13px; text-align: center; margin: 0 0 12px 0;">${note}</p>` : ''}
-    <p style="color: #94A3B8; font-size: 11.5px; text-align: center; margin: 0;">
+    ${note ? `<p style="color: #64748B; font-size: 12.5px; text-align: center; margin: 0 0 10px 0;">${note}</p>` : ''}
+    <p style="color: #94A3B8; font-size: 11px; text-align: center; margin: 0;">
       If you did not request this OTP, please secure your account or contact support immediately.
     </p>
   `;
@@ -162,42 +192,56 @@ const sendChangePasswordOtp = async (toEmail, otp) => {
 };
 
 /**
- * Dispatch a welcome email with credentials to onboarding clients
+ * Dispatch a sleek, professional welcome email with credentials to onboarding Clients and Agents
  */
-const sendWelcomeEmail = async (toEmail, clientName, clientCode, tempPassword, loginUrl) => {
-  const subject = 'Welcome to Kinetoscope – Your Client Account Details';
+const sendWelcomeEmail = async (toEmail, name, code, tempPassword, customLoginUrl) => {
+  const isAgent = code && (code.toString().toUpperCase().includes('AGT') || code.toString().toUpperCase().includes('AG-') || code.toString().toUpperCase().includes('AGENT'));
 
-  const text = `Hello ${clientName},\n\nWelcome to ${COMPANY_NAME}.\nClient Code: ${clientCode}\nEmail: ${toEmail}\nTemporary Password: ${tempPassword}\nLogin URL: ${loginUrl}\n\nBest regards,\n${COMPANY_NAME}`;
+  // Ensure precise Login URLs
+  const clientLoginUrl = process.env.CLIENT_PORTAL_URL || 'https://cp.kinetoscopefilms.com/login';
+  const agentLoginUrl = process.env.AGENT_PORTAL_URL || 'https://partner.kinetoscopefilms.com';
+  
+  const loginUrl = customLoginUrl || (isAgent ? agentLoginUrl : clientLoginUrl);
+  const portalName = isAgent ? 'Agent Partner Portal' : 'Client Portal';
+  const subject = isAgent 
+    ? 'Welcome to Kinetoscope Partner Network – Your Account Details'
+    : 'Welcome to Kinetoscope – Your Client Account Details';
+
+  const text = `Hello ${name},\n\nWelcome to ${COMPANY_NAME}.\n${isAgent ? 'Agent Code' : 'Client Code'}: ${code}\nEmail: ${toEmail}\nTemporary Password: ${tempPassword}\nPortal Login URL: ${loginUrl}\n\nPlease change your temporary password upon first sign-in.\n\nBest regards,\n${COMPANY_NAME}`;
 
   const contentHtml = `
-    <div style="background-color: #F8FAFC; border-radius: 12px; padding: 20px; border: 1px solid #E2E8F0; margin: 20px 0;">
-      <table style="width: 100%; font-size: 14px; border-collapse: collapse;">
+    <div style="background-color: #F8FAFC; border-radius: 10px; padding: 18px 20px; border: 1px solid #E2E8F0; margin: 18px 0;">
+      <table style="width: 100%; font-size: 13.5px; border-collapse: collapse; font-family: 'Inter', sans-serif;">
         <tr>
-          <td style="padding: 8px 0; color: #64748B; font-weight: 600; width: 140px;">Client Code:</td>
-          <td style="padding: 8px 0; color: #059669; font-family: monospace; font-size: 16px; font-weight: 800;">${clientCode}</td>
+          <td style="padding: 6px 0; color: #64748B; font-weight: 500; width: 140px;">${isAgent ? 'Agent Code:' : 'Client Code:'}</td>
+          <td style="padding: 6px 0; color: #059669; font-family: 'Inter', monospace; font-size: 14.5px; font-weight: 700;">${code}</td>
         </tr>
         <tr>
-          <td style="padding: 8px 0; color: #64748B; font-weight: 600;">Registered Email:</td>
-          <td style="padding: 8px 0; color: #0F172A; font-weight: 700;">${toEmail}</td>
+          <td style="padding: 6px 0; color: #64748B; font-weight: 500;">Your Login Email:</td>
+          <td style="padding: 6px 0; color: #0F172A; font-weight: 600;">${toEmail}</td>
         </tr>
         <tr>
-          <td style="padding: 8px 0; color: #64748B; font-weight: 600;">Temp Password:</td>
-          <td style="padding: 8px 0; color: #D97706; font-family: monospace; font-size: 16px; font-weight: 800;">${tempPassword}</td>
+          <td style="padding: 6px 0; color: #64748B; font-weight: 500;">Your Password:</td>
+          <td style="padding: 6px 0; color: #D97706; font-family: 'Inter', monospace; font-size: 14.5px; font-weight: 700;">${tempPassword}</td>
         </tr>
       </table>
     </div>
-    <p style="color: #64748B; font-size: 12px; text-align: center; margin-top: 16px;">Please change your temporary password immediately upon first sign in.</p>
+
+    <div style="background-color: #ECFDF5; border-left: 3px solid #059669; border-radius: 6px; padding: 10px 14px; margin-bottom: 18px;">
+      <p style="margin: 0; color: #047857; font-size: 12px; line-height: 1.5; font-weight: 500;">
+        🔒 <strong>Security Note:</strong> For your protection, please update your temporary password immediately upon your initial sign-in.
+      </p>
+    </div>
   `;
 
   const html = buildLightEmailTemplate({
-    title: `Welcome aboard, ${clientName}!`,
-    subtitle: 'Your official Client Portal account has been configured successfully. Below are your secure login credentials:',
+    title: `Welcome aboard, ${name}!`,
+    subtitle: `Your official ${portalName} account has been configured successfully. Below are your secure sign-in details:`,
     contentHtml,
-    actionButton: { text: 'Access Client Portal Dashboard', url: loginUrl },
+    actionButton: { text: `Access ${portalName}`, url: loginUrl },
     bannerAccent: '#059669'
   });
 
-  const isAgent = clientCode && clientCode.toString().toUpperCase().includes('AGT');
   if (isAgent) {
     return sendEmail({ to: toEmail, subject, text, html });
   }
@@ -208,7 +252,7 @@ const sendWelcomeEmail = async (toEmail, clientName, clientCode, tempPassword, l
     text,
     html,
     recipientGroup: 'Individual',
-    targetSummary: `${clientName} (${clientCode})`,
+    targetSummary: `${name} (${code})`,
     templateName: 'Welcome Investor Kit'
   });
 };
@@ -216,15 +260,32 @@ const sendWelcomeEmail = async (toEmail, clientName, clientCode, tempPassword, l
 /**
  * Send credentials email for password reset or resend credentials scenarios.
  */
-const sendCredentialsEmail = async (toEmail, clientName, clientCode, tempPassword, loginUrl) => {
-  const subject = 'Kinetoscope – Your Updated Login Credentials';
+const sendCredentialsEmail = async (toEmail, clientName, clientCode, tempPassword, customLoginUrl) => {
+  const isAgent = clientCode && (clientCode.toString().toUpperCase().includes('AGT') || clientCode.toString().toUpperCase().includes('AG-') || clientCode.toString().toUpperCase().includes('AGENT'));
+  const clientLoginUrl = process.env.CLIENT_PORTAL_URL || 'https://cp.kinetoscopefilms.com/login';
+  const agentLoginUrl = process.env.AGENT_PORTAL_URL || 'https://partner.kinetoscopefilms.com';
+  const loginUrl = customLoginUrl || (isAgent ? agentLoginUrl : clientLoginUrl);
+  const portalName = isAgent ? 'Agent Partner Portal' : 'Client Portal';
 
-  const text = `Hello ${clientName},\n\nYour login credentials for ${COMPANY_NAME} have been updated.\nClient Code: ${clientCode}\nNew Password: ${tempPassword}\n\nBest regards,\n${COMPANY_NAME}`;
+  const subject = 'Kinetoscope – Your Updated Sign-in Credentials';
+  const text = `Hello ${clientName},\n\nYour sign-in credentials for ${COMPANY_NAME} have been updated.\nCode: ${clientCode}\nNew Password: ${tempPassword}\n\nBest regards,\n${COMPANY_NAME}`;
 
   const contentHtml = `
-    <div style="background-color: #F8FAFC; border-radius: 12px; padding: 20px; border: 1px solid #E2E8F0; margin: 20px 0;">
-      <p style="margin: 4px 0; color: #334155; font-size: 14px;">Client Code: <strong style="color: #059669; font-family: monospace;">${clientCode}</strong></p>
-      <p style="margin: 8px 0 4px 0; color: #334155; font-size: 14px;">New Password: <strong style="color: #D97706; font-family: monospace;">${tempPassword}</strong></p>
+    <div style="background-color: #F8FAFC; border-radius: 10px; padding: 18px 20px; border: 1px solid #E2E8F0; margin: 18px 0;">
+      <table style="width: 100%; font-size: 13.5px; border-collapse: collapse; font-family: 'Inter', sans-serif;">
+        <tr>
+          <td style="padding: 6px 0; color: #64748B; font-weight: 500; width: 140px;">Account Code:</td>
+          <td style="padding: 6px 0; color: #059669; font-family: 'Inter', monospace; font-size: 14.5px; font-weight: 700;">${clientCode}</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 0; color: #64748B; font-weight: 500;">Your Login Email:</td>
+          <td style="padding: 6px 0; color: #0F172A; font-weight: 600;">${toEmail}</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 0; color: #64748B; font-weight: 500;">Your Password:</td>
+          <td style="padding: 6px 0; color: #D97706; font-family: 'Inter', monospace; font-size: 14.5px; font-weight: 700;">${tempPassword}</td>
+        </tr>
+      </table>
     </div>
   `;
 
@@ -232,7 +293,7 @@ const sendCredentialsEmail = async (toEmail, clientName, clientCode, tempPasswor
     title: 'Updated Login Credentials',
     subtitle: `Hello <strong>${clientName}</strong>, your portal login credentials have been updated by administration:`,
     contentHtml,
-    actionButton: { text: 'Login to Portal Dashboard', url: loginUrl },
+    actionButton: { text: `Log in to ${portalName}`, url: loginUrl },
     bannerAccent: '#059669'
   });
 
@@ -248,11 +309,11 @@ const sendTransactionRequestAlertToAdmin = async (superAdminEmails, clientName, 
   const text = `New ${transactionDetails.type} request from ${clientName} (${clientCode}). Amount: INR ${transactionDetails.amount}.\n— ${COMPANY_NAME}`;
 
   const contentHtml = `
-    <div style="background-color: #F8FAFC; border-left: 4px solid #D97706; border-radius: 8px; padding: 16px; margin: 16px 0; border: 1px solid #E2E8F0; border-left-width: 4px;">
-      <p style="margin: 0 0 6px 0; color: #0F172A; font-size: 15px; font-weight: 700;">Client: ${clientName} (${clientCode})</p>
-      <p style="margin: 0; color: #334155; font-size: 14px;">Requested Amount: <strong style="color: #059669; font-size: 16px;">₹${transactionDetails.amount.toLocaleString('en-IN')}</strong></p>
+    <div style="background-color: #FFFBEB; border-left: 3px solid #D97706; border-radius: 8px; padding: 14px 16px; margin: 16px 0; border: 1px solid #FDE68A;">
+      <p style="margin: 0 0 4px 0; color: #0F172A; font-size: 14px; font-weight: 600;">Client: ${clientName} (${clientCode})</p>
+      <p style="margin: 0; color: #334155; font-size: 13.5px;">Requested Amount: <strong style="color: #059669; font-size: 15px;">₹${transactionDetails.amount.toLocaleString('en-IN')}</strong></p>
     </div>
-    <p style="color: #64748B; font-size: 13px; text-align: center; margin-top: 16px;">Please process this request in your Super Admin Panel.</p>
+    <p style="color: #64748B; font-size: 12.5px; text-align: center; margin-top: 14px;">Please process this request in your Super Admin Control Center.</p>
   `;
 
   const html = buildLightEmailTemplate({
@@ -276,11 +337,11 @@ const sendTransactionStatusNotification = async (toEmail, clientName, transactio
   const text = `Hello ${clientName}, Your ${transactionDetails.type} of INR ${transactionDetails.amount} has been ${actionLabel}.\n— ${COMPANY_NAME}`;
 
   const contentHtml = `
-    <div style="background-color: ${isApproved ? '#F0FDF4' : '#FEF2F2'}; border-left: 4px solid ${isApproved ? '#10B981' : '#EF4444'}; border-radius: 8px; padding: 18px; margin: 16px 0; border: 1px solid ${isApproved ? '#BBF7D0' : '#FCA5A5'}; border-left-width: 4px;">
-      <p style="margin: 0 0 6px 0; color: #0F172A; font-size: 15px; font-weight: 700;">Request: ${transactionDetails.type}</p>
-      <p style="margin: 0 0 6px 0; color: #334155; font-size: 14px;">Amount: <strong style="color: ${isApproved ? '#059669' : '#DC2626'}; font-size: 16px;">₹${transactionDetails.amount.toLocaleString('en-IN')}</strong></p>
-      <p style="margin: 0; color: #334155; font-size: 14px;">Status: <strong style="color: ${isApproved ? '#059669' : '#DC2626'}; text-transform: uppercase;">${actionLabel}</strong></p>
-      ${!isApproved && rejectionReason ? `<p style="margin: 10px 0 0 0; color: #DC2626; font-size: 13px; font-weight: 600;">Reason: ${rejectionReason}</p>` : ''}
+    <div style="background-color: ${isApproved ? '#ECFDF5' : '#FEF2F2'}; border-left: 3px solid ${isApproved ? '#10B981' : '#EF4444'}; border-radius: 8px; padding: 16px; margin: 16px 0; border: 1px solid ${isApproved ? '#A7F3D0' : '#FECACA'};">
+      <p style="margin: 0 0 4px 0; color: #0F172A; font-size: 14px; font-weight: 600;">Request Type: ${transactionDetails.type}</p>
+      <p style="margin: 0 0 4px 0; color: #334155; font-size: 13.5px;">Amount: <strong style="color: ${isApproved ? '#059669' : '#DC2626'}; font-size: 15px;">₹${transactionDetails.amount.toLocaleString('en-IN')}</strong></p>
+      <p style="margin: 0; color: #334155; font-size: 13.5px;">Status: <strong style="color: ${isApproved ? '#059669' : '#DC2626'}; text-transform: uppercase;">${actionLabel}</strong></p>
+      ${!isApproved && rejectionReason ? `<p style="margin: 8px 0 0 0; color: #DC2626; font-size: 12.5px; font-weight: 500;">Reason: ${rejectionReason}</p>` : ''}
     </div>
   `;
 
@@ -312,8 +373,8 @@ const sendKycVerificationNotification = async (clientEmail, clientName, agentEma
   const text = `Hello ${clientName}, KYC status: ${kycStatus}.\n— ${COMPANY_NAME}`;
 
   const contentHtml = `
-    <div style="background-color: #F0FDF4; border-left: 4px solid #10B981; border-radius: 8px; padding: 18px; margin: 16px 0; border: 1px solid #BBF7D0; border-left-width: 4px;">
-      <p style="margin: 0; color: #0F172A; font-size: 15px; font-weight: 700;">
+    <div style="background-color: #ECFDF5; border-left: 3px solid #10B981; border-radius: 8px; padding: 16px; margin: 16px 0; border: 1px solid #A7F3D0;">
+      <p style="margin: 0; color: #0F172A; font-size: 14px; font-weight: 600;">
         ${isFullyVerified ? '🎉 Your KYC is fully verified and active!' : `Document Verified: <strong>${documentField}</strong>`}
       </p>
     </div>
@@ -338,9 +399,9 @@ const sendInvestmentAssignmentNotification = async (clientEmail, clientName, age
   const text = `Hello ${clientName}, investment of INR ${investmentDetails.investmentAmount} assigned.\n— ${COMPANY_NAME}`;
 
   const contentHtml = `
-    <div style="background-color: #F8FAFC; border-left: 4px solid #059669; border-radius: 8px; padding: 18px; margin: 16px 0; border: 1px solid #E2E8F0; border-left-width: 4px;">
-      <p style="margin: 0 0 6px 0; color: #0F172A; font-size: 15px; font-weight: 700;">Segment: ${investmentDetails.segment}</p>
-      <p style="margin: 0; color: #334155; font-size: 14px;">Assigned Amount: <strong style="color: #059669; font-size: 16px;">₹${investmentDetails.investmentAmount.toLocaleString('en-IN')}</strong></p>
+    <div style="background-color: #F8FAFC; border-left: 3px solid #059669; border-radius: 8px; padding: 16px; margin: 16px 0; border: 1px solid #E2E8F0;">
+      <p style="margin: 0 0 4px 0; color: #0F172A; font-size: 14px; font-weight: 600;">Segment: ${investmentDetails.segment}</p>
+      <p style="margin: 0; color: #334155; font-size: 13.5px;">Assigned Amount: <strong style="color: #059669; font-size: 15px;">₹${investmentDetails.investmentAmount.toLocaleString('en-IN')}</strong></p>
     </div>
   `;
 
@@ -371,10 +432,10 @@ const sendRoiPayoutNotification = async (clientEmail, clientName, agentEmail, pa
   const text = `Hello ${clientName}, ROI Payout for ${payoutDetails.payoutMonth} of INR ${payoutDetails.amount} is PAID.\n— ${COMPANY_NAME}`;
 
   const contentHtml = `
-    <div style="background-color: #F0FDF4; border-left: 4px solid #10B981; border-radius: 8px; padding: 18px; margin: 16px 0; border: 1px solid #BBF7D0; border-left-width: 4px;">
-      <p style="margin: 0 0 6px 0; color: #0F172A; font-size: 15px; font-weight: 700;">Month: ${payoutDetails.payoutMonth}</p>
-      <p style="margin: 0 0 6px 0; color: #334155; font-size: 14px;">Payout Amount: <strong style="color: #059669; font-size: 18px;">₹${payoutDetails.amount.toLocaleString('en-IN')}</strong></p>
-      <p style="margin: 0; color: #047857; font-size: 13px; font-weight: 700;">Status: PAID</p>
+    <div style="background-color: #ECFDF5; border-left: 3px solid #10B981; border-radius: 8px; padding: 16px; margin: 16px 0; border: 1px solid #A7F3D0;">
+      <p style="margin: 0 0 4px 0; color: #0F172A; font-size: 14px; font-weight: 600;">Payout Month: ${payoutDetails.payoutMonth}</p>
+      <p style="margin: 0 0 4px 0; color: #334155; font-size: 13.5px;">Payout Amount: <strong style="color: #059669; font-size: 16px;">₹${payoutDetails.amount.toLocaleString('en-IN')}</strong></p>
+      <p style="margin: 0; color: #047857; font-size: 12.5px; font-weight: 600;">Status: PAID</p>
     </div>
   `;
 
@@ -469,9 +530,9 @@ const sendNewArticleNotification = async (recipientEmail, article) => {
   const text = `Hello,\nA new article has been published on Kinetoscope Insights.\nTitle: ${article.title}\n\nBest regards,\n${COMPANY_NAME}`;
   
   const contentHtml = `
-    <div style="background-color: #F8FAFC; border-left: 4px solid #059669; border-radius: 8px; padding: 18px; margin: 16px 0; border: 1px solid #E2E8F0; border-left-width: 4px;">
-      <h3 style="color: #0F172A; margin: 0 0 8px 0; font-size: 17px;">${article.title}</h3>
-      <p style="color: #475569; margin: 0; font-size: 14px; line-height: 1.5;">${article.excerpt}</p>
+    <div style="background-color: #F8FAFC; border-left: 3px solid #059669; border-radius: 8px; padding: 16px; margin: 16px 0; border: 1px solid #E2E8F0;">
+      <h3 style="color: #0F172A; margin: 0 0 6px 0; font-size: 15px;">${article.title}</h3>
+      <p style="color: #475569; margin: 0; font-size: 13px; line-height: 1.5;">${article.excerpt}</p>
     </div>
   `;
 
@@ -490,8 +551,8 @@ const sendSubscriptionConfirmationEmail = async (recipientEmail) => {
   const text = `Hello,\nThank you for subscribing to Kinetoscope Insights.\n\nBest regards,\n${COMPANY_NAME}`;
 
   const contentHtml = `
-    <div style="background-color: #F0FDF4; border-left: 4px solid #10B981; border-radius: 8px; padding: 18px; margin: 16px 0; border: 1px solid #BBF7D0; border-left-width: 4px;">
-      <p style="margin: 0; color: #047857; font-size: 15px; font-weight: 700;">Thank you for subscribing to Kinetoscope Insights!</p>
+    <div style="background-color: #ECFDF5; border-left: 3px solid #10B981; border-radius: 8px; padding: 16px; margin: 16px 0; border: 1px solid #A7F3D0;">
+      <p style="margin: 0; color: #047857; font-size: 14px; font-weight: 600;">Thank you for subscribing to Kinetoscope Insights!</p>
     </div>
   `;
 
@@ -523,13 +584,13 @@ const sendServiceRequestAlertToAdmin = async (reqUser, category, subject, descri
     const text = `New support request submitted by ${userName} (${userEmail}).\nCategory: ${category}\nSubject: ${subject}\nDescription: ${description}\n— ${COMPANY_NAME}`;
 
     const contentHtml = `
-      <div style="background-color: #F8FAFC; border-left: 4px solid #0284C7; border-radius: 8px; padding: 18px; margin: 16px 0; border: 1px solid #E2E8F0; border-left-width: 4px;">
-        <p style="margin: 0 0 6px 0; color: #0F172A; font-size: 15px; font-weight: 700;">From: ${userName} (${userEmail}) [${roleLabel}]</p>
-        <p style="margin: 0 0 6px 0; color: #334155; font-size: 14px;">Category: <strong>${category}</strong></p>
-        <p style="margin: 0 0 6px 0; color: #334155; font-size: 14px;">Subject: <strong>${subject}</strong></p>
-        <div style="margin-top: 10px; padding: 12px; background: #FFFFFF; border-radius: 6px; border: 1px solid #E2E8F0; font-size: 13px; color: #334155; white-space: pre-wrap;">${description}</div>
+      <div style="background-color: #F8FAFC; border-left: 3px solid #0284C7; border-radius: 8px; padding: 16px; margin: 16px 0; border: 1px solid #E2E8F0;">
+        <p style="margin: 0 0 4px 0; color: #0F172A; font-size: 14px; font-weight: 600;">From: ${userName} (${userEmail}) [${roleLabel}]</p>
+        <p style="margin: 0 0 4px 0; color: #334155; font-size: 13.5px;">Category: <strong>${category}</strong></p>
+        <p style="margin: 0 0 4px 0; color: #334155; font-size: 13.5px;">Subject: <strong>${subject}</strong></p>
+        <div style="margin-top: 8px; padding: 10px; background: #FFFFFF; border-radius: 6px; border: 1px solid #E2E8F0; font-size: 12.5px; color: #334155; white-space: pre-wrap;">${description}</div>
       </div>
-      <p style="color: #64748B; font-size: 13px; text-align: center; margin-top: 16px;">Log in to Super Admin Control Center to review and respond.</p>
+      <p style="color: #64748B; font-size: 12px; text-align: center; margin-top: 14px;">Log in to Super Admin Control Center to review and respond.</p>
     `;
 
     const html = buildLightEmailTemplate({
@@ -562,12 +623,12 @@ const sendNewRegistrationAlertToAdmin = async (user, roleLabel) => {
   const text = `A new ${roleLabel} has registered on the portal.\nName: ${user.name}\nEmail: ${user.email}\nCode: ${code}\n— ${COMPANY_NAME}`;
 
   const contentHtml = `
-    <div style="background-color: #F8FAFC; border-left: 4px solid #0284C7; border-radius: 8px; padding: 18px; margin: 16px 0; border: 1px solid #E2E8F0; border-left-width: 4px;">
-      <p style="margin: 0 0 6px 0; color: #0F172A; font-size: 15px; font-weight: 700;">Name: ${user.name}</p>
-      <p style="margin: 0 0 6px 0; color: #334155; font-size: 14px;">Email: <strong>${user.email}</strong></p>
-      <p style="margin: 0; color: #334155; font-size: 14px;">ID Code: <strong style="color: #0284C7; font-family: monospace;">${code}</strong></p>
+    <div style="background-color: #F8FAFC; border-left: 3px solid #0284C7; border-radius: 8px; padding: 16px; margin: 16px 0; border: 1px solid #E2E8F0;">
+      <p style="margin: 0 0 4px 0; color: #0F172A; font-size: 14px; font-weight: 600;">Name: ${user.name}</p>
+      <p style="margin: 0 0 4px 0; color: #334155; font-size: 13.5px;">Email: <strong>${user.email}</strong></p>
+      <p style="margin: 0; color: #334155; font-size: 13.5px;">ID Code: <strong style="color: #0284C7; font-family: 'Inter', monospace;">${code}</strong></p>
     </div>
-    <p style="color: #64748B; font-size: 13px; text-align: center; margin-top: 16px;">Please review and complete KYC verification in Super Admin Panel.</p>
+    <p style="color: #64748B; font-size: 12px; text-align: center; margin-top: 14px;">Please review and complete KYC verification in Super Admin Panel.</p>
   `;
 
   const html = buildLightEmailTemplate({
@@ -590,39 +651,39 @@ const sendDocumentReuploadRequiredEmail = async ({ toEmail, userName, userRole, 
 
   const subject = `Action Required: Document Verification & Re-upload Request — Kinetoscope Films Team`;
   const portalUrl = userRole === 'Agent' 
-    ? (process.env.AGENT_PORTAL_URL || 'http://localhost:5175/profile') 
-    : (process.env.CLIENT_PORTAL_URL || 'http://localhost:5174/profile');
+    ? (process.env.AGENT_PORTAL_URL || 'https://partner.kinetoscopefilms.com') 
+    : (process.env.CLIENT_PORTAL_URL || 'https://cp.kinetoscopefilms.com/login');
 
   const contentHtml = `
-    <p style="font-size: 14.5px; color: #334155; line-height: 1.6; margin-top: 0;">
+    <p style="font-size: 14px; color: #334155; line-height: 1.5; margin-top: 0;">
       Dear <strong>${userName}</strong>,
     </p>
-    <p style="font-size: 14px; color: #334155; line-height: 1.6;">
+    <p style="font-size: 13.5px; color: #334155; line-height: 1.5;">
       During our verification review, our compliance team noted that the following document(s) require re-upload for verification:
     </p>
     
-    <div style="background-color: #FEF2F2; border: 1px solid #FECACA; border-radius: 12px; padding: 18px; margin: 18px 0;">
-      <div style="font-size: 12px; font-weight: 800; color: #991B1B; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">
+    <div style="background-color: #FEF2F2; border: 1px solid #FECACA; border-radius: 10px; padding: 16px; margin: 16px 0;">
+      <div style="font-size: 11.5px; font-weight: 700; color: #991B1B; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">
         ⚠️ Required Re-upload Document(s):
       </div>
-      <ul style="margin: 0; padding-left: 20px; color: #7F1D1D; font-size: 14px; font-weight: 700; line-height: 1.8;">
+      <ul style="margin: 0; padding-left: 18px; color: #7F1D1D; font-size: 13.5px; font-weight: 600; line-height: 1.7;">
         ${missingDocs.map(d => `<li>${d}</li>`).join('')}
       </ul>
     </div>
 
-    <div style="background-color: #F8FAFC; border: 1px dashed #CBD5E1; border-radius: 12px; padding: 16px; margin-bottom: 20px;">
-      <div style="font-size: 12.5px; font-weight: 800; color: #334155; margin-bottom: 6px;">
+    <div style="background-color: #F8FAFC; border: 1px dashed #CBD5E1; border-radius: 10px; padding: 14px; margin-bottom: 18px;">
+      <div style="font-size: 12px; font-weight: 700; color: #334155; margin-bottom: 4px;">
         💡 Guidelines for Fast Document Approval:
       </div>
-      <ul style="margin: 0; padding-left: 18px; color: #64748B; font-size: 12.5px; line-height: 1.6;">
+      <ul style="margin: 0; padding-left: 16px; color: #64748B; font-size: 12px; line-height: 1.5;">
         <li>Ensure documents are clear, legible, and un-cropped (HD quality).</li>
         <li>Accepted file formats: PDF, PNG, JPG, or DOCX.</li>
         <li>Ensure all text (Name, ID Numbers, Account details) match your registered details.</li>
       </ul>
     </div>
 
-    <p style="font-size: 13.5px; color: #475569; line-height: 1.5;">
-      Please log in to your <strong>${userRole} Portal</strong> and navigate to your <strong>My Profile</strong> or <strong>Dashboard</strong> screen to re-upload the document(s).
+    <p style="font-size: 13px; color: #475569; line-height: 1.5;">
+      Please log in to your <strong>${userRole} Portal</strong> and navigate to your <strong>My Profile</strong> screen to re-upload the document(s).
     </p>
   `;
 
@@ -633,7 +694,7 @@ const sendDocumentReuploadRequiredEmail = async ({ toEmail, userName, userRole, 
     bannerAccent: '#DC2626',
     actionButton: {
       url: portalUrl,
-      text: `Log In to ${userRole} Portal & Re-upload`
+      text: `Log In to ${userRole} Portal`
     }
   });
 
@@ -650,29 +711,29 @@ const sendDocumentReuploadRequiredEmail = async ({ toEmail, userName, userRole, 
  * Send email notification to Super Admin when a Client or Agent re-uploads a document.
  */
 const sendDocumentUploadedAdminNotification = async ({ userEmail, userName, userRole, userCode, uploadedDocLabels = [] }) => {
-  const adminEmail = process.env.SUPERADMIN_NOTIFY_EMAIL || process.env.SMTP_USER || 'admin@kinetoscopefilms.com';
-  const superAdminUrl = process.env.SUPER_ADMIN_PORTAL_URL || 'http://localhost:5173/investors';
+  const adminEmail = process.env.SUPERADMIN_NOTIFY_EMAIL || process.env.SMTP_USER || 'info@kinetoscopefilms.com';
+  const superAdminUrl = process.env.SUPER_ADMIN_PORTAL_URL || 'https://superadmin.kinetoscopefilms.com';
 
   const subject = `[Notification] New Document Re-uploaded by ${userRole}: ${userName} (${userCode || 'N/A'})`;
 
   const contentHtml = `
-    <p style="font-size: 14.5px; color: #334155; line-height: 1.6; margin-top: 0;">
+    <p style="font-size: 14px; color: #334155; line-height: 1.5; margin-top: 0;">
       Hello Super Admin,
     </p>
-    <p style="font-size: 14px; color: #334155; line-height: 1.6;">
+    <p style="font-size: 13.5px; color: #334155; line-height: 1.5;">
       <strong>${userName}</strong> (${userRole} — Code: <code>${userCode || 'N/A'}</code>, Email: ${userEmail}) has uploaded/re-uploaded the following document(s):
     </p>
 
-    <div style="background-color: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 12px; padding: 18px; margin: 18px 0;">
-      <div style="font-size: 12px; font-weight: 800; color: #1E40AF; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">
+    <div style="background-color: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 10px; padding: 16px; margin: 16px 0;">
+      <div style="font-size: 11.5px; font-weight: 700; color: #1E40AF; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">
         📄 Uploaded Document(s):
       </div>
-      <ul style="margin: 0; padding-left: 20px; color: #1E3A8A; font-size: 14px; font-weight: 700; line-height: 1.8;">
+      <ul style="margin: 0; padding-left: 18px; color: #1E3A8A; font-size: 13.5px; font-weight: 600; line-height: 1.7;">
         ${uploadedDocLabels.map(d => `<li>${d}</li>`).join('')}
       </ul>
     </div>
 
-    <p style="font-size: 13.5px; color: #475569; line-height: 1.5;">
+    <p style="font-size: 13px; color: #475569; line-height: 1.5;">
       Please log in to the Super Admin Portal to inspect and verify the newly submitted document(s).
     </p>
   `;
@@ -684,7 +745,7 @@ const sendDocumentUploadedAdminNotification = async ({ userEmail, userName, user
     bannerAccent: '#2563EB',
     actionButton: {
       url: superAdminUrl,
-      text: 'Open Super Admin Portal'
+      text: 'Open Super Admin Control Center'
     }
   });
 

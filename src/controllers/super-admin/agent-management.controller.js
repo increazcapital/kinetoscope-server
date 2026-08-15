@@ -201,7 +201,7 @@ const createAgent = asyncHandler(async (req, res, next) => {
 
   try {
     // 9) Send Welcome Email containing credentials
-    const loginUrl = process.env.AGENT_PORTAL_URL || 'http://localhost:5173/agent/login';
+    const loginUrl = process.env.AGENT_PORTAL_URL || 'https://partner.kinetoscopefilms.com';
     await sendWelcomeEmail(email, fullName, agentCode, tempPassword, loginUrl);
   } catch (emailError) {
     console.error(`Welcome email failed to dispatch to ${email}:`, emailError.message);
