@@ -119,6 +119,14 @@ const createInvestment = asyncHandler(async (req, res, next) => {
     return next(new AppError('Client account not found.', 404));
   }
 
+  // Validate that the client actually has an approved capital deposit before allowing investment allocation
+  const approvedDeposits = await Transaction.find({ clientId: clientUser._id, type: 'deposit', status: 'APPROVED' }).lean();
+  const approvedDepositsSum = approvedDeposits.reduce((sum, t) => sum + Number(t.amount || 0), 0);
+
+  if (approvedDepositsSum === 0) {
+    return next(new AppError('Cannot assign investment: This client has no approved capital deposit. Please approve a deposit first.', 400));
+  }
+
   // 1) Search if an active investment ALREADY exists for this client on this SAME project
   let existingSameProjectInv = null;
   if (req.body.projectId) {
