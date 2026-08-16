@@ -78,31 +78,78 @@ const syncAgentCommissionsHelper = async (agentId) => {
         continue;
       }
 
-      // 1. One-Time Commission (Awarded ONCE per client on initial onboarding deposit)
-      const hasOneTimeForClient = existingComms.some(c =>
-        String(c.clientId) === cidStr &&
-        (c.slabType === 'one-time' || c.type === 'ONE TIME' || c.type === 'ONE_TIME')
-      );
+      // 1. One-Time Commission (Awarded FOR EACH distinct deposit transaction of the client)
+      if (deps.length > 0) {
+        for (const dep of deps) {
+          const depIdStr = dep._id ? dep._id.toString() : '';
+          const depAmt = Number(dep.amount || 0);
+          if (depAmt <= 0) continue;
 
-      if (!hasOneTimeForClient && firstDepAmt > 0) {
-        const depDate = deps[0]?.createdAt || invs[0]?.investmentDate || new Date();
-        const oneTimePeriod = new Intl.DateTimeFormat('en-IN', { month: 'short', year: 'numeric' }).format(new Date(depDate));
-        const rate = getSlabRate(firstDepAmt, 'one-time');
-        const amt = Math.round((firstDepAmt * rate) / 100);
+          const depDate = dep.createdAt || dep.date || new Date();
+          const hasCommForDep = existingComms.some(c =>
+            String(c.clientId) === cidStr &&
+            (
+              (c.sourceTransactionId && String(c.sourceTransactionId) === depIdStr) ||
+              (c.investmentAmount === depAmt && new Date(c.date).toDateString() === new Date(depDate).toDateString())
+            )
+          );
 
-        if (amt > 0) {
-          await AgentCommission.create({
-            agentId,
-            clientId: client._id,
-            type: 'ONE TIME',
-            slabType: 'one-time',
-            period: oneTimePeriod,
-            investmentAmount: firstDepAmt,
-            slabRate: rate,
-            amount: amt,
-            status: 'PENDING',
-            date: depDate
-          });
+          if (!hasCommForDep) {
+            const oneTimePeriod = new Intl.DateTimeFormat('en-IN', { month: 'short', year: 'numeric' }).format(new Date(depDate));
+            const rate = getSlabRate(depAmt, 'one-time');
+            const amt = Math.round((depAmt * rate) / 100);
+
+            if (amt > 0) {
+              const newComm = await AgentCommission.create({
+                agentId,
+                clientId: client._id,
+                sourceTransactionId: dep._id,
+                type: 'ONE TIME',
+                slabType: 'one-time',
+                period: oneTimePeriod,
+                investmentAmount: depAmt,
+                slabPercentage: rate,
+                amount: amt,
+                status: 'PENDING',
+                date: depDate
+              });
+              existingComms.push(newComm);
+              console.log(`[Agent Commission Sync] Created distinct ONE TIME commission ${newComm._id} for client ${client.name}, deposit ₹${depAmt}, commission ₹${amt}`);
+            }
+          }
+        }
+      } else if (invs.length > 0) {
+        for (const inv of invs) {
+          const invIdStr = inv._id ? inv._id.toString() : '';
+          const invAmt = Number(inv.investmentAmount || inv.amount || 0);
+          if (invAmt <= 0) continue;
+
+          const invDate = inv.investmentDate || inv.createdAt || new Date();
+          const hasCommForInv = existingComms.some(c =>
+            String(c.clientId) === cidStr && c.investmentAmount === invAmt
+          );
+
+          if (!hasCommForInv) {
+            const oneTimePeriod = new Intl.DateTimeFormat('en-IN', { month: 'short', year: 'numeric' }).format(new Date(invDate));
+            const rate = getSlabRate(invAmt, 'one-time');
+            const amt = Math.round((invAmt * rate) / 100);
+
+            if (amt > 0) {
+              const newComm = await AgentCommission.create({
+                agentId,
+                clientId: client._id,
+                type: 'ONE TIME',
+                slabType: 'one-time',
+                period: oneTimePeriod,
+                investmentAmount: invAmt,
+                slabPercentage: rate,
+                amount: amt,
+                status: 'PENDING',
+                date: invDate
+              });
+              existingComms.push(newComm);
+            }
+          }
         }
       }
 
@@ -122,32 +169,38 @@ const syncAgentCommissionsHelper = async (agentId) => {
             const rate = getSlabRate(activeAmount, 'monthly');
             const amt = Math.round((activeAmount * rate) / 100);
             if (amt > 0) {
-              await AgentCommission.create({
+              const newComm = await AgentCommission.create({
                 agentId,
                 clientId: client._id,
                 type: 'MONTHLY',
                 slabType: 'monthly',
                 period: monthlyPeriod,
                 investmentAmount: activeAmount,
-                slabRate: rate,
+                slabPercentage: rate,
                 amount: amt,
                 status: 'PENDING',
                 date: new Date()
               });
+              existingComms.push(newComm);
             }
           }
         }
       }
 
-      // 3. Deduplicate DB: Ensure only 1 ONE TIME commission per client exists in DB
+      // 3. Deduplicate DB: Ensure distinct keys per deposit transaction so multiple deposits remain separate rows
       const allComms = await AgentCommission.find({ agentId }).sort({ createdAt: -1 });
       const seenKeys = new Set();
       const duplicateIdsToDelete = [];
 
       for (const com of allComms) {
         const cid = com.clientId ? com.clientId.toString() : '';
+        const txId = com.sourceTransactionId ? com.sourceTransactionId.toString() : (com.investmentAmount || '');
         const cType = String(com.type || com.slabType || '').toUpperCase().includes('ONE') ? 'ONE TIME' : 'MONTHLY';
-        const k = cType === 'ONE TIME' ? `${cid}_ONE_TIME` : `${cid}_MONTHLY_${com.period || ''}`;
+        const dateStr = com.date ? new Date(com.date).toISOString().split('T')[0] : '';
+        
+        const k = cType === 'ONE TIME'
+          ? `${cid}_ONE_TIME_${txId}_${dateStr}`
+          : `${cid}_MONTHLY_${com.period || ''}`;
 
         if (seenKeys.has(k)) {
           duplicateIdsToDelete.push(com._id);
