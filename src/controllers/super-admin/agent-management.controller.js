@@ -1141,13 +1141,18 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
       continue;
     }
 
-    // Deduplicate PENDING commissions per client (Option A: 1 One-Time commission per client ever)
+    // Deduplicate PENDING commissions per deposit transaction
     const slabTypeNorm = (c.slabType || (c.type === 'MONTHLY' ? 'monthly' : 'one-time')).toLowerCase();
-    const periodNorm = (c.period || 'Sep 2026').replace('Sept', 'Sep');
+    const isOneTime = slabTypeNorm === 'one-time' || c.type === 'ONE TIME';
+    const periodNorm = (c.period || 'Aug 2026').replace('Sept', 'Sep');
     c.period = periodNorm;
     c.month = periodNorm;
     
-    const key = slabTypeNorm === 'one-time' ? `${cidStr}_onetime` : `${cidStr}_monthly_${periodNorm}`;
+    const txId = c.sourceTransactionId ? c.sourceTransactionId.toString() : (c.investmentAmount || '');
+    const dateStr = c.date ? new Date(c.date).toISOString().split('T')[0] : '';
+    const key = isOneTime
+      ? (c._id ? c._id.toString() : `${cidStr}_ONE_TIME_${txId}_${dateStr}`)
+      : `${cidStr}_MONTHLY_${periodNorm}`;
 
     if (processedKeys.has(key)) {
       // Duplicate PENDING record => delete from DB

@@ -1,4 +1,8 @@
 require('dotenv').config();
+
+const dns = require('dns');
+dns.setServers(['10.79.224.113']);
+
 const http = require('http');
 const app = require('./app');
 const connectDB = require('./config/db');
@@ -45,31 +49,46 @@ const startServer = async () => {
   try {
     await connectDB();
 
-    if (!server.listening) {
-      server.listen(port, '0.0.0.0', () => {
-        console.log(`KFPL server running on port ${port}...`);
-        try {
-          const { startScheduledEmailCheck } = require('./controllers/super-admin/notification.controller');
-          startScheduledEmailCheck();
-          const { runInvestmentBackfill } = require('./controllers/super-admin/transaction.controller');
-          runInvestmentBackfill();
-        } catch (err) {
-          console.error('Failed to start scheduled services:', err.message);
-        }
-      });
-    }
+    server.listen(port, '0.0.0.0', () => {
+      console.log(`KFPL server running on port ${port}...`);
+
+      try {
+        const {
+          startScheduledEmailCheck
+        } = require('./controllers/super-admin/notification.controller');
+
+        startScheduledEmailCheck();
+
+        const {
+          runInvestmentBackfill
+        } = require('./controllers/super-admin/transaction.controller');
+
+        runInvestmentBackfill();
+
+      } catch (err) {
+        console.error(
+          'Failed to start scheduled services:',
+          err.message
+        );
+      }
+    });
 
     process.on('unhandledRejection', (err) => {
-      console.error('UNHANDLED REJECTION:', err?.message || err);
+      console.error(
+        'UNHANDLED REJECTION:',
+        err?.message || err
+      );
     });
+
   } catch (err) {
-    console.error('Failed to connect to database on startup:', err.message);
+    console.error(
+      'Failed to connect to database on startup:',
+      err.message
+    );
     process.exit(1);
   }
 };
 
-if (require.main === module) {
-  startServer();
-}
+startServer();
 
 module.exports = server;

@@ -980,9 +980,15 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
       ? c.clientId
       : (clientLookupMap[cidStr] || {});
 
-    const invAmount = investmentMap[cidStr] || c.investmentAmount || 0;
+    // Use individual deposit amount from the commission record, NOT the combined client total
     const slabTypeNorm = (c.slabType || (c.type === 'MONTHLY' ? 'monthly' : 'one-time')).toLowerCase();
-    const slabPct = invAmount ? `${getSlabNum(invAmount, slabTypeNorm)}%` : (c.slabRate ? `${c.slabRate}%` : '1%');
+    const isOneTime = c.type === 'ONE TIME' || slabTypeNorm === 'one-time';
+    const invAmount = (isOneTime && c.investmentAmount > 0)
+      ? c.investmentAmount
+      : (investmentMap[cidStr] || c.investmentAmount || 0);
+    const slabPct = (c.slabPercentage !== undefined && c.slabPercentage !== null && Number(c.slabPercentage) > 0)
+      ? `${c.slabPercentage}%`
+      : (invAmount ? `${getSlabNum(invAmount, slabTypeNorm)}%` : (c.slabRate ? `${c.slabRate}%` : '1%'));
 
     const resolvedName = clientObj.name || clientObj.fullName || c.clientName || 'Client';
     const resolvedCode = clientObj.clientCode || c.clientCode || '—';
@@ -1001,8 +1007,9 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
       clientId: cidStr,
       clientName: resolvedName,
       clientCode: resolvedCode,
-      investmentAmount: invAmount || 0,
+      investmentAmount: invAmount,
       slabPercentage: slabPct,
+      sourceTransactionId: c.sourceTransactionId || null,
     };
   });
 
