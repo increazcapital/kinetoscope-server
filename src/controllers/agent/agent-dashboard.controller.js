@@ -895,25 +895,35 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
   const uniqueCommissionsMap = new Map();
   commissions.forEach(doc => {
     const c = doc.toObject ? doc.toObject() : doc;
-    if (String(c.status).toUpperCase() === 'PAID') {
-      uniqueCommissionsMap.set(c._id ? c._id.toString() : Math.random(), c);
-      return;
-    }
     const client = c.clientId || {};
     const cidStr = client._id ? client._id.toString() : (typeof client === 'string' ? client : null);
     if (!cidStr) return;
-    const activeInvAmount = investmentMap[cidStr] || 0;
-    if (activeInvAmount === 0) return;
 
     const slabTypeNorm = (c.slabType || (c.type === 'MONTHLY' ? 'monthly' : 'one-time')).toLowerCase();
-    const key = `${cidStr}_${slabTypeNorm}_${c.period || 'Aug 2026'}`;
-    const rateNum = getSlabNum(activeInvAmount, slabTypeNorm);
-    const dynamicAmt = Math.round((activeInvAmount * rateNum) / 100);
+    const isOneTime = slabTypeNorm === 'one-time' || c.type === 'ONE TIME';
+
+    const itemInvAmount = isOneTime
+      ? (Number(c.investmentAmount) > 0 ? Number(c.investmentAmount) : (investmentMap[cidStr] || 0))
+      : (investmentMap[cidStr] || 0);
+
+    const rateNum = (c.slabPercentage && Number(c.slabPercentage) > 0)
+      ? Number(c.slabPercentage)
+      : getSlabNum(itemInvAmount, slabTypeNorm);
+
+    const calculatedAmt = (isOneTime && Number(c.amount) > 0)
+      ? Number(c.amount)
+      : Math.round((itemInvAmount * rateNum) / 100);
+
+    const key = isOneTime
+      ? (c._id ? c._id.toString() : `${cidStr}_ONE_TIME_${itemInvAmount}_${c.date}`)
+      : `${cidStr}_MONTHLY_${c.period || 'Aug 2026'}`;
 
     if (!uniqueCommissionsMap.has(key)) {
       uniqueCommissionsMap.set(key, {
         ...c,
-        amount: dynamicAmt > 0 ? dynamicAmt : c.amount,
+        investmentAmount: itemInvAmount,
+        slabPercentage: rateNum,
+        amount: calculatedAmt > 0 ? calculatedAmt : (c.amount || 0),
       });
     }
   });
