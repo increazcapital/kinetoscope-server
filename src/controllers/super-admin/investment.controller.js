@@ -140,17 +140,7 @@ const createInvestment = asyncHandler(async (req, res, next) => {
     return next(new AppError('Cannot assign investment: This client has no approved capital deposit. Please approve a deposit first.', 400));
   }
 
-  // 1) Search if an active investment ALREADY exists for this client on this SAME project
-  let existingSameProjectInv = null;
-  if (req.body.projectId) {
-    existingSameProjectInv = await Investment.findOne({
-      clientId: clientUser._id,
-      projectId: req.body.projectId,
-      status: 'active'
-    });
-  }
-
-  // 2) Search if client already has an Unallocated or unlinked investment record
+  // Search if client has an Unallocated active investment record (from deposit approval)
   const existingUnallocated = await Investment.findOne({
     clientId: clientUser._id,
     status: 'active',
@@ -169,44 +159,22 @@ const createInvestment = asyncHandler(async (req, res, next) => {
   const inputAmount = Number(req.body.investmentAmount || req.body.amount) || 0;
   const inputRoi = req.body.roiPercentage !== undefined ? req.body.roiPercentage : (req.body.roi !== undefined ? req.body.roi : 0);
 
-  if (existingSameProjectInv) {
-    // MERGE into existing project investment record (Cumulative Same-Project Allocation)
-    const addAmt = inputAmount > 0 ? inputAmount : Number(existingUnallocated?.investmentAmount || 0);
-    existingSameProjectInv.investmentAmount = Number(existingSameProjectInv.investmentAmount || 0) + addAmt;
-    if (inputRoi > 0) existingSameProjectInv.roiPercentage = inputRoi;
-    if (req.body.riskPercentage !== undefined) existingSameProjectInv.riskPercentage = req.body.riskPercentage;
-    if (req.body.contractPeriod || req.body.durationMonths) existingSameProjectInv.durationMonths = Number(req.body.contractPeriod || req.body.durationMonths) || 18;
-    existingSameProjectInv.status = 'active';
-
-    await existingSameProjectInv.save();
-    investment = existingSameProjectInv;
-    console.log(`[Assign Investment] Merged allocation of ₹${addAmt} into existing project investment ${investment._id} for client ${clientUser.name}. Total now: ₹${investment.investmentAmount}`);
-
-    // Deduct or remove from unallocated record if present
-    if (existingUnallocated && existingUnallocated._id.toString() !== existingSameProjectInv._id.toString()) {
-      const remainingUnallocated = Number(existingUnallocated.investmentAmount || 0) - addAmt;
-      if (remainingUnallocated <= 0) {
-        await Investment.findByIdAndDelete(existingUnallocated._id);
-        console.log(`[Assign Investment] Cleaned up zero/exhausted unallocated investment ${existingUnallocated._id}`);
-      } else {
-        existingUnallocated.investmentAmount = remainingUnallocated;
-        await existingUnallocated.save();
-        console.log(`[Assign Investment] Updated remaining unallocated investment ${existingUnallocated._id} to ₹${remainingUnallocated}`);
-      }
-    }
-  } else if (existingUnallocated) {
-    // UPDATE existing unallocated investment record to link selected project & segment without double counting money
+  if (existingUnallocated) {
+    // Convert this specific unallocated investment record to link selected project & segment
     if (req.body.projectId) existingUnallocated.projectId = req.body.projectId;
     if (req.body.segmentAllocation) existingUnallocated.segmentAllocation = req.body.segmentAllocation;
     if (req.body.segment) {
       existingUnallocated.segment = req.body.segment;
     } else if (req.body.projectId) {
       const proj = await Project.findById(req.body.projectId);
-      if (proj) existingUnallocated.segment = proj.segment || proj.category || 'Project Allocated';
+      if (proj) {
+        existingUnallocated.segment = proj.segment || proj.category || 'Project Allocated';
+        existingUnallocated.projectName = proj.name || '';
+      }
     }
 
     if (inputAmount > 0) existingUnallocated.investmentAmount = inputAmount;
-    existingUnallocated.roiPercentage = inputRoi;
+    if (inputRoi > 0) existingUnallocated.roiPercentage = inputRoi;
     if (req.body.riskPercentage !== undefined) existingUnallocated.riskPercentage = req.body.riskPercentage;
     if (req.body.riskLevel) existingUnallocated.riskLevel = req.body.riskLevel;
     if (req.body.contractPeriod || req.body.durationMonths) existingUnallocated.durationMonths = Number(req.body.contractPeriod || req.body.durationMonths) || 18;
@@ -216,11 +184,22 @@ const createInvestment = asyncHandler(async (req, res, next) => {
 
     await existingUnallocated.save();
     investment = existingUnallocated;
-    console.log(`[Assign Investment] Updated existing unallocated investment ${investment._id} for client ${clientUser.name}`);
+    console.log(`[Assign Investment] Converted unallocated investment ${investment._id} to project for client ${clientUser.name}`);
   } else {
-    // Create new active investment if no unallocated record exists
+    // Create a new distinct active investment record
+    let segName = req.body.segment || 'Project Allocated';
+    let pName = req.body.projectName || '';
+    if (req.body.projectId) {
+      const proj = await Project.findById(req.body.projectId);
+      if (proj) {
+        segName = proj.segment || proj.category || segName;
+        pName = proj.name || pName;
+      }
+    }
     const investmentData = {
       ...req.body,
+      segment: segName,
+      projectName: pName,
       investmentAmount: inputAmount,
       roiPercentage: inputRoi,
       clientId: clientUser._id,
@@ -230,6 +209,7 @@ const createInvestment = asyncHandler(async (req, res, next) => {
       createdBy: req.user.id,
     };
     investment = await Investment.create(investmentData);
+    console.log(`[Assign Investment] Created new distinct investment ${investment._id} for client ${clientUser.name}`);
   }
 
   // Update Project funded amount if linked
@@ -362,27 +342,6 @@ const getAllInvestments = asyncHandler(async (req, res, next) => {
     }
   } catch (healErr) {
     console.error('[Investment Auto-Heal Error]:', healErr.message);
-  }
-
-  // Auto-Consolidate: Merge duplicate active investments for the same client and same project
-  try {
-    const activeInvs = await Investment.find({ status: 'active' });
-    const invMap = {};
-    for (const inv of activeInvs) {
-      if (!inv.clientId) continue;
-      const key = `${inv.clientId.toString()}_${inv.projectId ? inv.projectId.toString() : (inv.segment || 'Unallocated')}`;
-      if (!invMap[key]) {
-        invMap[key] = inv;
-      } else {
-        // Merge duplicate into master record and delete duplicate
-        invMap[key].investmentAmount = Number(invMap[key].investmentAmount || 0) + Number(inv.investmentAmount || 0);
-        await invMap[key].save();
-        await Investment.findByIdAndDelete(inv._id);
-        console.log(`[Investment Auto-Consolidate] Merged duplicate investment ${inv._id} into master ${invMap[key]._id}`);
-      }
-    }
-  } catch (consolidateErr) {
-    console.error('[Investment Consolidation Error]:', consolidateErr.message);
   }
 
   const total = await Investment.countDocuments(queryObj);
