@@ -479,16 +479,28 @@ const deleteInvestment = asyncHandler(async (req, res, next) => {
     }
   }
 
-  // Recalculate client total investment in profile & clean up pending AgentCommissions if total is 0
+  // Recalculate client total investment in profile & User models
   if (investment.clientId) {
     try {
       const remainingInvestments = await Investment.find({ clientId: investment.clientId, status: 'active' });
       const newTotal = remainingInvestments.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
       const ClientProfile = require('../../models/ClientProfile.model');
-      await ClientProfile.findOneAndUpdate(
-        { userId: investment.clientId },
-        { $set: { totalInvestment: newTotal } }
-      );
+      
+      if (remainingInvestments.length === 0) {
+        const Transaction = require('../../models/Transaction.model');
+        await Transaction.deleteMany({ clientId: investment.clientId, type: { $in: ['deposit', 'DEPOSIT'] } });
+      }
+
+      await Promise.all([
+        ClientProfile.findOneAndUpdate(
+          { userId: investment.clientId },
+          { $set: { totalInvestment: newTotal } }
+        ),
+        User.findByIdAndUpdate(
+          investment.clientId,
+          { $set: { totalInvestment: newTotal } }
+        )
+      ]);
 
       if (newTotal === 0) {
         const AgentCommission = require('../../models/AgentCommission.model');
@@ -516,8 +528,18 @@ const clearAllInvestments = asyncHandler(async (req, res, next) => {
   const result = await Investment.deleteMany({});
 
   try {
+    const Transaction = require('../../models/Transaction.model');
+    const ClientProfile = require('../../models/ClientProfile.model');
     const AgentCommission = require('../../models/AgentCommission.model');
-    await AgentCommission.deleteMany({ status: 'PENDING' });
+    const RoiPayout = require('../../models/RoiPayout.model');
+
+    await Promise.all([
+      Transaction.deleteMany({ type: { $in: ['deposit', 'DEPOSIT'] } }),
+      ClientProfile.updateMany({}, { $set: { totalInvestment: 0 } }),
+      User.updateMany({ role: ROLES.CLIENT }, { $set: { totalInvestment: 0 } }),
+      AgentCommission.deleteMany({ status: 'PENDING' }),
+      RoiPayout.deleteMany({})
+    ]);
   } catch (commErr) {
     console.error('Failed to clear pending agent commissions on clear all investments:', commErr);
   }
