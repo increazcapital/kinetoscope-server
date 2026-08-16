@@ -53,7 +53,7 @@ const calculateDashboardData = async (userId) => {
 
   // If full capital has been withdrawn (or approved capital withdrawals >= deposits), net total investment is 0
   const isFullCapitalWithdrawn = capitalWithdrawalsSum >= approvedDepositsSum && approvedDepositsSum > 0;
-  const totalInvestment = isFullCapitalWithdrawn ? 0 : Math.max(investmentsSum, netCapital);
+  const totalInvestment = isFullCapitalWithdrawn ? 0 : netCapital;
 
   // Define effective investments array (with fallback for clients with capital but no segment allocations yet)
   const roiRateVal = parseFloat(profile.monthlyRoi) || 1.5;

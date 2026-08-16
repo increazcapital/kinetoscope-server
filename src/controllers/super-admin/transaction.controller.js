@@ -219,7 +219,7 @@ const approveRejectTransaction = asyncHandler(async (req, res, next) => {
       const allActiveClientInvs = await Investment.find({ clientId: transaction.clientId, status: 'active' }).lean();
       const activeInvsSum = allActiveClientInvs.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
 
-      const finalClientTotalInv = Math.max(approvedDepositsSum, activeInvsSum);
+      const finalClientTotalInv = approvedDepositsSum;
 
       await Promise.all([
         ClientProfile.findOneAndUpdate(
