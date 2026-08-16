@@ -902,9 +902,9 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
     const slabTypeNorm = (c.slabType || (c.type === 'MONTHLY' ? 'monthly' : 'one-time')).toLowerCase();
     const isOneTime = slabTypeNorm === 'one-time' || c.type === 'ONE TIME';
 
-    const itemInvAmount = isOneTime
-      ? (Number(c.investmentAmount) > 0 ? Number(c.investmentAmount) : (investmentMap[cidStr] || 0))
-      : (investmentMap[cidStr] || 0);
+    const itemInvAmount = (c.investmentAmount !== undefined && Number(c.investmentAmount) > 0)
+      ? Number(c.investmentAmount)
+      : (isOneTime ? (c.amount ? Math.round(Number(c.amount) * 100 / (getSlabNum(0, slabTypeNorm) || 2)) : 0) : (investmentMap[cidStr] || 0));
 
     const rateNum = (c.slabPercentage && Number(c.slabPercentage) > 0)
       ? Number(c.slabPercentage)
