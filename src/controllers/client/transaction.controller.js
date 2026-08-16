@@ -12,7 +12,8 @@ const asyncHandler = require('../../utils/asyncHandler');
  * POST /api/client/transactions
  */
 const requestTransaction = asyncHandler(async (req, res, next) => {
-  const { type, amount, paymentMethod, referenceNumber, remarks, projectId, projectName } = req.body;
+  const { type, amount, paymentMethod, remarks, projectId, projectName } = req.body;
+  const referenceNumber = req.body.referenceNumber || req.body.reference || req.body.transactionRef || req.body.referenceId || '';
 
   // Basic validation
   if (!type || !amount) {
