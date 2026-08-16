@@ -279,27 +279,25 @@ const registerAgent = asyncHandler(async (req, res, next) => {
     return next(new AppError('Email address is already in use by another account.', 400));
   }
 
-  // 3) Generate a sequential agent code starting from KFPL-AG-1001 with collision check
+  // 3) Generate a sequential agent code starting from KFPL-AG-1001 with gap-filling (reuses deleted IDs)
   const agentUsers = await User.find({ clientCode: { $regex: /^KFPL-AG-/i } }, { clientCode: 1 }).lean();
-  let maxSeq = 1000;
+  const usedSeqs = new Set();
   agentUsers.forEach(a => {
     if (a.clientCode) {
-      const digits = a.clientCode.match(/\d+/);
+      const digits = a.clientCode.match(/(\d+)$/);
       if (digits) {
-        let seq = parseInt(digits[0], 10);
+        let seq = parseInt(digits[1], 10);
         if (seq < 1000 && seq > 0) seq = 1000 + seq;
-        if (!isNaN(seq) && seq > maxSeq) {
-          maxSeq = seq;
-        }
+        if (!isNaN(seq)) usedSeqs.add(seq);
       }
     }
   });
-  let nextSeq = maxSeq + 1;
-  let agentCode = `KFPL-AG-${nextSeq}`;
-  while (await User.findOne({ clientCode: agentCode })) {
+
+  let nextSeq = 1001;
+  while (usedSeqs.has(nextSeq) || await User.findOne({ clientCode: `KFPL-AG-${nextSeq}` })) {
     nextSeq++;
-    agentCode = `KFPL-AG-${nextSeq}`;
   }
+  const agentCode = `KFPL-AG-${nextSeq}`;
 
   // Define database variables outside to perform rollback on error
   let createdUser, createdProfile;

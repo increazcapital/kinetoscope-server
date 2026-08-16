@@ -43,6 +43,14 @@ const payoutSchema = new mongoose.Schema(
       enum: ['pending', 'paid'],
       default: 'pending'
     },
+    roiPercentage: {
+      type: Number,
+      default: null
+    },
+    roiRate: {
+      type: String,
+      default: ''
+    },
     paidAt: {
       type: Date
     }
@@ -86,27 +94,37 @@ payoutSchema.post('save', async function (doc) {
 
     const targetStatus = doc.status === 'paid' ? 'PAID' : 'PENDING';
 
-    // Find and update or create RoiPayout
-    let roiPayout = await RoiPayout.findOne({ clientId: clientUser._id, payoutMonth });
+    // Find if a RoiPayout already exists for this exact Payout doc._id or transactionRefId, or create a new one
+    let roiPayout = await RoiPayout.findOne({
+      $or: [
+        { _id: doc._id },
+        ...(doc.transactionRefId ? [{ transactionRefId: doc.transactionRefId, clientId: clientUser._id }] : [])
+      ]
+    });
+
     if (roiPayout) {
       roiPayout.status = targetStatus;
-      roiPayout.amount = doc.amount; // Sync amount just in case
-      if (targetStatus === 'PAID') {
-        roiPayout.processedDate = doc.paidAt || new Date();
-      } else {
-        roiPayout.processedDate = undefined;
-      }
+      roiPayout.amount = doc.amount;
+      roiPayout.payoutMonth = payoutMonth;
+      if (doc.roiPercentage) roiPayout.roiPercentage = doc.roiPercentage;
+      if (doc.roiRate) roiPayout.roiRate = doc.roiRate;
+      roiPayout.processedDate = targetStatus === 'PAID' ? (doc.paidAt || new Date()) : undefined;
       await roiPayout.save();
-      console.log(`[Payout Sync] Automatically updated RoiPayout for ${clientUser.name} (${payoutMonth}) to ${targetStatus}`);
+      console.log(`[Payout Sync] Automatically updated RoiPayout for ${clientUser.name} (${payoutMonth})`);
     } else {
-      roiPayout = await RoiPayout.create({
+      await RoiPayout.create({
+        _id: doc._id,
         clientId: clientUser._id,
         payoutMonth,
         amount: doc.amount,
+        roiPercentage: doc.roiPercentage,
+        roiRate: doc.roiRate || (doc.roiPercentage ? `${doc.roiPercentage}%` : ''),
         status: targetStatus,
+        transactionRefId: doc.transactionRefId || '',
+        paymentMode: doc.paymentMode || '',
         processedDate: targetStatus === 'PAID' ? (doc.paidAt || new Date()) : undefined
       });
-      console.log(`[Payout Sync] Automatically created RoiPayout for ${clientUser.name} (${payoutMonth}) as ${targetStatus}`);
+      console.log(`[Payout Sync] Automatically created distinct RoiPayout for ${clientUser.name} (${payoutMonth})`);
     }
   } catch (err) {
     console.error('[Payout Sync Error]:', err.message);

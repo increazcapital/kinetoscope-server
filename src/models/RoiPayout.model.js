@@ -27,6 +27,14 @@ const roiPayoutSchema = new mongoose.Schema(
       },
       default: 'PENDING',
     },
+    roiPercentage: {
+      type: Number,
+      default: null,
+    },
+    roiRate: {
+      type: String,
+      default: '',
+    },
     processedDate: {
       type: Date,
     },

@@ -99,11 +99,8 @@ const SENSITIVE_FIELDS = {
   nomineeProofDocument: { level: 2, mask: maskDocumentUrl },
   attachment: { level: 2, mask: maskDocumentUrl },
 
-  // Level 3: Internal Metadata / Remarks
-  referenceNumber: { level: 3 },
-  transactionRefId: { level: 3 },
-  adminRemarks: { level: 3 },
-  remarks: { level: 3 }
+  // Level 3: Internal Metadata / Super Admin Only Remarks
+  adminRemarks: { level: 3 }
 };
 
 /**

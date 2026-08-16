@@ -4,6 +4,10 @@ const ClientProfile = require('../../models/ClientProfile.model');
 const AgentProfile = require('../../models/AgentProfile.model');
 const Payout = require('../../models/Payout.model');
 const Transaction = require('../../models/Transaction.model');
+const DividendAllotment = require('../../models/DividendAllotment.model');
+const AgentCommission = require('../../models/AgentCommission.model');
+const RoiPayout = require('../../models/RoiPayout.model');
+const Investment = require('../../models/Investment.model');
 const AppError = require('../../utils/AppError');
 const asyncHandler = require('../../utils/asyncHandler');
 
@@ -249,25 +253,27 @@ const recordPayout = asyncHandler(async (req, res, next) => {
     payoutStatus = 'paid';
   }
 
+  const passedRoi = req.body.roiPercentage || req.body.monthlyRoi;
+  let parsedRoiRate = passedRoi ? Number(passedRoi) : null;
+  if (!parsedRoiRate) {
+    try {
+      let uObj = await User.findOne({
+        $or: [
+          { clientCode: resolvedRecipientId },
+          { _id: mongoose.Types.ObjectId.isValid(recipientId) ? recipientId : null }
+        ]
+      });
+      if (uObj) {
+        const cProf = await ClientProfile.findOne({ userId: uObj._id });
+        parsedRoiRate = cProf ? (cProf.monthlyRoi || 1.2) : 1.2;
+      }
+    } catch (e) {}
+  }
+
   let finalCommissionType = commissionType || '';
   if (normalizedRecipientType === 'Client Return (ROI)' && (!finalCommissionType || finalCommissionType === 'ROI' || finalCommissionType.includes('12%'))) {
-    const passedRoi = req.body.roiPercentage || req.body.monthlyRoi;
-    if (passedRoi) {
-      finalCommissionType = `ROI (${passedRoi}%)`;
-    } else {
-      try {
-        let uObj = await User.findOne({
-          $or: [
-            { clientCode: resolvedRecipientId },
-            { _id: mongoose.Types.ObjectId.isValid(recipientId) ? recipientId : null }
-          ]
-        });
-        if (uObj) {
-          const cProf = await ClientProfile.findOne({ userId: uObj._id });
-          const cRate = cProf ? (cProf.monthlyRoi || 1.2) : 1.2;
-          finalCommissionType = `ROI (${cRate}%)`;
-        }
-      } catch (e) {}
+    if (parsedRoiRate) {
+      finalCommissionType = `ROI (${parsedRoiRate}%)`;
     }
   }
 
@@ -281,15 +287,14 @@ const recordPayout = asyncHandler(async (req, res, next) => {
     paymentMode: paymentMode || '',
     transactionRefId: transactionRefId || '',
     status: payoutStatus,
+    roiPercentage: parsedRoiRate,
+    roiRate: parsedRoiRate ? `${parsedRoiRate}%` : '',
     paidAt: payoutStatus === 'paid' ? new Date() : undefined
   });
 
   // If this is an Agent Commission payout and marked as paid, sync matching AgentCommission record to PAID
   if (normalizedRecipientType === 'Agent Commission' && payoutStatus === 'paid') {
     try {
-      const AgentCommission = require('../../models/AgentCommission.model');
-      const AgentProfile = require('../../models/AgentProfile.model');
-
       let agentUser = await User.findOne({
         $or: [
           ...(mongoose.Types.ObjectId.isValid(recipientId) ? [{ _id: recipientId }] : []),
@@ -342,16 +347,16 @@ const recordPayout = asyncHandler(async (req, res, next) => {
         }
 
         const pendingComms = await AgentCommission.find(queryFilter).sort({ createdAt: 1 });
-        let targetComm = pendingComms.find(c => c.type === typeFilter) || pendingComms.find(c => Math.abs(c.amount - numericAmount) < 1) || pendingComms[0];
 
-        if (targetComm) {
-          targetComm.status = 'PAID';
-          targetComm.amount = numericAmount;
-          targetComm.paymentMode = paymentMode || 'Bank Transfer';
-          targetComm.transactionRefId = transactionRefId || `TXN-${Date.now()}`;
-          targetComm.paidAt = new Date();
-          await targetComm.save();
-          console.log(`[Payout Sync Success] Agent ${agentUser.name} Commission ${targetComm._id} (₹${targetComm.amount}) marked as PAID`);
+        if (pendingComms.length > 0) {
+          for (const comm of pendingComms) {
+            comm.status = 'PAID';
+            comm.paymentMode = paymentMode || 'Bank Transfer';
+            comm.transactionRefId = transactionRefId || `TXN-${Date.now()}`;
+            comm.paidAt = new Date();
+            await comm.save();
+            console.log(`[Payout Sync Success] Agent ${agentUser.name} Commission ${comm._id} (₹${comm.amount}) marked as PAID`);
+          }
         } else {
           await AgentCommission.create({
             agentId: agentUser._id,
@@ -366,13 +371,6 @@ const recordPayout = asyncHandler(async (req, res, next) => {
             paidAt: new Date(),
             remarks: `Paid via Super Admin Payout`
           });
-        }
-
-        if (typeFilter === 'ONE TIME') {
-          await AgentCommission.updateMany(
-            { agentId: agentUser._id, type: 'ONE TIME', status: 'PENDING' },
-            { $set: { status: 'PAID', amount: numericAmount, paymentMode: paymentMode || 'Bank Transfer', transactionRefId: transactionRefId || `TXN-${Date.now()}`, paidAt: new Date() } }
-          );
         }
       }
     } catch (err) {
@@ -444,12 +442,15 @@ const getPayouts = asyncHandler(async (req, res, next) => {
   const objectIds = recipientIds.filter(id => mongoose.Types.ObjectId.isValid(id));
 
   const [usersByCode, usersById, clientProfiles, agentProfiles, allClientProfiles, allUsers] = await Promise.all([
+    User.find({}, { name: 1, clientCode: 1, monthlyRoi: 1, roiPercent: 1, roiPercentage: 1 }).lean(),
     User.find({ clientCode: { $in: recipientIds } }, { name: 1, clientCode: 1, monthlyRoi: 1, roiPercent: 1, roiPercentage: 1 }).lean(),
     User.find({ _id: { $in: objectIds } }, { name: 1, monthlyRoi: 1, roiPercent: 1, roiPercentage: 1 }).lean(),
     ClientProfile.find({ _id: { $in: objectIds } }).populate('userId', 'name clientCode monthlyRoi roiPercent').lean(),
     AgentProfile.find({ _id: { $in: objectIds } }).populate('userId', 'name').lean(),
     ClientProfile.find({}).populate('userId', 'name clientCode monthlyRoi roiPercent').lean(),
-    User.find({ role: 'client' }, { _id: 1, clientCode: 1, name: 1, monthlyRoi: 1, roiPercent: 1, roiPercentage: 1 }).lean()
+    User.find({ role: 'client' }, { _id: 1, clientCode: 1, name: 1, monthlyRoi: 1, roiPercent: 1, roiPercentage: 1 }).lean(),
+    DividendAllotment.find({}).populate('clientId', 'name clientCode').populate('projectId', 'name').sort({ allotmentDate: -1, createdAt: -1 }).lean(),
+    Transaction.find({ status: { $regex: /^(paid|approved|credited|completed)$/i } }).sort({ createdAt: -1 }).lean()
   ]);
 
   const userMap = {};
@@ -521,10 +522,15 @@ const getPayouts = asyncHandler(async (req, res, next) => {
     
     let displayType = p.commissionType || p.type;
     let payoutDetailStr = p.payoutDetail || p.commissionType || p.type;
+    let finalRoiVal = p.roiPercentage;
+
     if (isClient) {
-      const roiVal = p.roiPercentage || roiMap[p.recipientId] || roiMap[p.clientId] || 5.0;
-      displayType = `ROI (${roiVal}%)`;
-      payoutDetailStr = `Monthly ROI Return (${roiVal}%)`;
+      const regexMatch = p.commissionType ? p.commissionType.match(/ROI\s*\((\d+(\.\d+)?%?)\)/i) : null;
+      finalRoiVal = (p.roiPercentage !== undefined && p.roiPercentage !== null)
+        ? p.roiPercentage
+        : (regexMatch ? parseFloat(regexMatch[1]) : (roiMap[p.recipientId] || roiMap[p.clientId] || 1.2));
+      displayType = `ROI (${finalRoiVal}%)`;
+      payoutDetailStr = `Monthly ROI Return (${finalRoiVal}%)`;
     } else {
       const isOneTime = String(p.commissionType || p.type || '').toLowerCase().includes('one');
       displayType = isOneTime ? 'ONE TIME' : 'MONTHLY';
@@ -539,6 +545,7 @@ const getPayouts = asyncHandler(async (req, res, next) => {
       recipientType: isClient ? 'CLIENT' : 'AGENT',
       type: displayType,
       payoutDetail: payoutDetailStr,
+      roiPercentage: finalRoiVal,
       period: periodFormatted,
       amount: p.amount,
       payoutDate: p.payoutDate,
@@ -635,6 +642,8 @@ const getPayouts = asyncHandler(async (req, res, next) => {
           payoutDate: tx.createdAt ? new Date(tx.createdAt).toISOString().split('T')[0] : '—',
           paymentMode: tx.paymentMethod || 'Bank Transfer',
           transactionRefId: tx.referenceNumber || `WD-${tx._id.toString().slice(-6)}`,
+          transactionRef: tx.referenceNumber || '',
+          referenceNumber: tx.referenceNumber || '',
           status: (tx.status || 'PAID').toUpperCase(),
           paidAt: tx.actionAt ? new Date(tx.actionAt).toISOString().split('T')[0] : (tx.createdAt ? new Date(tx.createdAt).toISOString().split('T')[0] : '—'),
           rawDate: tx.createdAt,
@@ -644,7 +653,6 @@ const getPayouts = asyncHandler(async (req, res, next) => {
   });
 
   // Merge Project Dividend allotments as distinct DIVIDEND CREDIT rows
-  const DividendAllotment = require('../../models/DividendAllotment.model');
   const dividendAllotments = await DividendAllotment.find()
     .populate('clientId', 'name email clientCode')
     .populate('projectId', 'name')
@@ -920,7 +928,6 @@ const deletePayout = asyncHandler(async (req, res, next) => {
   }
 
   if (!payout) {
-    const DividendAllotment = require('../../models/DividendAllotment.model');
     payout = await DividendAllotment.findByIdAndDelete(id);
   }
 
@@ -931,9 +938,6 @@ const deletePayout = asyncHandler(async (req, res, next) => {
   // Revert corresponding AgentCommission record status back to PENDING if deleted
   if (payout.recipientType === 'Agent Commission' || (payout.recipientType || '').toLowerCase().includes('agent')) {
     try {
-      const AgentCommission = require('../../models/AgentCommission.model');
-      const AgentProfile = require('../../models/AgentProfile.model');
-
       let agentUser = await User.findOne({
         $or: [
           { clientCode: payout.recipientId },
@@ -953,22 +957,28 @@ const deletePayout = asyncHandler(async (req, res, next) => {
       }
 
       if (agentUser) {
-        const paidComm = await AgentCommission.findOne({
+        const revertFilter = {
           agentId: agentUser._id,
-          status: 'PAID',
-          $or: [
+          status: 'PAID'
+        };
+        if (payout.transactionRefId) {
+          revertFilter.$or = [
             { transactionRefId: payout.transactionRefId },
             { amount: payout.amount }
-          ]
-        });
-
-        if (paidComm) {
-          paidComm.status = 'PENDING';
-          paidComm.paymentMode = '';
-          paidComm.transactionRefId = '';
-          await paidComm.save();
-          console.log(`[Payout Delete Revert] Reverted Agent ${agentUser.name} Commission ${paidComm._id} (₹${paidComm.amount}) back to PENDING.`);
+          ];
         }
+        const updateRes = await AgentCommission.updateMany(
+          revertFilter,
+          {
+            $set: {
+              status: 'PENDING',
+              paymentMode: '',
+              transactionRefId: '',
+              paidAt: null
+            }
+          }
+        );
+        console.log(`[Payout Delete Revert] Reverted ${updateRes.modifiedCount} Agent ${agentUser.name} Commissions back to PENDING.`);
       }
     } catch (revertErr) {
       console.error('Error reverting agent commission on payout delete:', revertErr);

@@ -258,28 +258,28 @@ const registerClient = asyncHandler(async (req, res, next) => {
     return next(new AppError('Email address is already in use by another account.', 400));
   }
 
-  // 2) Generate sequential clientCode KFPL-CL-XXXX
+  // 2) Generate sequential clientCode KFPL-CL-XXXX with gap-filling (reuses deleted IDs)
   const clients = await User.find({
     role: { $in: ['client', 'CLIENT'] },
     clientCode: { $exists: true, $ne: null }
   }, { clientCode: 1 }).lean();
-  let maxSeq = 1000;
+
+  const usedSeqs = new Set();
   clients.forEach(c => {
     if (c.clientCode) {
       const digits = c.clientCode.match(/(\d+)$/);
       if (digits) {
         const seq = parseInt(digits[1], 10);
-        if (!isNaN(seq) && seq > maxSeq) {
-          maxSeq = seq;
-        }
+        if (!isNaN(seq)) usedSeqs.add(seq);
       }
     }
   });
-  let clientCode = `KFPL-CL-${maxSeq + 1}`;
-  while (await User.findOne({ clientCode })) {
-    maxSeq++;
-    clientCode = `KFPL-CL-${maxSeq + 1}`;
+
+  let nextSeq = 1001;
+  while (usedSeqs.has(nextSeq) || await User.findOne({ clientCode: `KFPL-CL-${nextSeq}` })) {
+    nextSeq++;
   }
+  const clientCode = `KFPL-CL-${nextSeq}`;
 
   // 3) Process file uploads flexibly
   const panFile = req.files && (req.files['panDocument']?.[0] || req.files['panCard']?.[0] || req.files['pan']?.[0]);
@@ -287,8 +287,8 @@ const registerClient = asyncHandler(async (req, res, next) => {
   const bankFile = req.files && (req.files['bankProofDocument']?.[0] || req.files['bankStatementProof']?.[0] || req.files['bankProof']?.[0]);
   const nomineeFile = req.files && (req.files['nomineeProofDocument']?.[0] || req.files['nomineeProof']?.[0]);
 
-  if (!panFile || !aadhaarFile || !bankFile) {
-    return next(new AppError('Please upload all required KYC documents (PAN, Aadhaar, Bank Proof).', 400));
+  if (!panFile || !aadhaarFile) {
+    return next(new AppError('Please upload all required KYC documents (PAN Card and Aadhaar Card).', 400));
   }
 
   let panDocumentUrl = '';
@@ -302,7 +302,9 @@ const registerClient = asyncHandler(async (req, res, next) => {
     console.log('[Client Register] Uploading KYC files to Cloudinary...');
     panDocumentUrl = await uploadBufferToCloudinary(panFile.buffer, 'kinetoscope/clients/kyc');
     aadhaarDocumentUrl = await uploadBufferToCloudinary(aadhaarFile.buffer, 'kinetoscope/clients/kyc');
-    bankProofDocumentUrl = await uploadBufferToCloudinary(bankFile.buffer, 'kinetoscope/clients/kyc');
+    if (bankFile) {
+      bankProofDocumentUrl = await uploadBufferToCloudinary(bankFile.buffer, 'kinetoscope/clients/kyc');
+    }
     if (nomineeFile) {
       nomineeProofDocumentUrl = await uploadBufferToCloudinary(nomineeFile.buffer, 'kinetoscope/clients/kyc');
     }

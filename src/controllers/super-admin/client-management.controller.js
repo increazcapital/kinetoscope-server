@@ -51,20 +51,17 @@ const deleteCloudinaryFiles = async (urls) => {
  * POST /api/super-admin/clients
  */
 const createClient = asyncHandler(async (req, res, next) => {
-  const fileFields = [
+  const requiredFileFields = [
     'panDocument',
     'aadhaarDocument',
-    'bankProofDocument',
-    'agreementDocument',
-    'nomineeProofDocument',
   ];
 
-  // 1) Validate that all 5 files are present in the request
+  // 1) Validate that mandatory KYC documents are present in the request
   if (!req.files) {
-    return next(new AppError('No documents were uploaded. Please upload all 5 required documents.', 400));
+    return next(new AppError('No documents were uploaded. Please upload PAN Card and Aadhaar Card.', 400));
   }
 
-  for (const field of fileFields) {
+  for (const field of requiredFileFields) {
     if (!req.files[field] || req.files[field].length === 0) {
       return next(new AppError(`Required document missing: ${field}`, 400));
     }
@@ -136,32 +133,28 @@ const createClient = asyncHandler(async (req, res, next) => {
     return next(new AppError(`Email address (${cleanEmail}) is already in use by another account.`, 400));
   }
 
-  // 3) Generate a sequential client code starting from KFPL-CL-1001 with collision check
-  // Query ALL client users with any code to find the true max sequence (catches malformed codes too)
+  // 3) Generate a sequential client code starting from KFPL-CL-1001 with gap-filling (reuses deleted IDs)
   const activeClientUsers = await User.find({
     role: { $in: [ROLES.CLIENT, 'client', 'CLIENT'] },
     clientCode: { $exists: true, $ne: null }
   }, { clientCode: 1 }).lean();
 
-  let maxSeq = 1000;
+  const usedSeqs = new Set();
   activeClientUsers.forEach(c => {
     if (c.clientCode) {
-      // Extract trailing digits from the code (e.g. KFPL-CL-1005 -> 1005, KFPL-1001 -> 1001)
       const digits = c.clientCode.match(/(\d+)$/);
       if (digits) {
         const seq = parseInt(digits[1], 10);
-        if (!isNaN(seq) && seq > maxSeq) {
-          maxSeq = seq;
-        }
+        if (!isNaN(seq)) usedSeqs.add(seq);
       }
     }
   });
-  let nextSeq = maxSeq + 1;
-  let clientCode = `KFPL-CL-${nextSeq}`;
-  while (await User.findOne({ clientCode })) {
+
+  let nextSeq = 1001;
+  while (usedSeqs.has(nextSeq) || await User.findOne({ clientCode: `KFPL-CL-${nextSeq}` })) {
     nextSeq++;
-    clientCode = `KFPL-CL-${nextSeq}`;
   }
+  const clientCode = `KFPL-CL-${nextSeq}`;
 
   // 4) Use provided custom password or generate a secure temporary password
   const tempPassword = password || portalPassword || generateTempPassword();
@@ -775,7 +768,9 @@ const updateClient = asyncHandler(async (req, res, next) => {
 
   const isFullyVerified = isPanOk && isAadhaarOk && isBankOk && isAgreementOk;
 
-  if (!isFullyVerified) {
+  if (req.body.kycStatus && ['REJECTED', 'HOLD', 'INACTIVE'].includes(String(req.body.kycStatus).toUpperCase())) {
+    profileUpdates.kycStatus = String(req.body.kycStatus).toUpperCase();
+  } else if (!isFullyVerified || !finalBank || String(finalBank).trim() === '') {
     profileUpdates.kycStatus = 'PENDING';
   } else if (isFullyVerified && (req.body.kycStatus === 'VERIFIED' || profile.kycStatus === 'PENDING')) {
     profileUpdates.kycStatus = 'VERIFIED';
@@ -1041,9 +1036,14 @@ const verifyDocument = asyncHandler(async (req, res, next) => {
     (!profile.agreementDocument || documentField === 'agreementDocument' ? true : profile.agreementDocumentVerified) &&
     (!profile.nomineeProofDocument || documentField === 'nomineeProofDocument' ? true : profile.nomineeProofDocumentVerified);
 
-  // Auto-update KYC status to VERIFIED when all documents are verified
-  if (allVerified) {
+  // Bank document must actually be uploaded (not just verified flag) for KYC to be VERIFIED
+  const bankDocUploaded = profile.bankProofDocument && String(profile.bankProofDocument).trim() !== '';
+
+  // Auto-update KYC status to VERIFIED when all documents are verified AND bank doc is uploaded
+  if (allVerified && bankDocUploaded) {
     profile.kycStatus = 'VERIFIED';
+  } else if (allVerified && !bankDocUploaded) {
+    profile.kycStatus = 'PENDING';
   }
 
   await profile.save();

@@ -258,7 +258,10 @@ const calculateDashboardData = async (userId) => {
       processedDate: p.payoutDate || p.createdAt,
       paymentMode: p.paymentMode || 'Bank Transfer',
       status: p.status ? p.status.toUpperCase() : 'PAID',
-      refId: p.transactionRefId || '—'
+      refId: p.transactionRefId || p.transactionRef || '',
+      transactionRef: p.transactionRefId || p.transactionRef || '',
+      transactionRefId: p.transactionRefId || p.transactionRef || '',
+      referenceNumber: p.transactionRefId || p.transactionRef || ''
     };
   });
 
@@ -671,7 +674,9 @@ const getClientPayouts = asyncHandler(async (req, res, next) => {
       amount: p.amount,
       payoutDate: p.payoutDate,
       paymentMode: p.paymentMode || '—',
-      transactionRefId: p.transactionRefId || '—',
+      transactionRefId: p.transactionRefId || '',
+      transactionRef: p.transactionRefId || p.transactionRef || '',
+      referenceNumber: p.transactionRefId || p.transactionRef || '',
       status: p.status === 'paid' ? 'PAID' : 'PENDING',
       paidAt: p.paidAt ? p.paidAt.toISOString().split('T')[0] : '—',
       period: periodFormatted

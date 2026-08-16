@@ -44,6 +44,7 @@ const syncAgentCommissionsHelper = async (agentId) => {
         }
       }
       if (slabType === 'one-time') {
+        if (amount <= 10000) return 1;
         if (amount <= 2500000) return 2;
         if (amount <= 5000000) return 3;
         if (amount <= 10000000) return 4;
@@ -357,15 +358,25 @@ const getAgentDashboard = asyncHandler(async (req, res, next) => {
     if (activeInvAmt <= 0) return;
 
     const slabTypeNorm = (c.slabType || (c.type === 'MONTHLY' ? 'monthly' : 'one-time')).toLowerCase();
+    const isOneTime = slabTypeNorm === 'one-time' || c.type === 'ONE TIME';
     const periodStr = c.period || 'Aug 2026';
-    const key = `${cidStr}_${slabTypeNorm}_${periodStr}`;
+    const txId = c.sourceTransactionId ? c.sourceTransactionId.toString() : (c.investmentAmount || '');
+    const dateStr = c.date ? new Date(c.date).toISOString().split('T')[0] : '';
+
+    const key = isOneTime
+      ? (c._id ? c._id.toString() : `${cidStr}_ONE_TIME_${txId}_${dateStr}`)
+      : `${cidStr}_MONTHLY_${periodStr}`;
+
+    const invAmt = Number(c.investmentAmount || 0);
+    const ratePct = (c.slabPercentage && Number(c.slabPercentage) > 0) ? Number(c.slabPercentage) : getSlabRate(invAmt, slabTypeNorm);
+    const actualAmt = (invAmt > 0 && ratePct > 0) ? Math.round((invAmt * ratePct) / 100) : Number(c.amount || 0);
 
     if (!uniqueCommissionsMap.has(key)) {
-      uniqueCommissionsMap.set(key, c);
+      uniqueCommissionsMap.set(key, { ...c, amount: actualAmt });
     } else {
       const existing = uniqueCommissionsMap.get(key);
       if (String(c.status).toUpperCase() === 'PAID' && String(existing.status).toUpperCase() !== 'PAID') {
-        uniqueCommissionsMap.set(key, c);
+        uniqueCommissionsMap.set(key, { ...c, amount: actualAmt });
       }
     }
   });
@@ -910,9 +921,9 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
       ? Number(c.slabPercentage)
       : getSlabNum(itemInvAmount, slabTypeNorm);
 
-    const calculatedAmt = (isOneTime && Number(c.amount) > 0)
-      ? Number(c.amount)
-      : Math.round((itemInvAmount * rateNum) / 100);
+    const calculatedAmt = (itemInvAmount > 0 && rateNum > 0)
+      ? Math.round((itemInvAmount * rateNum) / 100)
+      : (Number(c.amount) || 0);
 
     const key = isOneTime
       ? (c._id ? c._id.toString() : `${cidStr}_ONE_TIME_${itemInvAmount}_${c.date}`)

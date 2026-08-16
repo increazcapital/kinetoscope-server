@@ -232,21 +232,40 @@ const getClientNotifications = asyncHandler(async (req, res) => {
   });
 
   // 9. KYC Status
+  const bankDocMissing = !profile || !profile.bankProofDocument || profile.bankProofDocument.trim() === '';
   if (profile && profile.kycStatus) {
-    const kycSt = String(profile.kycStatus).toUpperCase();
+    const kycSt = bankDocMissing ? 'PENDING' : String(profile.kycStatus).toUpperCase();
     notifications.push({
       id: `kyc-${profile._id}`,
       type: 'kyc',
       title: `KYC Status: ${kycSt}`,
-      message: kycSt === 'VERIFIED' ? 'Your KYC documents & agreement are verified.' : kycSt === 'REJECTED' ? 'Your KYC verification requires re-upload.' : 'Your KYC documents are under review.',
+      message: kycSt === 'VERIFIED' ? 'Your KYC documents & agreement are verified.' : kycSt === 'REJECTED' ? 'Your KYC verification requires re-upload.' : 'Your KYC documents are under review. Please ensure all required documents are uploaded.',
       date: profile.updatedAt || profile.createdAt || new Date(),
       link: '/profile',
       category: kycSt === 'VERIFIED' ? 'success' : kycSt === 'REJECTED' ? 'danger' : 'warning',
     });
   }
 
-  // Sort latest first
-  notifications.sort((a, b) => new Date(b.date) - new Date(a.date));
+  // 10. Persistent Bank Document Reminder (un-dismissable — stays until uploaded)
+  if (bankDocMissing) {
+    notifications.unshift({
+      id: 'bank-doc-required-persistent',
+      type: 'bank_doc_required',
+      title: '⚠️ Action Required: Upload Bank Document',
+      message: 'Please upload your bank proof document (cancelled cheque / bank statement) to complete your KYC verification. Your KYC cannot be approved without this document.',
+      date: new Date(),
+      link: '/profile',
+      category: 'danger',
+      persistent: true,
+    });
+  }
+
+  // Sort latest first (but persistent notifications stay at the top)
+  notifications.sort((a, b) => {
+    if (a.persistent && !b.persistent) return -1;
+    if (!a.persistent && b.persistent) return 1;
+    return new Date(b.date) - new Date(a.date);
+  });
 
   // User persistent status filter
   const UserNotificationStatus = require('../../models/UserNotificationStatus.model');
@@ -269,11 +288,11 @@ const getClientNotifications = asyncHandler(async (req, res) => {
   };
 
   const processedList = notifications
-    .filter((n) => !isDeleted(n.id))
+    .filter((n) => n.persistent || !isDeleted(n.id))
     .map((n) => ({
       ...n,
-      read: isRead(n.id) || n.read || false,
-      isRead: isRead(n.id) || n.read || false,
+      read: n.persistent ? false : (isRead(n.id) || n.read || false),
+      isRead: n.persistent ? false : (isRead(n.id) || n.read || false),
     }))
     .slice(0, 25);
 

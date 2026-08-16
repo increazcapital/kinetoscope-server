@@ -163,9 +163,34 @@ const getRoiTab = async (clientId) => {
     };
   }
 
-  let payouts = existingRoiPayouts.length > 0 ? [...existingRoiPayouts] : [];
+  let payouts = [];
 
-  if (payouts.length === 0) {
+  if (paidPayouts && paidPayouts.length > 0) {
+    payouts = paidPayouts.map(p => {
+      let mStr = '—';
+      if (p.payoutDate) {
+        const parts = String(p.payoutDate).split('-');
+        if (parts.length >= 2) {
+          const dObj = new Date(parts[0], parseInt(parts[1], 10) - 1, parts[2] ? parseInt(parts[2], 10) : 1);
+          mStr = new Intl.DateTimeFormat('en-IN', { month: 'short', year: 'numeric' }).format(dObj);
+        }
+      }
+      return {
+        _id: p._id,
+        clientId: realClientId,
+        payoutMonth: mStr !== '—' ? mStr : (p.period || 'Aug 2026'),
+        amount: Number(p.amount || 0),
+        roiPercentage: p.roiPercentage,
+        roiRate: p.roiRate || (p.commissionType ? p.commissionType.match(/ROI\s*\((\d+(\.\d+)?%?)\)/i)?.[1] : ''),
+        status: (p.status || 'paid').toUpperCase(),
+        processedDate: p.paidAt || p.payoutDate || p.createdAt,
+        createdAt: p.createdAt,
+        updatedAt: p.updatedAt
+      };
+    });
+  } else if (existingRoiPayouts.length > 0) {
+    payouts = [...existingRoiPayouts];
+  } else {
     const currentMonthStr = new Date().toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
     payouts.push({
       _id: `gen_roi_${realClientId}`,
@@ -202,7 +227,15 @@ const getRoiTab = async (clientId) => {
     }
 
     const storedRate = p.roiRate || p.roiPercentage || p.rate;
-    const finalRateStr = storedRate ? (String(storedRate).endsWith('%') ? String(storedRate) : `${storedRate}%`) : `${configuredRoiRate}%`;
+    let finalRateStr;
+    if (storedRate) {
+      finalRateStr = String(storedRate).endsWith('%') ? String(storedRate) : `${storedRate}%`;
+    } else if (finalAmount > 0 && totalInv > 0 && isPaidInDb) {
+      const calcRate = Math.round((finalAmount / totalInv) * 100 * 10) / 10;
+      finalRateStr = `${calcRate}%`;
+    } else {
+      finalRateStr = `${configuredRoiRate}%`;
+    }
 
     return {
       _id: p._id,
@@ -212,6 +245,7 @@ const getRoiTab = async (clientId) => {
       status: finalStatus,
       processedDate: finalProcessedDate,
       roiRate: finalRateStr,
+      roiPercentage: parseFloat(finalRateStr.replace('%', '')) || configuredRoiRate,
       createdAt: p.createdAt,
       updatedAt: p.updatedAt,
     };
