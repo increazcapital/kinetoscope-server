@@ -119,11 +119,24 @@ const createInvestment = asyncHandler(async (req, res, next) => {
     return next(new AppError('Client account not found.', 404));
   }
 
-  // Validate that the client actually has an approved capital deposit before allowing investment allocation
-  const approvedDeposits = await Transaction.find({ clientId: clientUser._id, type: 'deposit', status: 'APPROVED' }).lean();
-  const approvedDepositsSum = approvedDeposits.reduce((sum, t) => sum + Number(t.amount || 0), 0);
+  // Validate that the client actually has an approved capital deposit or total investment balance
+  const clientProfile = await ClientProfile.findOne({ userId: clientUser._id }).lean();
+  const profileTotalInv = Number(clientProfile?.totalInvestment || clientUser?.totalInvestment || 0);
 
-  if (approvedDepositsSum === 0) {
+  const approvedDeposits = await Transaction.find({
+    $or: [
+      { clientId: clientUser._id },
+      { clientId: String(clientUser._id) },
+      ...(clientUser.clientCode ? [{ clientCode: clientUser.clientCode }] : [])
+    ],
+    type: { $in: ['deposit', 'DEPOSIT'] },
+    status: { $in: ['approved', 'APPROVED', 'paid', 'PAID'] }
+  }).lean();
+
+  const approvedDepositsSum = approvedDeposits.reduce((sum, t) => sum + Number(t.amount || 0), 0);
+  const totalAvailableCapital = Math.max(approvedDepositsSum, profileTotalInv);
+
+  if (totalAvailableCapital === 0) {
     return next(new AppError('Cannot assign investment: This client has no approved capital deposit. Please approve a deposit first.', 400));
   }
 
