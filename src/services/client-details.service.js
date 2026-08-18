@@ -118,12 +118,22 @@ const getClientDetailsData = async (clientId) => {
   const totalInvestment = isFullCapitalWithdrawn ? 0 : Math.max(invTotal, depTotal);
   const activeInvestmentsCount = isFullCapitalWithdrawn ? 0 : Math.max(activeInvestmentsList.length, (approvedDeposits.length > 0 && invTotal === 0) ? 1 : 0);
 
-  const allocatedInvestmentsList = activeInvestmentsList.filter(inv => {
-    const seg = String(inv.segment || inv.projectName || '').toLowerCase().trim();
-    return seg && seg !== 'unallocated' && seg !== 'unallocated segment' && seg !== 'none' && seg !== '—' && seg !== '-';
+  const uniqueAllocatedSegments = new Set();
+  activeInvestmentsList.forEach(inv => {
+    if (Array.isArray(inv.segmentAllocation) && inv.segmentAllocation.length > 0) {
+      inv.segmentAllocation.forEach(s => {
+        const name = String(s.segmentName || '').toLowerCase().trim();
+        if (name && name !== 'unallocated' && name !== 'general capital pool' && name !== 'capital deposit') {
+          uniqueAllocatedSegments.add(name);
+        }
+      });
+    } else {
+      const seg = String(inv.segment || inv.projectName || '').toLowerCase().trim();
+      if (seg && seg !== 'unallocated' && seg !== 'unallocated segment' && seg !== 'none' && seg !== '—' && seg !== '-' && seg !== 'general capital pool' && seg !== 'capital deposit') {
+        uniqueAllocatedSegments.add(seg);
+      }
+    }
   });
-
-  const uniqueAllocatedSegments = new Set(allocatedInvestmentsList.map(inv => String(inv.segment || inv.projectName).toLowerCase().trim()));
   const activeSegmentsCount = uniqueAllocatedSegments.size;
 
   const configuredMonthlyRoi = profile.monthlyRoi !== undefined ? Number(profile.monthlyRoi) : 0;
