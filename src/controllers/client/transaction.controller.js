@@ -11,6 +11,7 @@ const asyncHandler = require('../../utils/asyncHandler');
  * Request a deposit or withdrawal transaction (Client portal)
  * POST /api/client/transactions
  */
+const requestTransaction = asyncHandler(async (req, res, next) => {
   const ClientProfile = require('../../models/ClientProfile.model');
   const { type, amount, paymentMethod, remarks, projectId, projectName, bankDetails } = req.body;
   const referenceNumber = req.body.referenceNumber || req.body.reference || req.body.transactionRef || req.body.referenceId || '';
