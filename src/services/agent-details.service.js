@@ -116,6 +116,7 @@ const getAgentDetailsData = async (agentId) => {
       bankAccount: profObj.accountNumber || profObj.bankAccount || '',
       ifscCode: profObj.ifscCode || '',
       ifsc: profObj.ifscCode || profObj.ifsc || '',
+      upiId: profObj.upiId || profile.upiId || '',
       residencyStatus: profile.residencyStatus || 'National (Domestic)',
       nomineeName: profile.nomineeName || '',
       nomineeRelation: profile.nomineeRelation || '',

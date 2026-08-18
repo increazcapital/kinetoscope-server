@@ -579,19 +579,12 @@ const getPayouts = asyncHandler(async (req, res, next) => {
 
       const itemRecipientType = isAgent ? 'AGENT' : 'CLIENT';
       if (!recipientType || recipientType === 'All' || recipientType.toUpperCase() === itemRecipientType) {
-        let itemRoi = tx.roiPercentage || tx.snapshotRoi;
-        if (!itemRoi) {
-          if (Number(tx.amount || 0) === 770) {
-            itemRoi = 7.7;
-          } else {
-            const cidStr = tx.clientId ? (tx.clientId._id ? tx.clientId._id.toString() : String(tx.clientId)) : null;
-            itemRoi = (cidStr && roiMap[cidStr]) ? roiMap[cidStr] : 7.7;
-          }
-        }
+        const cidStr = tx.clientId ? (tx.clientId._id ? tx.clientId._id.toString() : String(tx.clientId)) : null;
+        const clientRoiVal = tx.roiPercentage || tx.snapshotRoi || (cidStr && roiMap[cidStr]) || null;
 
         const descLower = String(tx.description || tx.remarks || tx.referenceNumber || '').toLowerCase();
         const isRoiWD = tx.withdrawalType === 'roi' || descLower.includes('roi');
-        const isDivWD = tx.withdrawalType === 'dividend' || (descLower.includes('div') && !isRoiWD) || (Number(tx.amount || 0) === 100 && !isAgent);
+        const isDivWD = tx.withdrawalType === 'dividend' || (descLower.includes('div') && !isRoiWD);
         const isCapWD = tx.withdrawalCategory === 'capital' || (descLower.includes('capital') && !isRoiWD && !isDivWD);
 
         const isOneTimeCommWD = isAgent && (tx.withdrawalCategory === 'one-time' || descLower.includes('one-time') || descLower.includes('onetime'));
@@ -602,28 +595,28 @@ const getPayouts = asyncHandler(async (req, res, next) => {
 
         if (isAgent) {
           if (isOneTimeCommWD) {
-            typeLabel = 'Withdrawal One Time Commission';
-            detailLabel = 'Withdrawal One Time Commission';
+            typeLabel = 'Commission Withdrawal (One-Time)';
+            detailLabel = tx.paymentMethod ? `One-Time Commission (${tx.paymentMethod})` : 'Withdrawal One Time Commission';
           } else if (isMonthlyCommWD) {
-            typeLabel = 'Withdrawal Monthly Commission';
-            detailLabel = 'Withdrawal Monthly Commission';
+            typeLabel = 'Commission Withdrawal (Monthly)';
+            detailLabel = tx.paymentMethod ? `Monthly Commission (${tx.paymentMethod})` : 'Withdrawal Monthly Commission';
           } else {
-            typeLabel = tx.withdrawalCategory ? `Withdrawal Agent Commission (${tx.withdrawalCategory})` : 'Withdrawal Agent Commission';
-            detailLabel = typeLabel;
+            typeLabel = 'Commission Withdrawal';
+            detailLabel = tx.paymentMethod ? `Commission Withdrawal (${tx.paymentMethod})` : 'Agent Commission Withdrawal';
           }
         } else {
           if (isDivWD) {
-            typeLabel = 'Withdrawal Dividend Bonus';
+            typeLabel = 'Dividend Withdrawal';
             detailLabel = 'Withdrawal Dividend Bonus';
           } else if (isRoiWD) {
-            typeLabel = `Withdrawal ROI (${itemRoi}%)`;
-            detailLabel = `Withdrawal ROI (${itemRoi}%)`;
+            typeLabel = clientRoiVal ? `Withdrawal ROI (${clientRoiVal}%)` : 'ROI Withdrawal';
+            detailLabel = clientRoiVal ? `Withdrawal ROI (${clientRoiVal}%)` : 'Monthly ROI Withdrawal';
           } else if (isCapWD) {
             typeLabel = 'Capital Withdrawal';
             detailLabel = 'Capital Account Withdrawal';
           } else {
-            typeLabel = `Withdrawal ROI (${itemRoi}%)`;
-            detailLabel = `Withdrawal ROI (${itemRoi}%)`;
+            typeLabel = 'Withdrawal';
+            detailLabel = tx.remarks || 'Wallet Withdrawal';
           }
         }
 

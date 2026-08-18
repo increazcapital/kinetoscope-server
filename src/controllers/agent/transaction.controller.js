@@ -188,15 +188,25 @@ const requestAgentWithdrawal = asyncHandler(async (req, res, next) => {
     return next(new AppError(`Withdrawal request exceeds your available balance of ₹${availableBalance.toLocaleString('en-IN')}`, 400));
   }
 
-  // 2. Fetch Agent bank details
+  // 2. Fetch Agent bank details & selected payout mode
+  const { note, paymentMethod, upiId } = req.body;
   const agentProfile = await AgentProfile.findOne({ userId: agentId });
-  const bankDetailsObj = agentProfile ? {
-    accountHolderName: agentUser?.name || 'Agent',
-    bankName: agentProfile.bankName || '',
-    accountNumber: agentProfile.accountNumber || '',
-    ifscCode: agentProfile.ifscCode || '',
-    upiId: agentProfile.upiId || '',
-  } : {};
+  const selectedMode = (paymentMethod || (upiId ? 'UPI' : 'Bank Transfer')).trim();
+  const requestedUpi = (upiId || agentProfile?.upiId || '').trim();
+
+  const bankDetailsObj = {
+    accountHolderName: agentUser?.name || agentProfile?.fullName || 'Agent',
+    bankName: agentProfile?.bankName || '',
+    accountNumber: agentProfile?.accountNumber || '',
+    ifscCode: agentProfile?.ifscCode || '',
+    upiId: requestedUpi,
+    paymentMethod: selectedMode
+  };
+
+  if (requestedUpi && agentProfile && agentProfile.upiId !== requestedUpi) {
+    agentProfile.upiId = requestedUpi;
+    await agentProfile.save().catch(e => console.error('[Agent upiId save error]:', e.message));
+  }
 
   // 3. Create the withdrawal transaction
   const transaction = await Transaction.create({
@@ -205,9 +215,9 @@ const requestAgentWithdrawal = asyncHandler(async (req, res, next) => {
     type: TRANSACTION_TYPES.WITHDRAWAL,
     amount: numericAmount,
     status: TRANSACTION_STATUS.PENDING,
-    paymentMethod: agentProfile ? `${agentProfile.bankName} — ${agentProfile.accountNumber}` : 'Bank Transfer',
+    paymentMethod: selectedMode === 'UPI' ? (requestedUpi ? `UPI (${requestedUpi})` : 'UPI') : (agentProfile?.bankName ? `${agentProfile.bankName} — ${agentProfile.accountNumber}` : 'Bank Transfer'),
     bankDetails: bankDetailsObj,
-    remarks: remarks || req.body.note || '',
+    remarks: remarks || note || '',
   });
 
   // 4. Send email notification to Super Admins

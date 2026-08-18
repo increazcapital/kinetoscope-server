@@ -120,6 +120,12 @@ const agentProfileSchema = new mongoose.Schema(
         message: 'Please provide a valid IFSC code',
       },
     },
+    // Bank Details
+    upiId: {
+      type: String,
+      default: '',
+      trim: true,
+    },
     // Documents (Stored on Cloudinary — populated asynchronously after initial save)
     panDocument: {
       type: String,

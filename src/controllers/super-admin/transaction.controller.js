@@ -537,6 +537,8 @@ const getTransactionById = asyncHandler(async (req, res, next) => {
         bankName: agentProfile.bankName || '—',
         accountNumber: agentProfile.accountNumber || '—',
         ifscCode: agentProfile.ifscCode || '—',
+        upiId: agentProfile.upiId || transaction.bankDetails?.upiId || '',
+        accountHolderName: agentProfile.fullName || '—',
         residencyStatus: agentProfile.residencyStatus || '—',
       };
     }
