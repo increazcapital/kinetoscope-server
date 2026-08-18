@@ -13,6 +13,7 @@ process.on('uncaughtException', (err) => {
 
 const port = process.env.PORT || 5000;
 const server = http.createServer(app);
+console.log(`[KFPL Server Init] Booting version ${process.env.npm_package_version || '1.0.0'} on environment: ${process.env.NODE_ENV || 'production'}...`);
 
 // Initialize Socket.io
 socketService.init(server);
