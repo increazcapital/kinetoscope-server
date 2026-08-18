@@ -45,7 +45,15 @@ const requestTransaction = asyncHandler(async (req, res, next) => {
   // Parse bank details if provided, or fallback to registered client profile
   let parsedBankDetails = {};
   if (bankDetails) {
-    parsedBankDetails = typeof bankDetails === 'string' ? JSON.parse(bankDetails) : bankDetails;
+    if (typeof bankDetails === 'string') {
+      try {
+        parsedBankDetails = JSON.parse(bankDetails);
+      } catch (e) {
+        parsedBankDetails = {};
+      }
+    } else if (typeof bankDetails === 'object' && bankDetails !== null) {
+      parsedBankDetails = bankDetails;
+    }
   }
 
   if (type === TRANSACTION_TYPES.WITHDRAWAL && (!parsedBankDetails.accountNumber || !parsedBankDetails.ifscCode)) {
