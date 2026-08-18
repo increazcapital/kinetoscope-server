@@ -34,6 +34,8 @@ const investmentSchema = new mongoose.Schema(
       {
         segmentName: { type: String, required: true },
         allocationPercentage: { type: Number, required: true, min: 0, max: 100 },
+        projectId: { type: mongoose.Schema.Types.ObjectId, ref: 'Project', default: null },
+        projectName: { type: String, trim: true, default: '' },
       }
     ],
     investmentAmount: {

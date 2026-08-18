@@ -12,6 +12,7 @@ const {
 } = require('../../controllers/super-admin/payout.controller');
 const {
   createInvestment,
+  updateInvestment,
   getAllInvestments,
   getInvestmentById,
   approveInvestment,
@@ -309,6 +310,7 @@ router.delete('/investments/clear', requirePermission('manageInvestments', 'dele
 
 router.route('/investments/:id')
   .get(requirePermission('manageInvestments', 'view'), getInvestmentById)
+  .put(requirePermission('manageInvestments', 'edit'), updateInvestment)
   .delete(requirePermission('manageInvestments', 'delete'), deleteInvestment);
 
 router.patch('/investments/:id/approve', requirePermission('manageInvestments', 'edit'), approveInvestment);

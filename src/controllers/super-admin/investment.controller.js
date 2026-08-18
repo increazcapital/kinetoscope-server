@@ -665,8 +665,91 @@ const approveInvestment = asyncHandler(async (req, res, next) => {
   });
 });
 
+/**
+ * Update an existing investment record
+ * PUT /api/super-admin/investments/:id
+ */
+const updateInvestment = asyncHandler(async (req, res, next) => {
+  const { id } = req.params;
+  const investment = await Investment.findById(id);
+
+  if (!investment) {
+    return next(new AppError('Investment record not found.', 404));
+  }
+
+  // Update simple fields if provided
+  if (req.body.investmentAmount !== undefined) investment.investmentAmount = Number(req.body.investmentAmount);
+  if (req.body.amount !== undefined) investment.investmentAmount = Number(req.body.amount);
+  if (req.body.roiPercentage !== undefined) investment.roiPercentage = Number(req.body.roiPercentage);
+  if (req.body.roi !== undefined) investment.roiPercentage = Number(req.body.roi);
+  if (req.body.riskPercentage !== undefined) investment.riskPercentage = Number(req.body.riskPercentage);
+  if (req.body.riskLevel) investment.riskLevel = req.body.riskLevel;
+  if (req.body.durationMonths || req.body.contractPeriod) investment.durationMonths = Number(req.body.durationMonths || req.body.contractPeriod);
+  if (req.body.contractEndDate) investment.contractEndDate = new Date(req.body.contractEndDate);
+  if (req.body.investmentDate || req.body.dateOfJoining) investment.investmentDate = new Date(req.body.investmentDate || req.body.dateOfJoining);
+  if (req.body.remarks !== undefined) investment.remarks = req.body.remarks;
+  if (req.body.status) investment.status = req.body.status;
+
+  // Process segmentAllocation with per-segment projects
+  if (Array.isArray(req.body.segmentAllocation) && req.body.segmentAllocation.length > 0) {
+    const processedAllocations = [];
+    for (const alloc of req.body.segmentAllocation) {
+      let pId = alloc.projectId || null;
+      let pName = alloc.projectName || '';
+      if (pId && !pName) {
+        const pObj = await Project.findById(pId).lean();
+        if (pObj) pName = pObj.name;
+      }
+      processedAllocations.push({
+        segmentName: alloc.segmentName,
+        allocationPercentage: Number(alloc.allocationPercentage || 0),
+        projectId: pId,
+        projectName: pName,
+      });
+    }
+    investment.segmentAllocation = processedAllocations;
+    investment.segment = processedAllocations.map(s => s.segmentName).join(', ');
+
+    // If first allocation has a project or top-level projectId is provided, set top-level
+    if (req.body.projectId) {
+      investment.projectId = req.body.projectId;
+      const topProj = await Project.findById(req.body.projectId).lean();
+      if (topProj) investment.projectName = topProj.name;
+    } else if (processedAllocations[0]?.projectId) {
+      investment.projectId = processedAllocations[0].projectId;
+      investment.projectName = processedAllocations[0].projectName;
+    }
+  } else if (req.body.projectId) {
+    investment.projectId = req.body.projectId;
+    const topProj = await Project.findById(req.body.projectId).lean();
+    if (topProj) {
+      investment.projectName = topProj.name;
+      if (!investment.segment) investment.segment = topProj.segment || 'Film Making';
+    }
+  }
+
+  await investment.save();
+
+  // Sync fundedAmount on linked projects
+  if (investment.projectId) {
+    const project = await Project.findById(investment.projectId);
+    if (project) {
+      const activeInvestments = await Investment.find({ projectId: project._id, status: 'active' });
+      project.fundedAmount = activeInvestments.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
+      await project.save();
+    }
+  }
+
+  res.status(200).json({
+    success: true,
+    message: 'Investment record updated successfully',
+    data: investment,
+  });
+});
+
 module.exports = {
   createInvestment,
+  updateInvestment,
   getAllInvestments,
   getInvestmentById,
   approveInvestment,
