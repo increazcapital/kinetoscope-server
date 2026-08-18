@@ -11,8 +11,8 @@ const asyncHandler = require('../../utils/asyncHandler');
  * Request a deposit or withdrawal transaction (Client portal)
  * POST /api/client/transactions
  */
-const requestTransaction = asyncHandler(async (req, res, next) => {
-  const { type, amount, paymentMethod, remarks, projectId, projectName } = req.body;
+  const ClientProfile = require('../../models/ClientProfile.model');
+  const { type, amount, paymentMethod, remarks, projectId, projectName, bankDetails } = req.body;
   const referenceNumber = req.body.referenceNumber || req.body.reference || req.body.transactionRef || req.body.referenceId || '';
 
   // Basic validation
@@ -38,6 +38,25 @@ const requestTransaction = asyncHandler(async (req, res, next) => {
     if (proj) {
       targetProjectId = proj._id;
       targetProjectName = proj.name;
+    }
+  }
+
+  // Parse bank details if provided, or fallback to registered client profile
+  let parsedBankDetails = {};
+  if (bankDetails) {
+    parsedBankDetails = typeof bankDetails === 'string' ? JSON.parse(bankDetails) : bankDetails;
+  }
+
+  if (type === TRANSACTION_TYPES.WITHDRAWAL && (!parsedBankDetails.accountNumber || !parsedBankDetails.ifscCode)) {
+    const profile = await ClientProfile.findOne({ userId: req.user.id || req.user._id }).lean();
+    if (profile) {
+      parsedBankDetails = {
+        accountHolderName: parsedBankDetails.accountHolderName || profile.accountHolderName || profile.fullName || req.user.name,
+        bankName: parsedBankDetails.bankName || profile.bankName || '',
+        accountNumber: parsedBankDetails.accountNumber || profile.accountNumber || profile.accountNo || '',
+        ifscCode: parsedBankDetails.ifscCode || profile.ifscCode || profile.ifsc || '',
+        upiId: parsedBankDetails.upiId || profile.upiId || '',
+      };
     }
   }
 
@@ -67,6 +86,7 @@ const requestTransaction = asyncHandler(async (req, res, next) => {
     referenceNumber,
     remarks,
     proofAttachment: proofAttachmentUrl,
+    bankDetails: parsedBankDetails,
     status: TRANSACTION_STATUS.PENDING,
     projectId: targetProjectId,
     projectName: targetProjectName,

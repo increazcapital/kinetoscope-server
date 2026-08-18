@@ -549,6 +549,13 @@ const getTransactionById = asyncHandler(async (req, res, next) => {
         riskProfile: clientProfile.riskProfile || 'Moderate',
         tier: clientProfile.tier || 'Silver',
         residencyStatus: clientProfile.residencyStatus || '—',
+        bankName: clientProfile.bankName || '—',
+        accountNumber: clientProfile.accountNumber || clientProfile.accountNo || '—',
+        accountNo: clientProfile.accountNumber || clientProfile.accountNo || '—',
+        ifscCode: clientProfile.ifscCode || clientProfile.ifsc || '—',
+        ifsc: clientProfile.ifscCode || clientProfile.ifsc || '—',
+        accountHolderName: clientProfile.accountHolderName || clientProfile.fullName || '',
+        upiId: clientProfile.upiId || '',
       };
     }
   }

@@ -91,6 +91,13 @@ const transactionSchema = new mongoose.Schema(
       trim: true,
       default: '',
     },
+    bankDetails: {
+      accountHolderName: { type: String, trim: true, default: '' },
+      bankName: { type: String, trim: true, default: '' },
+      accountNumber: { type: String, trim: true, default: '' },
+      ifscCode: { type: String, trim: true, default: '' },
+      upiId: { type: String, trim: true, default: '' },
+    },
   },
   {
     timestamps: true,

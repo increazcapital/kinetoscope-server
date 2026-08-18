@@ -190,7 +190,13 @@ const requestAgentWithdrawal = asyncHandler(async (req, res, next) => {
 
   // 2. Fetch Agent bank details
   const agentProfile = await AgentProfile.findOne({ userId: agentId });
-  const bankDetails = agentProfile ? `${agentProfile.bankName} — ****${(agentProfile.accountNumber || '').slice(-4)}` : 'Bank details not found';
+  const bankDetailsObj = agentProfile ? {
+    accountHolderName: agentUser?.name || 'Agent',
+    bankName: agentProfile.bankName || '',
+    accountNumber: agentProfile.accountNumber || '',
+    ifscCode: agentProfile.ifscCode || '',
+    upiId: agentProfile.upiId || '',
+  } : {};
 
   // 3. Create the withdrawal transaction
   const transaction = await Transaction.create({
@@ -199,7 +205,8 @@ const requestAgentWithdrawal = asyncHandler(async (req, res, next) => {
     type: TRANSACTION_TYPES.WITHDRAWAL,
     amount: numericAmount,
     status: TRANSACTION_STATUS.PENDING,
-    paymentMethod: bankDetails,
+    paymentMethod: agentProfile ? `${agentProfile.bankName} — ${agentProfile.accountNumber}` : 'Bank Transfer',
+    bankDetails: bankDetailsObj,
     remarks: remarks || req.body.note || '',
   });
 
