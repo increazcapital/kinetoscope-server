@@ -378,7 +378,8 @@ const getAllInvestments = asyncHandler(async (req, res, next) => {
  */
 const getInvestmentById = asyncHandler(async (req, res, next) => {
   const investment = await Investment.findById(req.params.id)
-    .populate('clientId', 'name email')
+    .populate('clientId', 'name email clientCode')
+    .populate('projectId')
     .populate('createdBy', 'name email role');
 
   if (!investment) {
