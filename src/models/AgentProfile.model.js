@@ -129,6 +129,10 @@ const agentProfileSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    idProofBackDocument: {
+      type: String,
+      default: '',
+    },
     bankProofDocument: {
       type: String,
       default: '',
@@ -146,6 +150,10 @@ const agentProfileSchema = new mongoose.Schema(
       default: false,
     },
     idProofDocumentVerified: {
+      type: Boolean,
+      default: false,
+    },
+    idProofBackDocumentVerified: {
       type: Boolean,
       default: false,
     },

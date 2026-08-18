@@ -53,23 +53,6 @@ const deleteCloudinaryFiles = async (urls) => {
  * POST /api/super-admin/agents
  */
 const createAgent = asyncHandler(async (req, res, next) => {
-  const requiredFileFields = [
-    'panDocument',
-    'idProofDocument',
-    'bankProofDocument',
-  ];
-
-  // 1) Validate that required files are present in the request
-  if (!req.files) {
-    return next(new AppError('No documents were uploaded. Please upload required documents.', 400));
-  }
-
-  for (const field of requiredFileFields) {
-    if (!req.files[field] || req.files[field].length === 0) {
-      return next(new AppError(`Required document missing: ${field}`, 400));
-    }
-  }
-
   const {
     fullName,
     phone,
@@ -92,20 +75,20 @@ const createAgent = asyncHandler(async (req, res, next) => {
     password,
     portalPassword,
     status,
+    citizenship,
   } = req.body;
 
-  // 2) Check if email is already registered in the system (case-insensitive & trimmed)
+  // 1) Check if email is already registered in the system (case-insensitive & trimmed)
   const cleanEmail = email ? String(email).trim().toLowerCase() : '';
   if (!cleanEmail) {
     return next(new AppError('Email address is required.', 400));
   }
   const existingUser = await User.findOne({ email: { $regex: new RegExp(`^${cleanEmail.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&')}$`, 'i') } });
   if (existingUser) {
-    console.log(`[CreateAgent] Duplicate email match found:`, { id: existingUser._id, name: existingUser.name, email: existingUser.email, role: existingUser.role });
     return next(new AppError(`Email address (${cleanEmail}) is already in use by another account.`, 400));
   }
 
-  // 3) Generate a sequential unique agent code starting from KFPL-AG-1001 with gap-filling (reuses deleted IDs)
+  // 2) Generate a sequential unique agent code starting from KFPL-AG-1001 with gap-filling
   const agentUsers = await User.find({ clientCode: { $regex: /^KFPL-AG-/i } }, { clientCode: 1 }).lean();
   const usedSeqs = new Set();
   agentUsers.forEach(a => {
@@ -125,38 +108,42 @@ const createAgent = asyncHandler(async (req, res, next) => {
   }
   const agentCode = `KFPL-AG-${nextSeq}`;
 
-  // 4) Use provided custom password or generate a secure temporary password
+  // 3) Use provided custom password or generate a secure temporary password
   const tempPassword = password || portalPassword || generateTempPassword();
+
+  const finalResidencyStatus = residencyStatus || (citizenship === 'International' ? 'International' : 'National (Domestic)');
 
   // Define database variables outside to perform rollback on error
   let createdUser, createdProfile;
 
   try {
-    // 6) Create the User document
+    // 4) Create the User document
     createdUser = await User.create({
       name: fullName,
-      email,
+      email: cleanEmail,
+      clientCode: agentCode,
       password: tempPassword,
       role: ROLES.AGENT,
+      phone: phone || '',
       isActive: status !== 'inactive',
-      is2FAEnabled: false, // Default false for smooth initial login
-      clientCode: agentCode,
-      createdBy: req.user.id,
+      isEmailVerified: true,
+      createdBy: req.user?.id,
     });
 
-    // 7) Create the AgentProfile document
+    // 5) Create the AgentProfile document
     createdProfile = await AgentProfile.create({
       userId: createdUser._id,
+      clientCode: agentCode,
       fullName,
-      phone,
-      email,
+      phone: phone || '',
+      email: cleanEmail,
       address: address || '',
-      residencyStatus: residencyStatus || 'National (Domestic)',
-      panNumber,
-      aadhaarNumber,
-      bankName,
-      accountNumber,
-      ifscCode,
+      residencyStatus: finalResidencyStatus,
+      panNumber: panNumber ? panNumber.toUpperCase() : '',
+      aadhaarNumber: aadhaarNumber || '',
+      bankName: bankName || '',
+      accountNumber: accountNumber || '',
+      ifscCode: ifscCode ? ifscCode.toUpperCase() : '',
       oneTimeCommission: oneTimeCommission !== undefined ? Number(oneTimeCommission) : 0,
       monthlySlab: monthlySlab || '',
       specialCommission: specialCommission !== undefined ? Number(specialCommission) : 0,
@@ -167,6 +154,7 @@ const createAgent = asyncHandler(async (req, res, next) => {
       nomineeResidency: nomineeResidency || 'National (Domestic)',
       panDocument: '',
       idProofDocument: '',
+      idProofBackDocument: '',
       bankProofDocument: '',
       nomineeProofDocument: '',
       documentStatus: 'pending_upload',
@@ -174,17 +162,19 @@ const createAgent = asyncHandler(async (req, res, next) => {
       portalPassword: tempPassword,
     });
   } catch (dbError) {
-    // Rollback: Delete user if created user profile creation fails
     if (createdUser) {
       await User.findByIdAndDelete(createdUser._id);
     }
     return next(new AppError(`Database transaction failed: ${dbError.message}`, 500));
   }
 
-  // 8) Trigger parallel in-memory background uploads (Vercel-safe using waitUntil)
+  // 6) Trigger parallel in-memory background uploads (Vercel-safe using waitUntil)
   const uploadFileFields = [
     'panDocument',
     'idProofDocument',
+    'idProofBackDocument',
+    'aadhaarDocument',
+    'aadhaarBackDocument',
     'bankProofDocument',
     'nomineeProofDocument',
   ];
@@ -198,14 +188,12 @@ const createAgent = asyncHandler(async (req, res, next) => {
   });
 
   try {
-    // 9) Send Welcome Email containing credentials
     const loginUrl = process.env.AGENT_PORTAL_URL || 'https://partner.kinetoscopefilms.com';
-    await sendWelcomeEmail(email, fullName, agentCode, tempPassword, loginUrl);
+    await sendWelcomeEmail(cleanEmail, fullName, agentCode, tempPassword, loginUrl);
   } catch (emailError) {
-    console.error(`Welcome email failed to dispatch to ${email}:`, emailError.message);
+    console.error(`Welcome email failed to dispatch to ${cleanEmail}:`, emailError.message);
   }
 
-  // Clear password from return payload
   createdUser.password = undefined;
 
   res.status(201).json({
@@ -216,12 +204,13 @@ const createAgent = asyncHandler(async (req, res, next) => {
       profile: createdProfile,
       credentials: {
         agentCode,
-        email,
+        email: cleanEmail,
         temporaryPassword: tempPassword,
       },
     },
   });
 });
+
 
 /**
  * Auto-fix helper to ensure all agent accounts have unique, non-duplicate sequential KFPL-AG-100X codes.
@@ -647,6 +636,7 @@ const updateAgent = asyncHandler(async (req, res, next) => {
   const removeDocMap = [
     { flag: 'removePanDocument', field: 'panDocument', verify: 'panDocumentVerified' },
     { flag: 'removeIdProofDocument', field: 'idProofDocument', verify: 'idProofDocumentVerified' },
+    { flag: 'removeIdProofBackDocument', field: 'idProofBackDocument', verify: 'idProofBackDocumentVerified' },
     { flag: 'removeBankProofDocument', field: 'bankProofDocument', verify: 'bankProofDocumentVerified' },
     { flag: 'removeNomineeProofDocument', field: 'nomineeProofDocument', verify: 'nomineeProofDocumentVerified' },
     { flag: 'removeAgreementDocument', field: 'agreementDocument', verify: 'agreementDocumentVerified', extraField: 'signedAgreementUrl' },
@@ -657,13 +647,14 @@ const updateAgent = asyncHandler(async (req, res, next) => {
       profileUpdates[cfg.field] = '';
       if (cfg.verify) profileUpdates[cfg.verify] = false;
       if (cfg.extraField) profileUpdates[cfg.extraField] = '';
-      if (['panDocument', 'idProofDocument', 'bankProofDocument'].includes(cfg.field)) {
+      if (['panDocument', 'idProofDocument', 'idProofBackDocument'].includes(cfg.field)) {
         profileUpdates.kycStatus = 'PENDING';
       }
       const labelMap = {
         panDocument: 'PAN Card Document',
-        idProofDocument: 'ID Proof Document (Aadhaar / Passport / DL)',
-        bankProofDocument: 'Bank Details Document',
+        idProofDocument: 'ID Proof Document (Front Side)',
+        idProofBackDocument: 'Aadhaar Card Back Side (Address Proof)',
+        bankProofDocument: 'Bank Details Document (Cancelled Cheque)',
         nomineeProofDocument: 'Nominee ID Proof Document',
         agreementDocument: 'Signed Agent Service Agreement',
       };
@@ -684,6 +675,9 @@ const updateAgent = asyncHandler(async (req, res, next) => {
   const fileFields = [
     'panDocument',
     'idProofDocument',
+    'idProofBackDocument',
+    'aadhaarDocument',
+    'aadhaarBackDocument',
     'bankProofDocument',
     'nomineeProofDocument',
     'agreementDocument',

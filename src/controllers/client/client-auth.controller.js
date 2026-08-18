@@ -284,15 +284,17 @@ const registerClient = asyncHandler(async (req, res, next) => {
   // 3) Process file uploads flexibly
   const panFile = req.files && (req.files['panDocument']?.[0] || req.files['panCard']?.[0] || req.files['pan']?.[0]);
   const aadhaarFile = req.files && (req.files['aadhaarDocument']?.[0] || req.files['aadhaarCard']?.[0] || req.files['aadhaar']?.[0]);
+  const aadhaarBackFile = req.files && (req.files['aadhaarBackDocument']?.[0] || req.files['aadhaarBackCard']?.[0] || req.files['idProofBackDocument']?.[0]);
   const bankFile = req.files && (req.files['bankProofDocument']?.[0] || req.files['bankStatementProof']?.[0] || req.files['bankProof']?.[0]);
   const nomineeFile = req.files && (req.files['nomineeProofDocument']?.[0] || req.files['nomineeProof']?.[0]);
 
   if (!panFile || !aadhaarFile) {
-    return next(new AppError('Please upload all required KYC documents (PAN Card and Aadhaar Card).', 400));
+    return next(new AppError('Please upload all required KYC documents (PAN Card and Aadhaar Card Front Side).', 400));
   }
 
   let panDocumentUrl = '';
   let aadhaarDocumentUrl = '';
+  let aadhaarBackDocumentUrl = '';
   let bankProofDocumentUrl = '';
   let nomineeProofDocumentUrl = '';
 
@@ -302,6 +304,9 @@ const registerClient = asyncHandler(async (req, res, next) => {
     console.log('[Client Register] Uploading KYC files to Cloudinary...');
     panDocumentUrl = await uploadBufferToCloudinary(panFile.buffer, 'kinetoscope/clients/kyc');
     aadhaarDocumentUrl = await uploadBufferToCloudinary(aadhaarFile.buffer, 'kinetoscope/clients/kyc');
+    if (aadhaarBackFile) {
+      aadhaarBackDocumentUrl = await uploadBufferToCloudinary(aadhaarBackFile.buffer, 'kinetoscope/clients/kyc');
+    }
     if (bankFile) {
       bankProofDocumentUrl = await uploadBufferToCloudinary(bankFile.buffer, 'kinetoscope/clients/kyc');
     }
@@ -349,6 +354,7 @@ const registerClient = asyncHandler(async (req, res, next) => {
       nomineeResidency: nomineeResidency || 'National (Domestic)',
       panDocument: panDocumentUrl,
       aadhaarDocument: aadhaarDocumentUrl,
+      aadhaarBackDocument: aadhaarBackDocumentUrl,
       bankProofDocument: bankProofDocumentUrl,
       nomineeProofDocument: nomineeProofDocumentUrl,
       kycStatus: 'PENDING',

@@ -229,6 +229,7 @@ const createClient = asyncHandler(async (req, res, next) => {
   const uploadFileFields = [
     'panDocument',
     'aadhaarDocument',
+    'aadhaarBackDocument',
     'bankProofDocument',
     'agreementDocument',
     'nomineeProofDocument',
@@ -666,7 +667,8 @@ const updateClient = asyncHandler(async (req, res, next) => {
   const removedDocLabels = [];
   const removeDocMap = [
     { flag: 'removePanDocument', field: 'panDocument', verify: 'panDocumentVerified' },
-    { flag: 'removeAadhaarDocument', field: 'aadhaarDocument', verify: 'idProofDocumentVerified', extra: 'idProofDocument' },
+    { flag: 'removeAadhaarDocument', field: 'aadhaarDocument', verify: 'aadhaarDocumentVerified', extra: 'idProofDocument' },
+    { flag: 'removeAadhaarBackDocument', field: 'aadhaarBackDocument', verify: 'aadhaarBackDocumentVerified' },
     { flag: 'removeBankProofDocument', field: 'bankProofDocument', verify: 'bankProofDocumentVerified' },
     { flag: 'removeNomineeProofDocument', field: 'nomineeProofDocument', verify: 'nomineeProofDocumentVerified' },
     { flag: 'removeAgreementDocument', field: 'agreementDocument', verify: 'agreementVerified', extra: 'signedAgreementUrl' },
@@ -683,13 +685,14 @@ const updateClient = asyncHandler(async (req, res, next) => {
         profileUpdates.agreementDocumentVerifiedAt = null;
         profileUpdates.agreementReuploadRequested = true;
       }
-      if (['panDocument', 'aadhaarDocument', 'bankProofDocument', 'agreementDocument'].includes(cfg.field)) {
+      if (['panDocument', 'aadhaarDocument', 'aadhaarBackDocument', 'agreementDocument'].includes(cfg.field)) {
         profileUpdates.kycStatus = 'PENDING';
       }
       const labelMap = {
         panDocument: 'PAN Card Document',
-        aadhaarDocument: 'ID Proof Document (Aadhaar / Passport)',
-        bankProofDocument: 'Bank Details Document',
+        aadhaarDocument: 'ID Proof Document (Aadhaar Front / Passport)',
+        aadhaarBackDocument: 'Aadhaar Card Back Side (Address Proof)',
+        bankProofDocument: 'Bank Details Document (Cancelled Cheque)',
         nomineeProofDocument: 'Nominee ID Proof Document',
         agreementDocument: 'Signed Client Participation Agreement',
       };
@@ -711,6 +714,7 @@ const updateClient = asyncHandler(async (req, res, next) => {
   const fileFields = [
     'panDocument',
     'aadhaarDocument',
+    'aadhaarBackDocument',
     'bankProofDocument',
     'agreementDocument',
     'nomineeProofDocument',
@@ -996,6 +1000,7 @@ const verifyDocument = asyncHandler(async (req, res, next) => {
   const allowedFields = [
     'panDocument',
     'aadhaarDocument',
+    'aadhaarBackDocument',
     'bankProofDocument',
     'agreementDocument',
     'nomineeProofDocument',

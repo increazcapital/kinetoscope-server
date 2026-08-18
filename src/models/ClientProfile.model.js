@@ -186,6 +186,10 @@ const clientProfileSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    aadhaarBackDocument: {
+      type: String,
+      default: '',
+    },
     bankProofDocument: {
       type: String,
       default: '',
@@ -213,6 +217,10 @@ const clientProfileSchema = new mongoose.Schema(
       default: false,
     },
     aadhaarDocumentVerified: {
+      type: Boolean,
+      default: false,
+    },
+    aadhaarBackDocumentVerified: {
       type: Boolean,
       default: false,
     },

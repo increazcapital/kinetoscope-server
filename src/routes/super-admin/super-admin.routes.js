@@ -209,6 +209,7 @@ const {
 const clientOnboardingUpload = upload.fields([
   { name: 'panDocument', maxCount: 1 },
   { name: 'aadhaarDocument', maxCount: 1 },
+  { name: 'aadhaarBackDocument', maxCount: 1 },
   { name: 'bankProofDocument', maxCount: 1 },
   { name: 'agreementDocument', maxCount: 1 },
   { name: 'nomineeProofDocument', maxCount: 1 },
@@ -218,6 +219,7 @@ const clientOnboardingUpload = upload.fields([
 const memoryClientOnboardingUpload = memoryUpload.fields([
   { name: 'panDocument', maxCount: 1 },
   { name: 'aadhaarDocument', maxCount: 1 },
+  { name: 'aadhaarBackDocument', maxCount: 1 },
   { name: 'bankProofDocument', maxCount: 1 },
   { name: 'agreementDocument', maxCount: 1 },
   { name: 'nomineeProofDocument', maxCount: 1 },
@@ -227,6 +229,8 @@ const memoryClientOnboardingUpload = memoryUpload.fields([
 const agentOnboardingUpload = upload.fields([
   { name: 'panDocument', maxCount: 1 },
   { name: 'idProofDocument', maxCount: 1 },
+  { name: 'idProofBackDocument', maxCount: 1 },
+  { name: 'aadhaarBackDocument', maxCount: 1 },
   { name: 'bankProofDocument', maxCount: 1 },
   { name: 'agreementDocument', maxCount: 1 },
   { name: 'nomineeProofDocument', maxCount: 1 },
@@ -236,6 +240,8 @@ const agentOnboardingUpload = upload.fields([
 const memoryAgentOnboardingUpload = memoryUpload.fields([
   { name: 'panDocument', maxCount: 1 },
   { name: 'idProofDocument', maxCount: 1 },
+  { name: 'idProofBackDocument', maxCount: 1 },
+  { name: 'aadhaarBackDocument', maxCount: 1 },
   { name: 'bankProofDocument', maxCount: 1 },
   { name: 'agreementDocument', maxCount: 1 },
   { name: 'nomineeProofDocument', maxCount: 1 },

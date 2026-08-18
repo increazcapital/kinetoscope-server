@@ -216,8 +216,9 @@ const registerAgent = asyncHandler(async (req, res, next) => {
   }
 
   const filesMap = {
-    panDocument: req.files.panDocument?.[0] || req.files.panCard?.[0] || req.files.pan?.[0],
-    idProofDocument: req.files.idProofDocument?.[0] || req.files.idProof?.[0],
+    panDocument: req.files.panDocument?.[0] || req.files.panCard?.[0],
+    idProofDocument: req.files.idProofDocument?.[0] || req.files.idProof?.[0] || req.files.aadhaarDocument?.[0],
+    idProofBackDocument: req.files.idProofBackDocument?.[0] || req.files.idProofBack?.[0] || req.files.aadhaarBackDocument?.[0],
     bankProofDocument: req.files.bankProofDocument?.[0] || req.files.bankStatementProof?.[0] || req.files.bankProof?.[0],
     nomineeProofDocument: req.files.nomineeProofDocument?.[0] || req.files.nomineeProof?.[0]
   };
@@ -225,12 +226,13 @@ const registerAgent = asyncHandler(async (req, res, next) => {
   const requiredFileFields = [
     'panDocument',
     'idProofDocument',
-    'bankProofDocument',
+    'idProofBackDocument',
   ];
 
   for (const field of requiredFileFields) {
     if (!filesMap[field]) {
-      return next(new AppError(`Required document missing: ${field}`, 400));
+      const fieldLabel = field === 'panDocument' ? 'PAN Card' : field === 'idProofDocument' ? 'ID Proof (Front Side)' : 'Aadhaar Card Back Side (Required for Address Proof)';
+      return next(new AppError(`Required document missing: ${fieldLabel}`, 400));
     }
   }
 
@@ -238,8 +240,12 @@ const registerAgent = asyncHandler(async (req, res, next) => {
   const normalizedFiles = {
     panDocument: [filesMap.panDocument],
     idProofDocument: [filesMap.idProofDocument],
-    bankProofDocument: [filesMap.bankProofDocument],
+    idProofBackDocument: [filesMap.idProofBackDocument],
   };
+
+  if (filesMap.bankProofDocument) {
+    normalizedFiles.bankProofDocument = [filesMap.bankProofDocument];
+  }
 
   if (filesMap.nomineeProofDocument) {
     normalizedFiles.nomineeProofDocument = [filesMap.nomineeProofDocument];
@@ -337,6 +343,7 @@ const registerAgent = asyncHandler(async (req, res, next) => {
       nomineeResidency: nomineeResidency || 'National (Domestic)',
       panDocument: '',
       idProofDocument: '',
+      idProofBackDocument: '',
       bankProofDocument: '',
       nomineeProofDocument: '',
       documentStatus: 'pending_upload',
