@@ -265,7 +265,7 @@ const recordPayout = asyncHandler(async (req, res, next) => {
       });
       if (uObj) {
         const cProf = await ClientProfile.findOne({ userId: uObj._id });
-        parsedRoiRate = cProf ? (cProf.monthlyRoi || 1.2) : 1.2;
+        parsedRoiRate = (cProf && cProf.monthlyRoi !== undefined && cProf.monthlyRoi !== null && String(cProf.monthlyRoi).trim() !== '') ? Number(cProf.monthlyRoi) : 0;
       }
     } catch (e) {}
   }
@@ -528,7 +528,7 @@ const getPayouts = asyncHandler(async (req, res, next) => {
       const regexMatch = p.commissionType ? p.commissionType.match(/ROI\s*\((\d+(\.\d+)?%?)\)/i) : null;
       finalRoiVal = (p.roiPercentage !== undefined && p.roiPercentage !== null)
         ? p.roiPercentage
-        : (regexMatch ? parseFloat(regexMatch[1]) : (roiMap[p.recipientId] || roiMap[p.clientId] || 1.2));
+        : (regexMatch ? parseFloat(regexMatch[1]) : (roiMap[p.recipientId] !== undefined ? roiMap[p.recipientId] : (roiMap[p.clientId] !== undefined ? roiMap[p.clientId] : 0)));
       displayType = `ROI (${finalRoiVal}%)`;
       payoutDetailStr = `Monthly ROI Return (${finalRoiVal}%)`;
     } else {

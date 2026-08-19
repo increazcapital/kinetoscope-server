@@ -69,7 +69,7 @@ const clientProfileSchema = new mongoose.Schema(
       type: Number,
       required: [true, 'Monthly ROI % is required'],
       min: [0, 'Monthly ROI % must be a non-negative number'],
-      default: 1.2,
+      default: 0,
     },
     // KYC Details
     panNumber: {

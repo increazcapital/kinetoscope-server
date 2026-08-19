@@ -994,7 +994,7 @@ const getAgentClients = asyncHandler(async (req, res, next) => {
         _id: profile ? profile._id : null,
         phone: profile ? profile.phone : '',
         status: profile ? profile.status : 'active',
-        monthlyRoi: profile ? profile.monthlyRoi : 1.2,
+        monthlyRoi: (profile && profile.monthlyRoi !== undefined && profile.monthlyRoi !== null) ? Number(profile.monthlyRoi) : 0,
       },
     };
   });

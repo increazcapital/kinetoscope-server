@@ -103,22 +103,22 @@ const createClientValidationRules = [
       return true;
     }),
   body('nomineeName')
-    .trim()
-    .notEmpty().withMessage('Nominee name is required'),
+    .optional({ checkFalsy: true })
+    .trim(),
   body('nomineeRelation')
-    .trim()
-    .notEmpty().withMessage('Nominee relation is required'),
+    .optional({ checkFalsy: true })
+    .trim(),
   body('nomineePhone')
-    .trim()
-    .notEmpty().withMessage('Nominee phone number is required'),
+    .optional({ checkFalsy: true })
+    .trim(),
   body('nomineeEmail')
+    .optional({ checkFalsy: true })
     .trim()
-    .notEmpty().withMessage('Nominee email address is required')
     .isEmail().withMessage('Please provide a valid nominee email address')
     .normalizeEmail(),
   body('nomineeResidency')
+    .optional({ checkFalsy: true })
     .trim()
-    .notEmpty().withMessage('Nominee Residency / Citizenship is required')
     .isIn(['National (Domestic)', 'International']).withMessage('Nominee Residency must be either National (Domestic) or International'),
   body('assignedAgent')
     .optional({ checkFalsy: true })

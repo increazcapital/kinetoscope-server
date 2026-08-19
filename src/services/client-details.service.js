@@ -136,11 +136,24 @@ const getClientDetailsData = async (clientId) => {
   });
   const activeSegmentsCount = uniqueAllocatedSegments.size;
 
-  const configuredMonthlyRoi = profile.monthlyRoi !== undefined ? Number(profile.monthlyRoi) : 0;
-  let roiAverage = configuredMonthlyRoi;
-  if (!configuredMonthlyRoi && activeInvestmentsList.length > 0) {
+  const configuredMonthlyRoi = (profile.monthlyRoi !== undefined && profile.monthlyRoi !== null && String(profile.monthlyRoi).trim() !== '') ? Number(profile.monthlyRoi) : null;
+  let finalRoi = 0;
+  if (configuredMonthlyRoi !== null && !isNaN(configuredMonthlyRoi)) {
+    finalRoi = configuredMonthlyRoi;
+    // Auto-heal: If client has 0% monthlyRoi configured, fix any auto-healed 1.5% investments
+    if (finalRoi === 0 && activeInvestmentsList.length > 0) {
+      const needsFix = activeInvestmentsList.some(inv => inv.roiPercentage !== 0);
+      if (needsFix) {
+        Investment.updateMany(
+          { clientId: { $in: userIds }, roiPercentage: { $ne: 0 } },
+          { $set: { roiPercentage: 0 } }
+        ).catch(err => console.error('[Auto Fix 0% ROI Error]:', err.message));
+        activeInvestmentsList.forEach(inv => { inv.roiPercentage = 0; });
+      }
+    }
+  } else if (activeInvestmentsList.length > 0) {
     const roiSum = activeInvestmentsList.reduce((sum, inv) => sum + (inv.roiPercentage || 0), 0);
-    roiAverage = Number((roiSum / activeInvestmentsList.length).toFixed(2));
+    finalRoi = Number((roiSum / activeInvestmentsList.length).toFixed(2));
   }
 
   const hasAgreement = Boolean(profile.agreementDocument && String(profile.agreementDocument).trim() !== '' && profile.agreementDocument !== 'null');
@@ -179,8 +192,8 @@ const getClientDetailsData = async (clientId) => {
       totalInvestment,
       activeInvestments: activeInvestmentsCount,
       activeSegments: activeSegmentsCount,
-      averageRoi: configuredMonthlyRoi || roiAverage,
-      monthlyRoi: configuredMonthlyRoi || roiAverage,
+      averageRoi: finalRoi,
+      monthlyRoi: finalRoi,
       kycStatus: kycStatusVal,
     },
     profile: {

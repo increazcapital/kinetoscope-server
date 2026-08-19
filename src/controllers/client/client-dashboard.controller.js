@@ -56,7 +56,7 @@ const calculateDashboardData = async (userId) => {
   const totalInvestment = isFullCapitalWithdrawn ? 0 : netCapital;
 
   // Define effective investments array (with fallback for clients with capital but no segment allocations yet)
-  const roiRateVal = parseFloat(profile.monthlyRoi) || 1.5;
+  const roiRateVal = (profile && profile.monthlyRoi !== undefined && profile.monthlyRoi !== null && String(profile.monthlyRoi).trim() !== '') ? Number(profile.monthlyRoi) : 0;
   const investments = rawInvestments.length > 0 ? rawInvestments : (totalInvestment > 0 ? [{
     _id: `synth_inv_${userId}`,
     clientId: userId,
@@ -375,7 +375,7 @@ const getClientInvestments = asyncHandler(async (req, res, next) => {
   const targetTotal = Math.max(totalFromInvs, profileTotal, depositsTotal);
 
   if (effectiveInvestments.length === 0 && targetTotal > 0) {
-    const roiRate = parseFloat(profile?.monthlyRoi) || 1.5;
+    const roiRate = (profile && profile.monthlyRoi !== undefined && profile.monthlyRoi !== null && String(profile.monthlyRoi).trim() !== '') ? Number(profile.monthlyRoi) : 0;
     effectiveInvestments = [{
       _id: `synth_inv_${req.user.id}`,
       clientId: req.user.id,

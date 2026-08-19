@@ -78,8 +78,23 @@ const {
   getClientPerksTab,
 } = require('../../controllers/super-admin/client-financials.controller');
 
+const { createClient } = require('../../controllers/super-admin/client-management.controller');
+const { createClientValidationRules } = require('../../validations/client/client.validation');
+
+const memoryClientOnboardingUpload = memoryUpload.fields([
+  { name: 'panDocument', maxCount: 1 },
+  { name: 'aadhaarDocument', maxCount: 1 },
+  { name: 'aadhaarBackDocument', maxCount: 1 },
+  { name: 'bankProofDocument', maxCount: 1 },
+  { name: 'agreementDocument', maxCount: 1 },
+  { name: 'nomineeProofDocument', maxCount: 1 },
+]);
+
 // 3. Agent Client List & Client Sub-tabs
-router.get('/clients', getAgentClients);
+router.route('/clients')
+  .get(getAgentClients)
+  .post(memoryClientOnboardingUpload, createClientValidationRules, createClient);
+
 router.get('/clients/:id', getAgentClientById);
 router.get('/clients/:id/investments', getClientInvestmentsTab);
 router.get('/clients/:id/roi/payouts', getClientRoiTab);

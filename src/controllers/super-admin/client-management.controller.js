@@ -165,6 +165,11 @@ const createClient = asyncHandler(async (req, res, next) => {
   try {
     // 6) Create the User document
     console.log('[CreateClient] Step 6: Creating User document...');
+    const isAgent = req.user && (req.user.role === ROLES.AGENT || req.user.role === 'agent');
+    const effectiveAssignedAgent = isAgent
+      ? req.user.id
+      : ((assignedAgent && mongoose.Types.ObjectId.isValid(assignedAgent)) ? assignedAgent : undefined);
+
     createdUser = await User.create({
       name: fullName,
       email,
@@ -173,7 +178,7 @@ const createClient = asyncHandler(async (req, res, next) => {
       isActive: true,
       is2FAEnabled: false, // Default false for smooth temp password login
       clientCode,
-      assignedAgent: (assignedAgent && mongoose.Types.ObjectId.isValid(assignedAgent)) ? assignedAgent : undefined,
+      assignedAgent: effectiveAssignedAgent,
       createdBy: req.user.id,
     });
     console.log('[CreateClient] Step 6: User created successfully:', createdUser._id);
@@ -461,12 +466,15 @@ const getAllClients = asyncHandler(async (req, res, next) => {
 });
 
 const getClientById = asyncHandler(async (req, res, next) => {
+  const { findClientUser } = require('../../services/client-details.service');
+  const clientUser = await findClientUser(req.params.id);
+  if (!clientUser || clientUser.role !== ROLES.CLIENT) {
+    return next(new AppError('Client not found.', 404));
+  }
+
   if (req.user.role === ROLES.AGENT) {
-    const clientUser = await User.findById(req.params.id);
-    if (!clientUser || clientUser.role !== ROLES.CLIENT) {
-      return next(new AppError('Client not found.', 404));
-    }
-    if (!clientUser.assignedAgent || clientUser.assignedAgent.toString() !== req.user.id.toString()) {
+    const assignedAgentId = clientUser.assignedAgent?._id || clientUser.assignedAgent;
+    if (!assignedAgentId || assignedAgentId.toString() !== req.user.id.toString()) {
       return next(new AppError('Access Denied. This client is not assigned to you.', 403));
     }
   }

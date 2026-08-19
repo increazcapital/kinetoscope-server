@@ -81,7 +81,7 @@ const getRoiTab = async (clientId) => {
   const realClientId = user._id;
 
   const profile = await ClientProfile.findOne({ userId: realClientId });
-  const configuredRoiRate = profile ? (profile.monthlyRoi || 1.2) : 1.2;
+  const configuredRoiRate = (profile && profile.monthlyRoi !== undefined && profile.monthlyRoi !== null && String(profile.monthlyRoi).trim() !== '') ? Number(profile.monthlyRoi) : 0;
 
   const Payout = require('../models/Payout.model');
   const Transaction = require('../models/Transaction.model');

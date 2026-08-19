@@ -156,7 +156,11 @@ const approveRejectTransaction = asyncHandler(async (req, res, next) => {
         projectObj = await Project.findById(transaction.projectId).lean();
       }
 
-      const roiPct = projectObj?.monthlyRoi ? parseFloat(projectObj.monthlyRoi) : (clientProfile ? (clientProfile.monthlyRoi || 1.5) : 1.5);
+      const roiPct = (projectObj?.monthlyRoi !== undefined && projectObj?.monthlyRoi !== null && String(projectObj.monthlyRoi).trim() !== '')
+        ? parseFloat(projectObj.monthlyRoi)
+        : ((clientProfile && clientProfile.monthlyRoi !== undefined && clientProfile.monthlyRoi !== null && String(clientProfile.monthlyRoi).trim() !== '')
+            ? parseFloat(clientProfile.monthlyRoi)
+            : 0);
       const riskPct = 0; // default risk %
 
       // Check if an Investment for this exact transaction already exists

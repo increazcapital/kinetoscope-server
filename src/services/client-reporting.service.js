@@ -125,7 +125,7 @@ const getManageClientsData = async ({
       email: user.email,
       totalInvestment,
       roiPercentage,
-      monthlyRoi: profile ? (profile.monthlyRoi !== undefined ? profile.monthlyRoi : 1.2) : 1.2,
+      monthlyRoi: (profile && profile.monthlyRoi !== undefined && profile.monthlyRoi !== null) ? Number(profile.monthlyRoi) : 0,
       tier: profile ? (profile.tier || 'SILVER') : 'SILVER',
       perks: profile ? (profile.tier || 'SILVER') : 'SILVER',
       assignedAgent: user.assignedAgent ? {

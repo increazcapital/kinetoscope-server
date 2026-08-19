@@ -96,12 +96,57 @@ const Investment = require('../../models/Investment.model');
  */
 const recalculateProjectFunding = async (projectObj) => {
   if (!projectObj) return projectObj;
-  const projId = projectObj._id || projectObj.id;
-  const activeInvestments = await Investment.find({ projectId: projId, status: 'active' }).lean();
-  
-  const realFundedAmount = activeInvestments.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
-  const totalSlots = projectObj.totalSlots || 20;
-  const usedSlots = activeInvestments.length;
+  const projId = String(projectObj._id || projectObj.id);
+  const projName = String(projectObj.name || '').trim().toLowerCase();
+  const projSegment = String(projectObj.segment || '').trim().toLowerCase();
+
+  const allActiveInvestments = await Investment.find({
+    status: 'active'
+  }).lean();
+
+  let realFundedAmount = 0;
+  const uniqueClients = new Set();
+
+  allActiveInvestments.forEach(inv => {
+    const baseAmt = Number(inv.investmentAmount || inv.amount || 0);
+    const clientIdStr = String(inv.clientId || inv._id);
+    let matchedInProject = false;
+
+    if (Array.isArray(inv.segmentAllocation) && inv.segmentAllocation.length > 0) {
+      const matchedAlloc = inv.segmentAllocation.find(s => {
+        const sProjId = s.projectId ? String(s.projectId) : '';
+        const sProjName = s.projectName ? String(s.projectName).trim().toLowerCase() : '';
+        const sSegName = s.segmentName ? String(s.segmentName).trim().toLowerCase() : '';
+        return (sProjId && sProjId === projId) ||
+               (sProjName && sProjName === projName) ||
+               (!sProjId && !sProjName && sSegName && sSegName === projSegment);
+      });
+
+      if (matchedAlloc) {
+        const allocPct = Number(matchedAlloc.allocationPercentage || 0);
+        realFundedAmount += Math.round(baseAmt * (allocPct / 100));
+        matchedInProject = true;
+      }
+    } else {
+      const invProjId = inv.projectId ? String(inv.projectId) : '';
+      const invProjName = inv.projectName ? String(inv.projectName).trim().toLowerCase() : '';
+      const invSegment = inv.segment ? String(inv.segment).trim().toLowerCase() : '';
+
+      if ((invProjId && invProjId === projId) ||
+          (invProjName && invProjName === projName) ||
+          (!invProjId && !invProjName && invSegment && invSegment === projSegment)) {
+        realFundedAmount += baseAmt;
+        matchedInProject = true;
+      }
+    }
+
+    if (matchedInProject) {
+      uniqueClients.add(clientIdStr);
+    }
+  });
+
+  const totalSlots = Number(projectObj.totalSlots) > 0 ? Number(projectObj.totalSlots) : 20;
+  const usedSlots = uniqueClients.size;
   const realSlotsAvailable = Math.max(0, totalSlots - usedSlots);
 
   // Sync to database if different
@@ -110,7 +155,9 @@ const recalculateProjectFunding = async (projectObj) => {
       $set: {
         fundedAmount: realFundedAmount,
         slotsAvailable: realSlotsAvailable,
-        status: (projectObj.targetFunding > 0 && realFundedAmount >= projectObj.targetFunding) || realSlotsAvailable <= 0 ? 'Slot Full' : (projectObj.status === 'Slot Full' ? 'Open' : projectObj.status)
+        status: (projectObj.targetFunding > 0 && realFundedAmount >= projectObj.targetFunding) || realSlotsAvailable <= 0
+          ? 'Slot Full'
+          : (projectObj.status === 'Slot Full' ? 'Open' : projectObj.status)
       }
     });
   }
@@ -119,6 +166,8 @@ const recalculateProjectFunding = async (projectObj) => {
     ...projectObj,
     fundedAmount: realFundedAmount,
     slotsAvailable: realSlotsAvailable,
+    totalSlots,
+    bookedSlots: usedSlots,
   };
 };
 

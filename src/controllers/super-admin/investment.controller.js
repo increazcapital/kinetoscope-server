@@ -316,7 +316,11 @@ const getAllInvestments = asyncHandler(async (req, res, next) => {
         if (tx.projectId) {
           projectObj = await Project.findById(tx.projectId).lean();
         }
-        const roiPct = projectObj?.monthlyRoi ? parseFloat(projectObj.monthlyRoi) : (clientProfile ? (clientProfile.monthlyRoi || 1.5) : 1.5);
+        const roiPct = (projectObj?.monthlyRoi !== undefined && projectObj?.monthlyRoi !== null && String(projectObj.monthlyRoi).trim() !== '')
+          ? parseFloat(projectObj.monthlyRoi)
+          : ((clientProfile && clientProfile.monthlyRoi !== undefined && clientProfile.monthlyRoi !== null && String(clientProfile.monthlyRoi).trim() !== '')
+              ? parseFloat(clientProfile.monthlyRoi)
+              : 0);
         const codeVal = tx.clientCode || (clientUser && clientUser.clientCode ? clientUser.clientCode : '') || (`KFPL-${String(tx.clientId).slice(-6).toUpperCase()}`);
 
         const createdInv = await Investment.create({
