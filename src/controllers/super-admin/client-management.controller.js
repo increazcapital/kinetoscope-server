@@ -821,29 +821,28 @@ const updateClient = asyncHandler(async (req, res, next) => {
 const deleteClient = asyncHandler(async (req, res, next) => {
   const targetId = req.params.id;
 
-  let user = null;
+  const { findClientUser } = require('../../services/client-details.service');
+  let user = await findClientUser(targetId);
   let profile = null;
 
-  if (mongoose.Types.ObjectId.isValid(targetId)) {
-    user = await User.findById(targetId);
-    if (!user) {
-      profile = await ClientProfile.findById(targetId);
-      if (profile && profile.userId) {
-        user = await User.findById(profile.userId);
-      }
+  if (user) {
+    profile = await ClientProfile.findOne({ userId: user._id });
+  } else if (mongoose.Types.ObjectId.isValid(targetId)) {
+    profile = await ClientProfile.findById(targetId);
+    if (profile && profile.userId) {
+      user = await User.findById(profile.userId);
     }
   }
 
-  if (!user) {
-    user = await User.findOne({ clientCode: targetId });
-  }
-
-  if (!profile && user) {
-    profile = await ClientProfile.findOne({ userId: user._id });
-  }
-
   if (!profile && !user) {
-    profile = await ClientProfile.findOne({ clientCode: targetId });
+    profile = await ClientProfile.findOne({ 
+      $or: [
+        { clientCode: targetId },
+        { clientCode: targetId.toUpperCase() },
+        { clientId: targetId },
+        { clientId: targetId.toUpperCase() }
+      ]
+    });
     if (profile && profile.userId) {
       user = await User.findById(profile.userId);
     }
