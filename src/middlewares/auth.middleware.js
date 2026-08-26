@@ -53,7 +53,7 @@ const protect = asyncHandler(async (req, res, next) => {
   }
 
   if (!currentUser.isActive) {
-    return next(new AppError('Your account has been deactivated or put on hold. Please contact info@kinetoscopefilms.com for assistance.', 403));
+    return next(new AppError('Your account has been deactivated or put on hold. Please contact info@yieldiq.online for assistance.', 403));
   }
 
   // 5) Attach authenticated user to request object

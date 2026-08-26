@@ -39,10 +39,10 @@ const login = asyncHandler(async (req, res, next) => {
   const profile = await ClientProfile.findOne({ userId: user._id });
 
   if (profile && profile.kycStatus === 'REJECTED') {
-    return next(new AppError('Your account KYC registration has been rejected. Please contact info@kinetoscopefilms.com for assistance.', 403));
+    return next(new AppError('Your account KYC registration has been rejected. Please contact info@yieldiq.online for assistance.', 403));
   }
   if (!user.isActive || (profile && profile.status === 'suspended')) {
-    return next(new AppError('Your account has been deactivated or put on hold. Please contact info@kinetoscopefilms.com for assistance.', 403));
+    return next(new AppError('Your account has been deactivated or put on hold. Please contact info@yieldiq.online for assistance.', 403));
   }
 
   // 5) Check if 2FA (OTP Verification) is enabled

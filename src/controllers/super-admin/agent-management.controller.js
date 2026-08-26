@@ -188,7 +188,7 @@ const createAgent = asyncHandler(async (req, res, next) => {
   });
 
   try {
-    const loginUrl = process.env.AGENT_PORTAL_URL || 'https://partner.kinetoscopefilms.com';
+    const loginUrl = process.env.AGENT_PORTAL_URL || 'https://partner.yieldiq.online';
     await sendWelcomeEmail(cleanEmail, fullName, agentCode, tempPassword, loginUrl);
   } catch (emailError) {
     console.error(`Welcome email failed to dispatch to ${cleanEmail}:`, emailError.message);

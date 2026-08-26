@@ -36,7 +36,7 @@ const login = asyncHandler(async (req, res, next) => {
   }
 
   if (!user.isActive) {
-    return next(new AppError('Your account has been deactivated or blocked. Please contact info@kinetoscopefilms.com for assistance.', 403));
+    return next(new AppError('Your account has been deactivated or blocked. Please contact info@yieldiq.online for assistance.', 403));
   }
 
   // 5) Check if 2FA (OTP Verification) is enabled

@@ -294,8 +294,8 @@ const sendWelcomeEmail = async (toEmail, name, code, tempPassword, customLoginUr
   const branding = await getBranding();
   const isAgent = code && (code.toString().toUpperCase().includes('AGT') || code.toString().toUpperCase().includes('AG-') || code.toString().toUpperCase().includes('AGENT'));
 
-  const clientLoginUrl = process.env.CLIENT_PORTAL_URL || 'https://cp.kinetoscopefilms.com/login';
-  const agentLoginUrl = process.env.AGENT_PORTAL_URL || 'https://partner.kinetoscopefilms.com';
+  const clientLoginUrl = process.env.CLIENT_PORTAL_URL || 'https://investor.yieldiq.online/login';
+  const agentLoginUrl = process.env.AGENT_PORTAL_URL || 'https://partner.yieldiq.online';
   
   const loginUrl = customLoginUrl || (isAgent ? agentLoginUrl : clientLoginUrl);
   const portalName = isAgent ? 'Agent Partner Portal' : 'Investor Portal';
@@ -355,8 +355,8 @@ const sendWelcomeEmail = async (toEmail, name, code, tempPassword, customLoginUr
 const sendCredentialsEmail = async (toEmail, clientName, clientCode, tempPassword, customLoginUrl) => {
   const branding = await getBranding();
   const isAgent = clientCode && (clientCode.toString().toUpperCase().includes('AGT') || clientCode.toString().toUpperCase().includes('AG-') || clientCode.toString().toUpperCase().includes('AGENT'));
-  const clientLoginUrl = process.env.CLIENT_PORTAL_URL || 'https://cp.kinetoscopefilms.com/login';
-  const agentLoginUrl = process.env.AGENT_PORTAL_URL || 'https://partner.kinetoscopefilms.com';
+  const clientLoginUrl = process.env.CLIENT_PORTAL_URL || 'https://investor.yieldiq.online/login';
+  const agentLoginUrl = process.env.AGENT_PORTAL_URL || 'https://partner.yieldiq.online';
   const loginUrl = customLoginUrl || (isAgent ? agentLoginUrl : clientLoginUrl);
   const portalName = isAgent ? 'Agent Partner Portal' : 'Investor Portal';
 
@@ -523,7 +523,7 @@ const sendInvestmentAssignmentNotification = async (clientEmail, clientName, age
     companyName: branding.companyName,
     tagline: branding.tagline,
     actionButton: {
-      url: process.env.CLIENT_PORTAL_URL || 'https://cp.kinetoscopefilms.com/login',
+      url: process.env.CLIENT_PORTAL_URL || 'https://investor.yieldiq.online/login',
       text: 'View Portfolio in Investor Portal'
     }
   });
@@ -780,8 +780,8 @@ const sendDocumentReuploadRequiredEmail = async ({ toEmail, userName, userRole, 
   const branding = await getBranding();
   const subject = `${branding.companyName} – Action Required: Document Re-upload Request`;
   const portalUrl = userRole === 'Agent' 
-    ? (process.env.AGENT_PORTAL_URL || 'https://partner.kinetoscopefilms.com') 
-    : (process.env.CLIENT_PORTAL_URL || 'https://cp.kinetoscopefilms.com/login');
+    ? (process.env.AGENT_PORTAL_URL || 'https://partner.yieldiq.online') 
+    : (process.env.CLIENT_PORTAL_URL || 'https://investor.yieldiq.online/login');
 
   const contentHtml = `
     <p style="font-size: 14px; color: #334155; line-height: 1.6; margin-top: 0;">
@@ -841,7 +841,7 @@ const sendDocumentReuploadRequiredEmail = async ({ toEmail, userName, userRole, 
 const sendDocumentUploadedAdminNotification = async ({ userEmail, userName, userRole, userCode, uploadedDocLabels = [] }) => {
   const branding = await getBranding();
   const adminEmail = process.env.SUPERADMIN_NOTIFY_EMAIL || process.env.SMTP_USER || SUPPORT_EMAIL;
-  const superAdminUrl = process.env.SUPER_ADMIN_PORTAL_URL || 'https://superadmin.kinetoscopefilms.com';
+  const superAdminUrl = process.env.SUPER_ADMIN_PORTAL_URL || 'https://superadmin.yieldiq.online';
 
   const subject = `[Notification] New Document Uploaded by ${userRole}: ${userName} (${userCode || 'N/A'})`;
 

@@ -250,7 +250,7 @@ const createClient = asyncHandler(async (req, res, next) => {
 
   try {
     // 9) Send Welcome Email containing credentials
-    const loginUrl = process.env.CLIENT_PORTAL_URL || 'https://cp.kinetoscopefilms.com/login';
+    const loginUrl = process.env.CLIENT_PORTAL_URL || 'https://investor.yieldiq.online/login';
     await sendWelcomeEmail(email, fullName, clientCode, tempPassword, loginUrl);
   } catch (emailError) {
     console.error(`Welcome email failed to dispatch to ${email}:`, emailError.message);
