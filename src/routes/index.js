@@ -19,8 +19,9 @@ router.use('/client', clientRoutes);
 router.use('/agent', agentRoutes);
 
 // Register system settings support endpoint
-const { getSupportSettings } = require('../controllers/super-admin/settings.controller');
+const { getSupportSettings, getBranding } = require('../controllers/super-admin/settings.controller');
 router.get('/system-settings/support', getSupportSettings);
+router.get('/system-settings/branding', getBranding);
 
 // Document Proxy to bypass CORS issues when downloading/previewing files from Cloudinary
 const https = require('https');

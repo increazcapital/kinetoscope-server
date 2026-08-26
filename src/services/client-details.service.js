@@ -30,7 +30,6 @@ const findClientUser = async (clientId) => {
     let user = await User.findById(str).populate('assignedAgent', 'name email');
     if (user && user.role === ROLES.CLIENT) return user;
     
-    // Check if str is a ClientProfile _id
     const prof = await ClientProfile.findById(str);
     if (prof && prof.userId) {
       user = await User.findById(prof.userId).populate('assignedAgent', 'name email');
@@ -38,19 +37,39 @@ const findClientUser = async (clientId) => {
     }
   }
 
-  let user = await User.findOne({ clientCode: str.toUpperCase(), role: ROLES.CLIENT }).populate('assignedAgent', 'name email');
-  if (!user) user = await User.findOne({ clientCode: str, role: ROLES.CLIENT }).populate('assignedAgent', 'name email');
+  const numMatch = str.match(/\d+/);
+  const candidateCodes = [
+    str,
+    str.toUpperCase(),
+    ...(numMatch ? [
+      `KFPL-CL-${numMatch[0]}`,
+      `KFPL-${numMatch[0]}`,
+      `YLDIQ-CL-${numMatch[0]}`,
+      `YLDIQ-${numMatch[0]}`,
+      `YIQ-CL-${numMatch[0]}`,
+      `CL-${numMatch[0]}`,
+      numMatch[0]
+    ] : [])
+  ];
+
+  let user = await User.findOne({
+    $or: [
+      { clientCode: { $in: candidateCodes } },
+      { clientId: { $in: candidateCodes } }
+    ],
+    role: ROLES.CLIENT
+  }).populate('assignedAgent', 'name email');
 
   if (!user) {
     const prof = await ClientProfile.findOne({
       $or: [
-        { clientCode: str.toUpperCase() },
-        { clientCode: str },
-        { clientId: str.toUpperCase() },
-        { clientId: str }
+        { clientCode: { $in: candidateCodes } },
+        { clientId: { $in: candidateCodes } }
       ]
     });
-    if (prof && prof.userId) user = await User.findById(prof.userId).populate('assignedAgent', 'name email');
+    if (prof && prof.userId) {
+      user = await User.findById(prof.userId).populate('assignedAgent', 'name email');
+    }
   }
 
   if (!user && slugTarget) {
@@ -61,7 +80,9 @@ const findClientUser = async (clientId) => {
   if (!user && slugTarget) {
     const allProfiles = await ClientProfile.find();
     const matchedProf = allProfiles.find(p => slugifyName(p.fullName) === slugTarget);
-    if (matchedProf && matchedProf.userId) user = await User.findById(matchedProf.userId).populate('assignedAgent', 'name email');
+    if (matchedProf && matchedProf.userId) {
+      user = await User.findById(matchedProf.userId).populate('assignedAgent', 'name email');
+    }
   }
 
   return user;

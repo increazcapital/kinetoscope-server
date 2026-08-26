@@ -23,32 +23,65 @@ const slugifyName = (name) => {
 const findAgentUser = async (agentId) => {
   if (!agentId) return null;
   const str = String(agentId).trim();
+  const slugTarget = slugifyName(str);
+
   if (/^[0-9a-fA-F]{24}$/.test(str)) {
-    const user = await User.findById(str);
+    let user = await User.findById(str);
     if (user && user.role === ROLES.AGENT) return user;
+
+    const prof = await AgentProfile.findById(str);
+    if (prof && prof.userId) {
+      user = await User.findById(prof.userId);
+      if (user && user.role === ROLES.AGENT) return user;
+    }
   }
-  let user = await User.findOne({ clientCode: str.toUpperCase(), role: ROLES.AGENT });
-  if (!user) user = await User.findOne({ clientCode: str, role: ROLES.AGENT });
+
+  const numMatch = str.match(/\d+/);
+  const candidateCodes = [
+    str,
+    str.toUpperCase(),
+    ...(numMatch ? [
+      `KFPL-AG-${numMatch[0]}`,
+      `KFPL-AGT-${numMatch[0]}`,
+      `YLDIQ-AG-${numMatch[0]}`,
+      `YIQ-AG-${numMatch[0]}`,
+      `AG-${numMatch[0]}`,
+      `AGT-${numMatch[0]}`,
+      numMatch[0]
+    ] : [])
+  ];
+
+  let user = await User.findOne({
+    $or: [
+      { clientCode: { $in: candidateCodes } },
+      { agentCode: { $in: candidateCodes } },
+      { agentId: { $in: candidateCodes } }
+    ],
+    role: ROLES.AGENT
+  });
+
   if (!user) {
     const prof = await AgentProfile.findOne({
       $or: [
-        { agentCode: str.toUpperCase() },
-        { agentCode: str },
-        { agentId: str.toUpperCase() },
-        { agentId: str }
+        { clientCode: { $in: candidateCodes } },
+        { agentCode: { $in: candidateCodes } },
+        { agentId: { $in: candidateCodes } }
       ]
     });
-    if (prof) user = await User.findById(prof.userId);
+    if (prof && prof.userId) user = await User.findById(prof.userId);
   }
-  if (!user) {
+
+  if (!user && slugTarget) {
     const allAgents = await User.find({ role: ROLES.AGENT });
-    user = allAgents.find(a => slugifyName(a.name) === str.toLowerCase() || slugifyName(a.email) === str.toLowerCase());
+    user = allAgents.find(a => slugifyName(a.name) === slugTarget || slugifyName(a.email) === slugTarget);
   }
-  if (!user) {
+
+  if (!user && slugTarget) {
     const allProfiles = await AgentProfile.find();
-    const matchedProf = allProfiles.find(p => slugifyName(p.fullName) === str.toLowerCase());
-    if (matchedProf) user = await User.findById(matchedProf.userId);
+    const matchedProf = allProfiles.find(p => slugifyName(p.fullName) === slugTarget);
+    if (matchedProf && matchedProf.userId) user = await User.findById(matchedProf.userId);
   }
+
   return user;
 };
 

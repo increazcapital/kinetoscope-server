@@ -31,6 +31,8 @@ const {
   toggleAgent2FA,
   getSupportSettings,
   updateSupportSettings,
+  getBranding,
+  updateBranding,
 } = require('../../controllers/super-admin/settings.controller');
 const {
   sendChangeEmailOtpHandler,
@@ -463,8 +465,8 @@ router.route('/agreements')
     }
 
     const title = agreementTitle || 'Investment Agreement';
-    const subject = `Kinetoscope – New Agreement Uploaded: ${title}`;
-    const text = `Hello ${client.name},\n\nA new agreement document (${title}) has been uploaded to your portal for review.\n\nBest regards,\nKinetoscope Team`;
+    const subject = `YieldIQ – New Agreement Uploaded: ${title}`;
+    const text = `Hello ${client.name},\n\nA new agreement document (${title}) has been uploaded to your portal for review.\n\nBest regards,\nYieldIQ Team`;
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 540px; margin: auto; padding: 32px; border: 1px solid #e5e7eb; border-radius: 8px;">
         <h2 style="color: #1e3a8a; margin-bottom: 16px;">New Agreement Uploaded</h2>
@@ -475,7 +477,7 @@ router.route('/agreements')
         </div>
         <p style="color: #4b5563; font-size: 14px;">Please log in to the Client Portal to review, sign, or download your agreement.</p>
         <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
-        <p style="color: #94a3b8; font-size: 11px; text-align: center;">Kinetoscope Films Production Pvt Ltd</p>
+        <p style="color: #94a3b8; font-size: 11px; text-align: center;">YieldIQ</p>
       </div>
     `;
 
@@ -502,6 +504,8 @@ router.patch('/settings/client-2fa', requirePermission('settings', 'edit'), togg
 router.patch('/settings/agent-2fa', requirePermission('settings', 'edit'), toggleAgent2FA);
 router.get('/settings/support', requirePermission('settings', 'view'), getSupportSettings);
 router.put('/settings/support', requirePermission('settings', 'edit'), updateSupportSettings);
+router.get('/settings/branding', requirePermission('settings', 'view'), getBranding);
+router.put('/settings/branding', requirePermission('settings', 'edit'), memoryUpload.fields([{ name: 'logo', maxCount: 1 }, { name: 'favicon', maxCount: 1 }]), updateBranding);
 
 // 11. Settings — Change Email Address (OTP-based)
 router.post('/settings/change-email/send-otp', requirePermission('settings', 'edit'), sendChangeEmailOtpRules, sendChangeEmailOtpHandler);

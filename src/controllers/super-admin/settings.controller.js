@@ -186,6 +186,96 @@ const updateSupportSettings = asyncHandler(async (req, res, next) => {
   });
 });
 
+/**
+ * Get Branding Settings (Public — used by all 3 dashboards)
+ * GET /api/system-settings/branding or GET /api/super-admin/settings/branding
+ */
+const getBranding = asyncHandler(async (req, res, next) => {
+  const setting = await getOrCreateSupportSetting();
+  res.status(200).json({
+    success: true,
+    data: {
+      companyName: setting.companyName || 'YieldIQ',
+      tagline: setting.tagline || '',
+      logoUrl: setting.logoUrl || '',
+      faviconUrl: setting.faviconUrl || '',
+    },
+  });
+});
+
+/**
+ * Update Branding Settings (Super Admin only)
+ * PUT /api/super-admin/settings/branding
+ * Supports multipart form with logo/favicon file uploads via Cloudinary
+ */
+const updateBranding = asyncHandler(async (req, res, next) => {
+  const { companyName, tagline } = req.body;
+
+  let setting = await SystemSetting.findOne({ key: 'system_config' });
+  if (!setting) {
+    setting = new SystemSetting({ key: 'system_config' });
+  }
+
+  if (companyName !== undefined) setting.companyName = companyName;
+  if (tagline !== undefined) setting.tagline = tagline;
+
+  // Handle logo upload if file is provided
+  if (req.files) {
+    const { uploadBufferToCloudinary } = require('../../services/cloudinary.service');
+
+    if (req.files.logo && req.files.logo[0]) {
+      try {
+        const logoResult = await uploadBufferToCloudinary(
+          req.files.logo[0].buffer,
+          'yieldiq/branding',
+          { resource_type: 'image' }
+        );
+        setting.logoUrl = typeof logoResult === 'string' ? logoResult : (logoResult?.secure_url || logoResult?.url || '');
+      } catch (uploadErr) {
+        console.error('[Branding] Logo Cloudinary upload failed, falling back to base64 data URI:', uploadErr.message);
+        const mime = req.files.logo[0].mimetype || 'image/png';
+        setting.logoUrl = `data:${mime};base64,${req.files.logo[0].buffer.toString('base64')}`;
+      }
+    }
+
+    if (req.files.favicon && req.files.favicon[0]) {
+      try {
+        const faviconResult = await uploadBufferToCloudinary(
+          req.files.favicon[0].buffer,
+          'yieldiq/branding',
+          { resource_type: 'image' }
+        );
+        setting.faviconUrl = typeof faviconResult === 'string' ? faviconResult : (faviconResult?.secure_url || faviconResult?.url || '');
+      } catch (uploadErr) {
+        console.error('[Branding] Favicon Cloudinary upload failed, falling back to base64 data URI:', uploadErr.message);
+        const mime = req.files.favicon[0].mimetype || 'image/png';
+        setting.faviconUrl = `data:${mime};base64,${req.files.favicon[0].buffer.toString('base64')}`;
+      }
+    }
+  }
+
+  // Also support direct url in body if provided
+  if (req.body.logoUrl !== undefined && (!req.files || !req.files.logo)) {
+    setting.logoUrl = req.body.logoUrl;
+  }
+  if (req.body.faviconUrl !== undefined && (!req.files || !req.files.favicon)) {
+    setting.faviconUrl = req.body.faviconUrl;
+  }
+
+  await setting.save();
+
+  res.status(200).json({
+    success: true,
+    message: 'Branding settings updated successfully',
+    data: {
+      companyName: setting.companyName || 'YieldIQ',
+      tagline: setting.tagline || '',
+      logoUrl: setting.logoUrl || '',
+      faviconUrl: setting.faviconUrl || '',
+    },
+  });
+});
+
 module.exports = {
   getSettings,
   toggle2FA,
@@ -193,4 +283,7 @@ module.exports = {
   toggleAgent2FA,
   getSupportSettings,
   updateSupportSettings,
+  getBranding,
+  updateBranding,
 };
+

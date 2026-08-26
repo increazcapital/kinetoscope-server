@@ -112,7 +112,15 @@ const createInvestment = asyncHandler(async (req, res, next) => {
       }
     }
   } else {
-    clientUser = await User.findOne({ clientCode: clientId.toUpperCase(), role: ROLES.CLIENT });
+    const candidateCodes = [
+      clientId.toUpperCase(),
+      clientId.toUpperCase().replace(/^(?:YLDIQ|YIQ|KFPL)-CL-/i, 'YLDIQ-CL-'),
+      clientId.toUpperCase().replace(/^(?:YLDIQ|YIQ|KFPL)-CL-/i, 'KFPL-CL-'),
+      clientId.toUpperCase().replace(/^(?:YLDIQ|YIQ|KFPL)-CL-/i, 'YIQ-CL-'),
+      clientId.toUpperCase().replace(/^(?:YLDIQ|YIQ|KFPL)-/i, 'YLDIQ-CL-'),
+      clientId.toUpperCase().replace(/^(?:YLDIQ|YIQ|KFPL)-/i, 'KFPL-'),
+    ];
+    clientUser = await User.findOne({ clientCode: { $in: candidateCodes }, role: ROLES.CLIENT });
   }
 
   if (!clientUser || clientUser.role !== ROLES.CLIENT) {
@@ -248,14 +256,7 @@ const createInvestment = asyncHandler(async (req, res, next) => {
         if (agent) agentEmail = agent.email;
       }
 
-      sendInvestmentAssignmentNotification(
-        clientUser.email,
-        clientUser.name,
-        agentEmail,
-        investment
-      ).catch((err) =>
-        console.error('[Investment Notification Error]:', err.message)
-      );
+      await sendInvestmentAssignmentNotification(clientUser.email, clientUser.name, agentEmail, investment);
     }
   } catch (error) {
     console.error('[Investment Notification Processing Error]:', error.message);
@@ -637,18 +638,18 @@ const approveInvestment = asyncHandler(async (req, res, next) => {
       const contentHtml = `
         <p style="font-size: 15px; color: #1E293B;">Hello <strong>${clientUser.name}</strong>,</p>
         <p style="font-size: 14px; color: #475569;">Congratulations! Your project investment selection request for <strong>${investment.projectName || 'your selected project'}</strong> has been officially approved by Super Admin.</p>
-        <div style="margin: 20px 0; padding: 18px; background-color: #F0FDF4; border-left: 4px solid #10B981; border-radius: 8px; border: 1px solid #DCFCE7;">
-          <p style="margin: 0; color: #166534; font-weight: 700; font-size: 15px;">Status: APPROVED / ACTIVE</p>
-          ${approvedAmount > 0 ? `<p style="margin: 8px 0 0 0; color: #15803D; font-size: 14px;"><strong>Approved Investment Amount:</strong> ₹${approvedAmount.toLocaleString('en-IN')}</p>` : ''}
-          <p style="margin: 6px 0 0 0; color: #15803D; font-size: 13.5px;"><strong>Expected Monthly ROI:</strong> ${investment.roiPercentage || 1.5}%</p>
+        <div style="margin: 20px 0; padding: 18px; background-color: #FFF8E7; border-left: 4px solid #F5A800; border-radius: 8px; border: 1px solid #FFE7A3;">
+          <p style="margin: 0; color: #0B1F4D; font-weight: 700; font-size: 15px;">Status: APPROVED / ACTIVE</p>
+          ${approvedAmount > 0 ? `<p style="margin: 8px 0 0 0; color: #123A78; font-size: 14px;"><strong>Approved Investment Amount:</strong> ₹${approvedAmount.toLocaleString('en-IN')}</p>` : ''}
+          <p style="margin: 6px 0 0 0; color: #123A78; font-size: 13.5px;"><strong>Expected Monthly ROI:</strong> ${investment.roiPercentage || 1.5}%</p>
         </div>
         <p style="font-size: 14px; color: #475569;">You can view your active portfolio and performance metrics anytime in your Client Portal Dashboard.</p>
       `;
-      const html = buildLightEmailTemplate({
+      const html = await buildLightEmailTemplate({
         title: '🎉 Investment Request Approved',
         subtitle: `Project: ${investment.projectName || 'Kinetoscope Project'}`,
         contentHtml,
-        bannerAccent: '#10B981'
+        bannerAccent: '#F5A800'
       });
 
       await sendEmail({
@@ -743,6 +744,27 @@ const updateInvestment = asyncHandler(async (req, res, next) => {
       project.fundedAmount = activeInvestments.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
       await project.save();
     }
+  }
+
+  // Send automated email notification to client and their agent on assignment update
+  try {
+    const clientUser = await User.findById(investment.clientId);
+    if (clientUser && clientUser.email) {
+      let agentEmail = null;
+      if (clientUser.assignedAgent) {
+        const agent = await User.findById(clientUser.assignedAgent);
+        if (agent) agentEmail = agent.email;
+      }
+      await sendInvestmentAssignmentNotification(
+        clientUser.email,
+        clientUser.name,
+        agentEmail,
+        investment
+      );
+      console.log(`[Assign Investment Update] Email sent successfully to ${clientUser.email}`);
+    }
+  } catch (notifErr) {
+    console.error('[Assign Investment Update Notification Error]:', notifErr.message);
   }
 
   res.status(200).json({

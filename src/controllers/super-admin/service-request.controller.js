@@ -179,7 +179,7 @@ const updateServiceRequestStatus = asyncHandler(async (req, res, next) => {
         <p style="font-size: 13px; color: #64748B; margin-top: 16px;">You can view the complete status update by logging into your portal dashboard.</p>
       `;
 
-      const html = buildLightEmailTemplate({
+      const html = await buildLightEmailTemplate({
         title: 'Support Ticket Response Received',
         subtitle: `Request ID: ${reqId}`,
         contentHtml,
@@ -188,8 +188,8 @@ const updateServiceRequestStatus = asyncHandler(async (req, res, next) => {
 
       await sendEmail({
         to: creator.email,
-        subject: `Kinetoscope – Response on Ticket ${reqId} (${currentStatus})`,
-        text: `Hello ${creator.name || 'Client'},\n\nYour service request ${reqId} ("${reqSubject}") has been updated to status: ${currentStatus}.\n\nAdmin Remarks: ${remarksText}\n\n— Kinetoscope Support Team`,
+        subject: `YieldIQ – Response on Ticket ${reqId} (${currentStatus})`,
+        text: `Hello ${creator.name || 'Client'},\n\nYour service request ${reqId} ("${reqSubject}") has been updated to status: ${currentStatus}.\n\nAdmin Remarks: ${remarksText}\n\n— YieldIQ Support Team`,
         html,
       });
       console.log(`[Service Request Response Email] Sent email successfully to ${creator.email}`);

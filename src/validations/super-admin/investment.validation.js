@@ -23,9 +23,9 @@ const createInvestmentValidationRules = [
     .notEmpty().withMessage('Client ID is required')
     .custom((value) => {
       const isMongoId = /^[0-9a-fA-F]{24}$/.test(value);
-      const isClientCode = /^KFPL-\d+$/i.test(value);
+      const isClientCode = /^(?:KFPL|YIQ|YLDIQ)(?:-CL)?-\d+$/i.test(value) || /^\d+$/.test(value);
       if (!isMongoId && !isClientCode) {
-        throw new Error('Client ID must be a valid MongoDB ObjectId or Client Code (e.g. KFPL-1001)');
+        throw new Error('Client ID must be a valid MongoDB ObjectId or Client Code (e.g. YIQ-CL-1001)');
       }
       return true;
     }),

@@ -151,10 +151,10 @@ const createClient = asyncHandler(async (req, res, next) => {
   });
 
   let nextSeq = 1001;
-  while (usedSeqs.has(nextSeq) || await User.findOne({ clientCode: `KFPL-CL-${nextSeq}` })) {
+  while (usedSeqs.has(nextSeq) || await User.findOne({ clientCode: `YLDIQ-CL-${nextSeq}` })) {
     nextSeq++;
   }
-  const clientCode = `KFPL-CL-${nextSeq}`;
+  const clientCode = `YLDIQ-CL-${nextSeq}`;
 
   // 4) Use provided custom password or generate a secure temporary password
   const tempPassword = password || portalPassword || generateTempPassword();

@@ -300,10 +300,10 @@ const registerAgent = asyncHandler(async (req, res, next) => {
   });
 
   let nextSeq = 1001;
-  while (usedSeqs.has(nextSeq) || await User.findOne({ clientCode: `KFPL-AG-${nextSeq}` })) {
+  while (usedSeqs.has(nextSeq) || await User.findOne({ clientCode: `YLDIQ-AG-${nextSeq}` })) {
     nextSeq++;
   }
-  const agentCode = `KFPL-AG-${nextSeq}`;
+  const agentCode = `YLDIQ-AG-${nextSeq}`;
 
   // Define database variables outside to perform rollback on error
   let createdUser, createdProfile;

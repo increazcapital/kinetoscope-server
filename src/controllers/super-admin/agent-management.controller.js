@@ -103,10 +103,10 @@ const createAgent = asyncHandler(async (req, res, next) => {
   });
 
   let nextSeq = 1001;
-  while (usedSeqs.has(nextSeq) || await User.findOne({ clientCode: `KFPL-AG-${nextSeq}` })) {
+  while (usedSeqs.has(nextSeq) || await User.findOne({ clientCode: `YLDIQ-AG-${nextSeq}` })) {
     nextSeq++;
   }
-  const agentCode = `KFPL-AG-${nextSeq}`;
+  const agentCode = `YLDIQ-AG-${nextSeq}`;
 
   // 3) Use provided custom password or generate a secure temporary password
   const tempPassword = password || portalPassword || generateTempPassword();
@@ -236,7 +236,7 @@ const deduplicateAgentCodes = async () => {
       const code = agent.clientCode ? agent.clientCode.toUpperCase().trim() : '';
       if (!code || seenCodes.has(code)) {
         maxSeq += 1;
-        const newCode = `KFPL-AG-${maxSeq}`;
+        const newCode = `YLDIQ-AG-${maxSeq}`;
         console.log(`[DeduplicateAgents] Fixing duplicate/missing code for agent ${agent.name} (${agent._id}) from "${code}" -> "${newCode}"`);
         await User.updateOne({ _id: agent._id }, { clientCode: newCode });
         seenCodes.add(newCode);
@@ -1379,23 +1379,26 @@ const payAgentCommission = asyncHandler(async (req, res, next) => {
       const text = `Hello ${agent.name},\n\nYour commission of INR ${commission.amount.toLocaleString('en-IN')} for the period of ${commission.period} has been processed and marked as PAID.\n\nBest regards,\nKinetoscope Team`;
       const html = `
         <div style="font-family: Arial, sans-serif; max-width: 540px; margin: auto; padding: 32px; border: 1px solid #e5e7eb; border-radius: 8px;">
-          <h2 style="color: #10b981; margin-bottom: 16px;">Commission Payout Approved</h2>
+          <h2 style="color: #0B1F4D; margin-bottom: 16px;">Commission Payout Approved</h2>
           <p style="color: #4b5563; font-size: 14px;">Hello <strong>${agent.name}</strong>,</p>
           <p style="color: #4b5563; font-size: 14px;">We are pleased to inform you that your commission payout has been successfully processed:</p>
-          
-          <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 20px; margin: 20px 0;">
-            <table style="width: 100%; font-size: 14px; border-collapse: collapse;">
+                    <div style="background: #FFF8E7; border: 1px solid #FFE7A3; border-radius: 6px; padding: 20px; margin: 20px 0;">
+            <table style="width: 100%; border-collapse: collapse;">
               <tr>
-                <td style="padding: 6px 0; color: #64748b; font-weight: bold; width: 140px;">Period:</td>
-                <td style="padding: 6px 0; color: #0f172a; font-weight: bold;">${commission.period}</td>
+                <td style="padding: 6px 0; color: #7A8BA0; font-size: 13px;">Agent Name:</td>
+                <td style="padding: 6px 0; color: #0B1F4D; font-weight: 600;">${agent.name}</td>
               </tr>
               <tr>
-                <td style="padding: 6px 0; color: #64748b; font-weight: bold;">Amount:</td>
-                <td style="padding: 6px 0; color: #16a34a; font-size: 16px; font-weight: bold;">INR ${commission.amount.toLocaleString('en-IN')}</td>
+                <td style="padding: 6px 0; color: #7A8BA0; font-size: 13px;">Payout Month:</td>
+                <td style="padding: 6px 0; color: #0B1F4D; font-weight: 600;">${commission.period}</td>
               </tr>
               <tr>
-                <td style="padding: 6px 0; color: #64748b; font-weight: bold;">Status:</td>
-                <td style="padding: 6px 0; color: #16a34a; font-weight: bold;">PAID</td>
+                <td style="padding: 6px 0; color: #7A8BA0; font-size: 13px;">Commission Amount:</td>
+                <td style="padding: 6px 0; color: #F5A800; font-size: 16px; font-weight: bold;">INR ${commission.amount.toLocaleString('en-IN')}</td>
+              </tr>
+              <tr>
+                <td style="padding: 6px 0; color: #7A8BA0; font-size: 13px;">Status:</td>
+                <td style="padding: 6px 0; color: #123A78; font-weight: bold;">PAID</td>
               </tr>
             </table>
           </div>

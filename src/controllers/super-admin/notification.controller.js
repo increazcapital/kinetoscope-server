@@ -25,26 +25,30 @@ const DEFAULT_TRIGGERS = [
 /**
  * Format email layout according to the templateType or return custom HTML
  */
-const getEmailHtml = (templateType, body, customHtml) => {
+const getEmailHtml = async (templateType, body, customHtml) => {
   if (customHtml) return customHtml;
 
   let headerText = 'Important Announcement';
-  let accentColor = '#059669';
+  let accentColor = '#F5A800';
 
   switch (templateType) {
     case 'welcome_investor':
+    case 'welcome':
       headerText = 'Welcome Investor Kit';
-      accentColor = '#0284c7';
+      accentColor = '#F5A800';
       break;
     case 'reward_perk':
+    case 'reward':
       headerText = 'Perk & Reward Announcement';
-      accentColor = '#7c3aed';
+      accentColor = '#F5A800';
       break;
     case 'quarterly_statement':
+    case 'statement':
       headerText = 'Quarterly Statement Notice';
-      accentColor = '#0d9488';
+      accentColor = '#F5A800';
       break;
     case 'account_security':
+    case 'alert':
       headerText = 'Account Security Alert';
       accentColor = '#dc2626';
       break;
@@ -53,12 +57,12 @@ const getEmailHtml = (templateType, body, customHtml) => {
   }
 
   const contentHtml = `
-    <div style="color: #334155; font-size: 15px; line-height: 1.6; white-space: pre-wrap; margin: 12px 0;">
+    <div style="color: #334155; font-size: 15px; line-height: 1.6; margin: 12px 0;">
       ${body}
     </div>
   `;
 
-  return buildLightEmailTemplate({
+  return await buildLightEmailTemplate({
     title: headerText,
     contentHtml,
     bannerAccent: accentColor
@@ -276,7 +280,7 @@ const sendDirectEmail = asyncHandler(async (req, res, next) => {
   }
 
   // Format email body according to template selection or customHtml
-  const html = getEmailHtml(templateType, body, customHtml);
+  const html = await getEmailHtml(templateType, body, customHtml);
 
   // Dispatch emails concurrently
   const results = await Promise.allSettled(

@@ -276,10 +276,10 @@ const registerClient = asyncHandler(async (req, res, next) => {
   });
 
   let nextSeq = 1001;
-  while (usedSeqs.has(nextSeq) || await User.findOne({ clientCode: `KFPL-CL-${nextSeq}` })) {
+  while (usedSeqs.has(nextSeq) || await User.findOne({ clientCode: `YLDIQ-CL-${nextSeq}` })) {
     nextSeq++;
   }
-  const clientCode = `KFPL-CL-${nextSeq}`;
+  const clientCode = `YLDIQ-CL-${nextSeq}`;
 
   // 3) Process file uploads flexibly
   const panFile = req.files && (req.files['panDocument']?.[0] || req.files['panCard']?.[0] || req.files['pan']?.[0]);

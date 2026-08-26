@@ -12,6 +12,23 @@ const systemSettingSchema = new mongoose.Schema(
       unique: true,
       default: 'system_config',
     },
+    // Branding & Identity
+    companyName: {
+      type: String,
+      default: 'YieldIQ',
+    },
+    tagline: {
+      type: String,
+      default: '',
+    },
+    logoUrl: {
+      type: String,
+      default: '',
+    },
+    faviconUrl: {
+      type: String,
+      default: '',
+    },
     // Client Support Details
     clientSupportEmail: {
       type: String,

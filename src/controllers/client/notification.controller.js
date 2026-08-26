@@ -56,7 +56,7 @@ const sendClientNotificationEmail = asyncHandler(async (req, res, next) => {
     </div>
   `;
 
-  const html = buildLightEmailTemplate({
+  const html = await buildLightEmailTemplate({
     title: `Client Portal Message: ${req.user.name}`,
     subtitle: `Subject: ${subject}`,
     contentHtml,
