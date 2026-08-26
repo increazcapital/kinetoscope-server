@@ -55,9 +55,39 @@ const systemSettingSchema = new mongoose.Schema(
       type: String,
       default: '919999999999',
     },
+    // Support Hours
     supportHours: {
       type: String,
       default: 'Mon - Sat, 10 AM to 6 PM IST',
+    },
+    // Company Deposit Bank Account Details (Configurable by Super Admin)
+    bankAccountName: {
+      type: String,
+      default: 'YIELDIQ',
+    },
+    bankAccountNumber: {
+      type: String,
+      default: '7049743035',
+    },
+    bankIfscCode: {
+      type: String,
+      default: 'KKBK0001401',
+    },
+    bankName: {
+      type: String,
+      default: 'Kotak Mahindra Bank',
+    },
+    bankBranch: {
+      type: String,
+      default: 'Lokhandwala Andheri W, Mumbai',
+    },
+    bankUpiId: {
+      type: String,
+      default: '',
+    },
+    bankQrCodeUrl: {
+      type: String,
+      default: '',
     },
   },
   {

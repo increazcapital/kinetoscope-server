@@ -276,6 +276,71 @@ const updateBranding = asyncHandler(async (req, res, next) => {
   });
 });
 
+/**
+ * Get Company Deposit Bank Details (Public / Client / Agent / Super Admin)
+ * GET /api/system-settings/bank-details or GET /api/super-admin/settings/bank-details
+ */
+const getCompanyBankDetails = asyncHandler(async (req, res, next) => {
+  const setting = await getOrCreateSupportSetting();
+  res.status(200).json({
+    success: true,
+    data: {
+      bankAccountName: setting.bankAccountName || 'YIELDIQ',
+      bankAccountNumber: setting.bankAccountNumber || '7049743035',
+      bankIfscCode: setting.bankIfscCode || 'KKBK0001401',
+      bankName: setting.bankName || 'Kotak Mahindra Bank',
+      bankBranch: setting.bankBranch || 'Lokhandwala Andheri W, Mumbai',
+      bankUpiId: setting.bankUpiId || '',
+      bankQrCodeUrl: setting.bankQrCodeUrl || '',
+    },
+  });
+});
+
+/**
+ * Update Company Deposit Bank Details (Super Admin only)
+ * PUT /api/super-admin/settings/bank-details
+ */
+const updateCompanyBankDetails = asyncHandler(async (req, res, next) => {
+  const {
+    bankAccountName,
+    bankAccountNumber,
+    bankIfscCode,
+    bankName,
+    bankBranch,
+    bankUpiId,
+    bankQrCodeUrl,
+  } = req.body;
+
+  let setting = await SystemSetting.findOne({ key: 'system_config' });
+  if (!setting) {
+    setting = new SystemSetting({ key: 'system_config' });
+  }
+
+  if (bankAccountName !== undefined) setting.bankAccountName = bankAccountName.trim();
+  if (bankAccountNumber !== undefined) setting.bankAccountNumber = bankAccountNumber.trim();
+  if (bankIfscCode !== undefined) setting.bankIfscCode = bankIfscCode.trim().toUpperCase();
+  if (bankName !== undefined) setting.bankName = bankName.trim();
+  if (bankBranch !== undefined) setting.bankBranch = bankBranch.trim();
+  if (bankUpiId !== undefined) setting.bankUpiId = bankUpiId.trim();
+  if (bankQrCodeUrl !== undefined) setting.bankQrCodeUrl = bankQrCodeUrl.trim();
+
+  await setting.save();
+
+  res.status(200).json({
+    success: true,
+    message: 'Deposit bank account details updated successfully',
+    data: {
+      bankAccountName: setting.bankAccountName,
+      bankAccountNumber: setting.bankAccountNumber,
+      bankIfscCode: setting.bankIfscCode,
+      bankName: setting.bankName,
+      bankBranch: setting.bankBranch,
+      bankUpiId: setting.bankUpiId,
+      bankQrCodeUrl: setting.bankQrCodeUrl,
+    },
+  });
+});
+
 module.exports = {
   getSettings,
   toggle2FA,
@@ -285,5 +350,8 @@ module.exports = {
   updateSupportSettings,
   getBranding,
   updateBranding,
+  getCompanyBankDetails,
+  updateCompanyBankDetails,
 };
+
 

@@ -33,6 +33,8 @@ const {
   updateSupportSettings,
   getBranding,
   updateBranding,
+  getCompanyBankDetails,
+  updateCompanyBankDetails,
 } = require('../../controllers/super-admin/settings.controller');
 const {
   sendChangeEmailOtpHandler,
@@ -506,6 +508,8 @@ router.get('/settings/support', requirePermission('settings', 'view'), getSuppor
 router.put('/settings/support', requirePermission('settings', 'edit'), updateSupportSettings);
 router.get('/settings/branding', requirePermission('settings', 'view'), getBranding);
 router.put('/settings/branding', requirePermission('settings', 'edit'), memoryUpload.fields([{ name: 'logo', maxCount: 1 }, { name: 'favicon', maxCount: 1 }]), updateBranding);
+router.get('/settings/bank-details', requirePermission('settings', 'view'), getCompanyBankDetails);
+router.put('/settings/bank-details', requirePermission('settings', 'edit'), updateCompanyBankDetails);
 
 // 11. Settings — Change Email Address (OTP-based)
 router.post('/settings/change-email/send-otp', requirePermission('settings', 'edit'), sendChangeEmailOtpRules, sendChangeEmailOtpHandler);
