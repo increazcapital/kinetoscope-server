@@ -319,6 +319,21 @@ const registerClient = asyncHandler(async (req, res, next) => {
 
   let createdUser, createdProfile;
 
+  // 3.5) Resolve Agent from referral code if provided
+  const rawRef = req.body.referralCode || req.body.ref || req.body.assignedAgent;
+  let matchedAgent = null;
+  if (rawRef && String(rawRef).trim()) {
+    try {
+      const { findAgentUser } = require('../../services/agent-details.service');
+      matchedAgent = await findAgentUser(String(rawRef).trim());
+      if (matchedAgent) {
+        console.log(`[Referral Auto-Mapping] Client "${fullName}" mapped to Agent: ${matchedAgent.name} (${matchedAgent.clientCode})`);
+      }
+    } catch (e) {
+      console.warn('[Referral Agent Lookup Warning]:', e.message);
+    }
+  }
+
   try {
     // 4) Create User record (active by default for client portal)
     createdUser = await User.create({
@@ -329,6 +344,7 @@ const registerClient = asyncHandler(async (req, res, next) => {
       isActive: true,
       is2FAEnabled: false,
       clientCode,
+      assignedAgent: matchedAgent ? matchedAgent._id : undefined,
     });
 
     // 5) Create ClientProfile record
@@ -360,6 +376,9 @@ const registerClient = asyncHandler(async (req, res, next) => {
       kycStatus: 'PENDING',
       status: 'active',
       portalPassword: password || 'tempPassword123',
+      assignedAgent: matchedAgent ? matchedAgent._id : undefined,
+      referralCode: matchedAgent ? (matchedAgent.clientCode || String(rawRef).trim().toUpperCase()) : '',
+      agentCommission: matchedAgent ? 'Automatic (Slab)' : '',
     });
   } catch (err) {
     // Rollback if database save fails
@@ -370,6 +389,23 @@ const registerClient = asyncHandler(async (req, res, next) => {
       ? Object.values(err.errors).map(e => e.message).join('. ')
       : err.message || 'Registration details are invalid. Please check your inputs.';
     return next(new AppError(`Registration failed: ${cleanMsg}`, 400));
+  }
+
+  // 5.5) Broadcast real-time event if client registered via referral link
+  if (matchedAgent) {
+    try {
+      const realtimeService = require('../../services/realtime.service');
+      realtimeService.broadcast('DATA_UPDATED', {
+        type: 'NEW_CLIENT_REGISTERED',
+        clientId: createdUser._id.toString(),
+        clientCode: createdUser.clientCode,
+        clientName: createdUser.name,
+        agentId: matchedAgent._id.toString(),
+        timestamp: Date.now()
+      });
+    } catch (rtErr) {
+      console.warn('[Realtime Broadcast Error]:', rtErr.message);
+    }
   }
 
   // 6) Dispatch Welcome Email to Client & Alert to Super Admin asynchronously
@@ -431,6 +467,48 @@ const toggleClientSelf2FA = asyncHandler(async (req, res, next) => {
   });
 });
 
+/**
+ * Verify Agent Referral Code (Public)
+ * GET /api/client/auth/referral/:code
+ */
+const verifyReferralCode = asyncHandler(async (req, res, next) => {
+  const { code } = req.params;
+  if (!code || !String(code).trim()) {
+    return res.status(200).json({
+      success: true,
+      valid: false,
+      message: 'No referral code provided',
+    });
+  }
+
+  const { findAgentUser } = require('../../services/agent-details.service');
+  const agent = await findAgentUser(code);
+  if (!agent) {
+    return res.status(200).json({
+      success: true,
+      valid: false,
+      message: 'Referral code is invalid or partner not found.',
+    });
+  }
+
+  const AgentProfile = require('../../models/AgentProfile.model');
+  const profile = await AgentProfile.findOne({ userId: agent._id }).lean();
+
+  const agentData = {
+    id: agent._id,
+    name: agent.name,
+    agentCode: agent.clientCode || code,
+    profilePic: profile?.profilePic || agent.profilePic || '',
+  };
+
+  return res.status(200).json({
+    success: true,
+    valid: true,
+    agent: agentData,
+    data: agentData,
+  });
+});
+
 module.exports = {
   login,
   verify2FA,
@@ -438,5 +516,6 @@ module.exports = {
   getMe,
   registerClient,
   toggleClientSelf2FA,
+  verifyReferralCode,
 };
 

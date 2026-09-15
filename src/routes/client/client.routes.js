@@ -10,6 +10,7 @@ const {
   getMe,
   registerClient,
   toggleClientSelf2FA,
+  verifyReferralCode,
 } = require('../../controllers/client/client-auth.controller');
 
 
@@ -77,6 +78,7 @@ const clientRegisterUpload = memoryUpload.fields([
 ]);
 
 router.post('/auth/register', clientRegisterUpload, registerClient);
+router.get('/auth/referral/:code', verifyReferralCode);
 router.post('/auth/login', login);
 router.post('/auth/verify-2fa', verify2FA);
 router.post('/auth/logout', logout);

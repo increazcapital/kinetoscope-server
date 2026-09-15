@@ -401,7 +401,13 @@ const getAllClients = asyncHandler(async (req, res, next) => {
     const profile = profileMap[userIdStr] || profileMap[emailStr] || null;
     const invAmt = Math.max(investmentMap[userIdStr] || 0, investmentMap[codeStr] || 0);
     const depAmt = Math.max(depositMap[userIdStr] || 0, depositMap[codeStr] || 0);
-    const totalInv = Math.max(invAmt, depAmt);
+    const profInv = (profile?.totalInvestment !== undefined && profile?.totalInvestment !== null)
+      ? Number(profile.totalInvestment)
+      : Number(profile?.totalPortfolioValue || 0);
+    let totalInv = Math.max(invAmt, depAmt, profInv);
+    if (profInv > 0) {
+      totalInv = profInv;
+    }
 
     const monthlyRoi = profile && profile.monthlyRoi !== undefined ? (parseFloat(profile.monthlyRoi) || 0) : 0;
 
@@ -561,7 +567,9 @@ const updateClient = asyncHandler(async (req, res, next) => {
     const normalizedTier = req.body.tier.toUpperCase();
     const investments = await Investment.find({ clientId: userId }).lean();
     const validInvestments = investments.filter(inv => inv.status !== 'cancelled');
-    const totalInvestment = validInvestments.reduce((sum, inv) => sum + inv.investmentAmount, 0);
+    const totalInvestment = req.body.totalInvestment !== undefined
+      ? Math.max(0, Number(req.body.totalInvestment))
+      : validInvestments.reduce((sum, inv) => sum + inv.investmentAmount, 0);
 
     const TIER_LIMITS = {
       SILVER: 0,
@@ -577,19 +585,28 @@ const updateClient = asyncHandler(async (req, res, next) => {
     }
 
     if (totalInvestment < minRequired) {
-      cleanupLocalFiles(req.files);
-      
-      const minRequiredStr = normalizedTier === 'GOLD' ? '₹5 Lakh' : 
-                             normalizedTier === 'PLATINUM' ? '₹15 Lakh' : 
-                             normalizedTier === 'DIAMOND' ? '₹50 Lakh' : '₹0';
-                             
-      const formatter = new Intl.NumberFormat('en-IN', {
-        style: 'currency',
-        currency: 'INR',
-        maximumFractionDigits: 0
-      });
+      if (req.body.totalInvestment !== undefined) {
+        // Auto-adjust tier gracefully based on the updated investment amount
+        const autoTier = totalInvestment >= 5000000 ? 'DIAMOND'
+          : totalInvestment >= 1500000 ? 'PLATINUM'
+          : totalInvestment >= 500000 ? 'GOLD'
+          : 'SILVER';
+        req.body.tier = autoTier;
+      } else {
+        cleanupLocalFiles(req.files);
+        
+        const minRequiredStr = normalizedTier === 'GOLD' ? '₹5 Lakh' : 
+                               normalizedTier === 'PLATINUM' ? '₹15 Lakh' : 
+                               normalizedTier === 'DIAMOND' ? '₹50 Lakh' : '₹0';
+                               
+        const formatter = new Intl.NumberFormat('en-IN', {
+          style: 'currency',
+          currency: 'INR',
+          maximumFractionDigits: 0
+        });
 
-      return next(new AppError(`This client is not eligible for the ${req.body.tier} category. Minimum investment required is ${minRequiredStr}. Current total investment is ${formatter.format(totalInvestment)}.`, 400));
+        return next(new AppError(`This client is not eligible for the ${req.body.tier} category. Minimum investment required is ${minRequiredStr}. Current total investment is ${formatter.format(totalInvestment)}.`, 400));
+      }
     }
   }
 
@@ -641,6 +658,8 @@ const updateClient = asyncHandler(async (req, res, next) => {
     'riskProfile',
     'residencyStatus',
     'monthlyRoi',
+    'totalInvestment',
+    'totalPortfolioValue',
     'bankName',
     'accountNumber',
     'ifscCode',
@@ -796,12 +815,171 @@ const updateClient = asyncHandler(async (req, res, next) => {
     { new: true, runValidators: true }
   );
 
-  if (profileUpdates.monthlyRoi !== undefined) {
-    const newRoiNum = Number(profileUpdates.monthlyRoi) || 0;
-    await Investment.updateMany(
-      { clientId: userId, status: 'active' },
-      { $set: { roiPercentage: newRoiNum } }
-    ).catch(e => console.error('[Sync Investments ROI Error]:', e.message));
+  // 6) Sync Investment Amount, ROI Payouts, and Agent Commissions if totalInvestment or monthlyRoi changed
+  const newTotalInv = req.body.totalInvestment !== undefined ? Math.max(0, Number(req.body.totalInvestment)) : undefined;
+  const newRoiNum = profileUpdates.monthlyRoi !== undefined ? Number(profileUpdates.monthlyRoi) : (Number(updatedProfile.monthlyRoi) || 0);
+
+  if (newTotalInv !== undefined) {
+    profileUpdates.totalInvestment = newTotalInv;
+    profileUpdates.totalPortfolioValue = newTotalInv;
+    await ClientProfile.findOneAndUpdate(
+      { userId },
+      { $set: { totalInvestment: newTotalInv, totalPortfolioValue: newTotalInv } }
+    );
+  }
+
+  let effectiveTotalInvestment = newTotalInv !== undefined ? newTotalInv : (Number(updatedProfile.totalInvestment) || 0);
+
+  if (newTotalInv !== undefined || profileUpdates.monthlyRoi !== undefined) {
+    const RoiPayout = require('../../models/RoiPayout.model');
+    const AgentCommission = require('../../models/AgentCommission.model');
+    const CommissionSlab = require('../../models/CommissionSlab.model');
+    const AgentOverride = require('../../models/AgentOverride.model');
+    const Transaction = require('../../models/Transaction.model');
+
+    // A) Update or create active Investments
+    const activeInvs = await Investment.find({
+      $or: [
+        { clientId: userId },
+        { clientCode: updatedUser.clientCode }
+      ],
+      status: 'active'
+    });
+    if (activeInvs.length > 0) {
+      if (newTotalInv !== undefined) {
+        if (activeInvs.length === 1) {
+          activeInvs[0].investmentAmount = newTotalInv;
+          activeInvs[0].roiPercentage = newRoiNum;
+          await activeInvs[0].save();
+          if (activeInvs[0].sourceTransactionId) {
+            await Transaction.findByIdAndUpdate(activeInvs[0].sourceTransactionId, { amount: newTotalInv });
+          }
+        } else {
+          activeInvs[0].investmentAmount = newTotalInv;
+          await activeInvs[0].save();
+          await Investment.updateMany(
+            { $or: [{ clientId: userId }, { clientCode: updatedUser.clientCode }], status: 'active' },
+            { $set: { roiPercentage: newRoiNum } }
+          );
+        }
+      } else {
+        await Investment.updateMany(
+          { $or: [{ clientId: userId }, { clientCode: updatedUser.clientCode }], status: 'active' },
+          { $set: { roiPercentage: newRoiNum } }
+        );
+      }
+    } else if (newTotalInv !== undefined && newTotalInv > 0) {
+      // Create primary active investment if none existed
+      await Investment.create({
+        clientId: userId,
+        clientName: updatedUser.name || updatedProfile.fullName,
+        clientCode: updatedUser.clientCode || 'YLDIQ-CL-1001',
+        segment: 'General Capital Pool',
+        investmentAmount: newTotalInv,
+        roiPercentage: newRoiNum,
+        riskPercentage: 10,
+        riskLevel: updatedProfile.riskProfile || 'Moderate',
+        durationMonths: 18,
+        investmentDate: updatedProfile.contractStartDate || new Date(),
+        status: 'active',
+        createdBy: req.user._id,
+      });
+    }
+
+    if (newTotalInv !== undefined) {
+      // Also update latest approved deposit transaction so it does not conflict with edited totalInvestment
+      const approvedDeps = await Transaction.find({
+        $or: [{ clientId: userId }, { clientCode: updatedUser.clientCode }],
+        type: 'deposit',
+        status: 'approved'
+      }).sort({ createdAt: -1 });
+      if (approvedDeps.length > 0) {
+        approvedDeps[0].amount = newTotalInv;
+        await approvedDeps[0].save();
+        // If there are multiple historical deposit transactions, zero out the older ones to avoid sum conflict
+        for (let i = 1; i < approvedDeps.length; i++) {
+          approvedDeps[i].amount = 0;
+          await approvedDeps[i].save();
+        }
+      }
+    }
+
+    // B) Recalculate and update PENDING ROI Payouts for this client
+    const newMonthlyRoiAmount = Math.round((effectiveTotalInvestment * newRoiNum) / 100);
+    const pendingRoiPayouts = await RoiPayout.find({ clientId: userId, status: 'PENDING' });
+    if (pendingRoiPayouts.length > 0) {
+      for (const payout of pendingRoiPayouts) {
+        payout.amount = newMonthlyRoiAmount;
+        payout.roiRate = `${newRoiNum}%`;
+        payout.roiPercentage = newRoiNum;
+        await payout.save();
+      }
+    }
+
+    // C) Recalculate Agent Commissions if client has an assigned agent
+    const agentId = updatedUser.assignedAgent;
+    if (agentId && mongoose.Types.ObjectId.isValid(agentId)) {
+      try {
+        const [slabs, agentOverride] = await Promise.all([
+          CommissionSlab.find({}).sort({ minAmount: 1 }).lean(),
+          AgentOverride.findOne({ agentId }).lean()
+        ]);
+
+        const getSlabRate = (amt, slabType = 'one-time') => {
+          if (agentOverride && agentOverride.commissionOverride !== undefined && agentOverride.commissionOverride !== null) {
+            return Number(agentOverride.commissionOverride);
+          }
+          const typeSlabs = slabs.filter(s => s.type === slabType);
+          for (const s of typeSlabs) {
+            const min = s.minAmount || 0;
+            const max = (s.maxAmount === null || s.maxAmount === undefined) ? Infinity : s.maxAmount;
+            if (amt >= min && amt <= max) {
+              return s.commissionPercentage !== undefined ? s.commissionPercentage : (s.percentage || 0);
+            }
+          }
+          return slabType === 'one-time' ? 1.5 : 0.75;
+        };
+
+        const pendingComms = await AgentCommission.find({
+          $or: [{ clientId: userId }, { clientCode: updatedUser.clientCode }],
+          status: 'PENDING'
+        });
+        for (const comm of pendingComms) {
+          const isOneTime = String(comm.type || comm.slabType || '').toUpperCase().includes('ONE');
+          const slabType = isOneTime ? 'one-time' : 'monthly';
+          const rate = getSlabRate(effectiveTotalInvestment, slabType);
+          comm.investmentAmount = effectiveTotalInvestment;
+          comm.slabPercentage = rate;
+          comm.amount = Math.round((effectiveTotalInvestment * rate) / 100);
+          await comm.save();
+        }
+
+        const { syncAgentCommissionsHelper } = require('../agent/agent-dashboard.controller');
+        if (typeof syncAgentCommissionsHelper === 'function') {
+          await syncAgentCommissionsHelper(agentId);
+        }
+      } catch (err) {
+        console.warn('[Agent Comm Sync Error]:', err.message);
+      }
+    }
+  }
+
+  // 7) Broadcast Real-Time Update across all portals (Super Admin, Client Admin, Agent Admin)
+  try {
+    const realtimeService = require('../../services/realtime.service');
+    realtimeService.broadcast('DATA_UPDATED', {
+      type: 'CLIENT_INVESTMENT_UPDATED',
+      clientId: userId.toString(),
+      clientCode: updatedUser.clientCode,
+      clientName: updatedUser.name,
+      totalInvestment: effectiveTotalInvestment,
+      monthlyRoi: newRoiNum,
+      agentId: updatedUser.assignedAgent ? updatedUser.assignedAgent.toString() : null,
+      status: updatedProfile.status,
+      timestamp: Date.now()
+    });
+  } catch (rtErr) {
+    console.warn('[Realtime Broadcast Error]:', rtErr.message);
   }
 
   res.status(200).json({

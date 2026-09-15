@@ -330,9 +330,10 @@ const updateClientRulesByAdmin = [
       return true;
     }),
   body('aadhaarNumber')
-    .optional()
+    .optional({ checkFalsy: true })
     .trim()
     .custom((value, { req }) => {
+      if (!value) return true;
       if (req.body.residencyStatus === 'International') {
         return true;
       }
@@ -341,6 +342,10 @@ const updateClientRulesByAdmin = [
       }
       return true;
     }),
+  body('totalInvestment')
+    .optional({ checkFalsy: true })
+    .isNumeric().withMessage('Total investment must be a valid number')
+    .custom(val => Number(val) >= 0).withMessage('Total investment cannot be negative'),
   validate,
 ];
 

@@ -136,7 +136,13 @@ const getClientDetailsData = async (clientId) => {
 
   const activeInvestmentsList = investments.filter(inv => inv.status === 'active');
   const isFullCapitalWithdrawn = withTotal >= depTotal && depTotal > 0;
-  const totalInvestment = isFullCapitalWithdrawn ? 0 : Math.max(invTotal, depTotal);
+  const profileTotal = (profile?.totalInvestment !== undefined && profile?.totalInvestment !== null)
+    ? Number(profile.totalInvestment)
+    : Number(profile?.totalPortfolioValue || 0);
+  let totalInvestment = isFullCapitalWithdrawn ? 0 : Math.max(invTotal, depTotal, profileTotal);
+  if (profile?.totalInvestment > 0 && !isFullCapitalWithdrawn) {
+    totalInvestment = Number(profile.totalInvestment);
+  }
   const activeInvestmentsCount = isFullCapitalWithdrawn ? 0 : Math.max(activeInvestmentsList.length, (approvedDeposits.length > 0 && invTotal === 0) ? 1 : 0);
 
   const uniqueAllocatedSegments = new Set();
@@ -234,6 +240,7 @@ const getClientDetailsData = async (clientId) => {
       riskProfile: profile.riskProfile ? profile.riskProfile.charAt(0).toUpperCase() + profile.riskProfile.slice(1).toLowerCase() : 'Moderate',
       residencyStatus: profile.residencyStatus || 'National (Domestic)',
       monthlyRoi: profile.monthlyRoi !== undefined ? profile.monthlyRoi : 0,
+      totalInvestment: totalInvestment,
       totalPortfolioValue: totalInvestment,
       kycStatus: kycStatusVal,
       nomineeName: profile.nomineeName || '',

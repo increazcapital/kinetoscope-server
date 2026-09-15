@@ -731,7 +731,8 @@ const getAgentClients = asyncHandler(async (req, res, next) => {
     const profile = profileMap[clientIdStr] || profileMap[emailStr] || null;
     const invTotal = Math.max(investmentsMap[clientIdStr] || 0, investmentsMap[codeStr] || 0);
     const depTotal = Math.max(depositsMap[clientIdStr] || 0, depositsMap[codeStr] || 0);
-    const totalInvestment = Math.max(invTotal, depTotal);
+    const profTotal = Number(profile?.totalInvestment || profile?.totalPortfolioValue || 0);
+    const totalInvestment = Math.max(invTotal, depTotal, profTotal);
     const realCommissionEarned = totalInvestment > 0 ? (commMap[clientIdStr] || 0) : 0;
 
     // Parse monthlyRoi safely directly from DB profile — exact value without fallback
@@ -1358,4 +1359,5 @@ module.exports = {
   uploadAgentAgreementDocument,
   uploadKycDocument,
   getAgentClientById,
+  syncAgentCommissionsHelper,
 };

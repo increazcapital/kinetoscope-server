@@ -24,6 +24,12 @@ router.get('/system-settings/support', getSupportSettings);
 router.get('/system-settings/branding', getBranding);
 router.get('/system-settings/bank-details', getCompanyBankDetails);
 
+// Real-time SSE Stream Endpoint for live cross-portal data updates
+const realtimeService = require('../services/realtime.service');
+router.get('/realtime/stream', (req, res) => {
+  realtimeService.handleConnection(req, res);
+});
+
 // Document Proxy to bypass CORS issues when downloading/previewing files from Cloudinary
 const https = require('https');
 const AppError = require('../utils/AppError');

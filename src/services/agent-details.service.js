@@ -303,4 +303,5 @@ const getAgentDocumentsData = async (agentId) => {
 module.exports = {
   getAgentDetailsData,
   getAgentDocumentsData,
+  findAgentUser,
 };

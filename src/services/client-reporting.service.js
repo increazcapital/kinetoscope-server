@@ -103,7 +103,10 @@ const getManageClientsData = async ({
 
     // Compute total investment (excluding cancelled status)
     const validInvestments = investments.filter(inv => inv.status !== 'cancelled');
-    const totalInvestment = validInvestments.reduce((sum, inv) => sum + inv.investmentAmount, 0);
+    let totalInvestment = validInvestments.reduce((sum, inv) => sum + inv.investmentAmount, 0);
+    if (totalInvestment === 0 && profile && (profile.totalInvestment || profile.totalPortfolioValue)) {
+      totalInvestment = Number(profile.totalInvestment || profile.totalPortfolioValue || 0);
+    }
 
     // Compute average ROI of active investments, fall back to all valid investments, or 0
     const activeInvestments = investments.filter(inv => inv.status === 'active');

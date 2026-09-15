@@ -71,6 +71,16 @@ const clientProfileSchema = new mongoose.Schema(
       min: [0, 'Monthly ROI % must be a non-negative number'],
       default: 0,
     },
+    totalInvestment: {
+      type: Number,
+      default: 0,
+      min: [0, 'Total investment must be a non-negative number'],
+    },
+    totalPortfolioValue: {
+      type: Number,
+      default: 0,
+      min: [0, 'Total portfolio value must be a non-negative number'],
+    },
     // KYC Details
     panNumber: {
       type: String,
@@ -273,6 +283,16 @@ const clientProfileSchema = new mongoose.Schema(
     agentCommission: {
       type: String,
       default: '0.5% monthly',
+    },
+    assignedAgent: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+    referralCode: {
+      type: String,
+      default: '',
+      trim: true,
     },
     portalPassword: {
       type: String,

@@ -53,7 +53,17 @@ const calculateDashboardData = async (userId) => {
 
   // If full capital has been withdrawn (or approved capital withdrawals >= deposits), net total investment is 0
   const isFullCapitalWithdrawn = capitalWithdrawalsSum >= approvedDepositsSum && approvedDepositsSum > 0;
-  const totalInvestment = isFullCapitalWithdrawn ? 0 : netCapital;
+  const activeInvsTotal = rawInvestments.filter(i => i.status === 'active').reduce((sum, i) => sum + (i.investmentAmount || i.amount || 0), 0);
+  const profileTotal = (profile?.totalInvestment !== undefined && profile?.totalInvestment !== null)
+    ? Number(profile.totalInvestment)
+    : Number(profile?.totalPortfolioValue || 0);
+  let effectiveCapital = Math.max(netCapital, activeInvsTotal, profileTotal);
+  if (profile?.totalInvestment !== undefined && profile?.totalInvestment !== null && !isFullCapitalWithdrawn) {
+    effectiveCapital = Number(profile.totalInvestment);
+  } else if (activeInvsTotal > 0 && !isFullCapitalWithdrawn) {
+    effectiveCapital = activeInvsTotal;
+  }
+  const totalInvestment = isFullCapitalWithdrawn ? 0 : effectiveCapital;
 
   // Define effective investments array (with fallback for clients with capital but no segment allocations yet)
   const roiRateVal = (profile && profile.monthlyRoi !== undefined && profile.monthlyRoi !== null && String(profile.monthlyRoi).trim() !== '') ? Number(profile.monthlyRoi) : 0;
