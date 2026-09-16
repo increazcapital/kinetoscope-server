@@ -216,7 +216,7 @@ async function resolveRecipientCode(id) {
  * POST /api/super-admin/roi/payouts
  */
 const recordPayout = asyncHandler(async (req, res, next) => {
-  const { recipientType, recipientId, amount, payoutDate, paymentMode, transactionRefId, commissionType, clientId, status } = req.body;
+  const { recipientType, recipientId, amount, payoutDate, paymentMode, transactionRefId, commissionType, clientId, status, isWithdrawal, category } = req.body;
 
   if (!recipientType || !recipientId || !amount || !payoutDate) {
     return next(new AppError('Please provide recipientType, recipientId, amount, and payoutDate.', 400));
@@ -229,10 +229,12 @@ const recordPayout = asyncHandler(async (req, res, next) => {
 
   // Normalize recipientType to database format
   let normalizedRecipientType = recipientType;
-  const lowerType = recipientType.toLowerCase();
-  if (lowerType === 'client' || lowerType.includes('roi')) {
+  const lowerType = String(recipientType).toLowerCase();
+  const isWithdrawalRecord = Boolean(isWithdrawal) || lowerType.includes('withdrawal') || /withdrawal/i.test(commissionType || '') || /withdrawal/i.test(category || '');
+
+  if (lowerType === 'client' || lowerType === 'client-withdrawal' || lowerType.includes('client') || lowerType.includes('roi')) {
     normalizedRecipientType = 'Client Return (ROI)';
-  } else if (lowerType === 'agent' || lowerType.includes('commission')) {
+  } else if (lowerType === 'agent' || lowerType === 'agent-withdrawal' || lowerType.includes('agent') || lowerType.includes('commission')) {
     normalizedRecipientType = 'Agent Commission';
   }
 
@@ -255,7 +257,7 @@ const recordPayout = asyncHandler(async (req, res, next) => {
 
   const passedRoi = req.body.roiPercentage || req.body.monthlyRoi;
   let parsedRoiRate = passedRoi ? Number(passedRoi) : null;
-  if (!parsedRoiRate) {
+  if (!parsedRoiRate && !isWithdrawalRecord) {
     try {
       let uObj = await User.findOne({
         $or: [
@@ -271,7 +273,7 @@ const recordPayout = asyncHandler(async (req, res, next) => {
   }
 
   let finalCommissionType = commissionType || '';
-  if (normalizedRecipientType === 'Client Return (ROI)' && (!finalCommissionType || finalCommissionType === 'ROI' || finalCommissionType.includes('12%'))) {
+  if (!isWithdrawalRecord && normalizedRecipientType === 'Client Return (ROI)' && (!finalCommissionType || finalCommissionType === 'ROI' || finalCommissionType.includes('12%'))) {
     if (parsedRoiRate) {
       finalCommissionType = `ROI (${parsedRoiRate}%)`;
     }
@@ -280,7 +282,9 @@ const recordPayout = asyncHandler(async (req, res, next) => {
   const payout = await Payout.create({
     recipientType: normalizedRecipientType,
     recipientId: resolvedRecipientId,
-    commissionType: finalCommissionType || commissionType || '',
+    commissionType: finalCommissionType || commissionType || (isWithdrawalRecord ? 'Withdrawal' : ''),
+    category: category || (isWithdrawalRecord ? 'WITHDRAWAL' : ''),
+    isWithdrawal: isWithdrawalRecord,
     clientId: resolvedClientId,
     amount: numericAmount,
     payoutDate,
@@ -293,7 +297,7 @@ const recordPayout = asyncHandler(async (req, res, next) => {
   });
 
   // If this is an Agent Commission payout and marked as paid, sync matching AgentCommission record to PAID
-  if (normalizedRecipientType === 'Agent Commission' && payoutStatus === 'paid') {
+  if (!isWithdrawalRecord && normalizedRecipientType === 'Agent Commission' && payoutStatus === 'paid') {
     try {
       let agentUser = await User.findOne({
         $or: [
@@ -428,13 +432,8 @@ const getPayouts = asyncHandler(async (req, res, next) => {
     }
   }
 
-  const [payouts, withdrawalTransactions, autoRois, autoCommissions] = await Promise.all([
+  const [payouts, autoRois, autoCommissions] = await Promise.all([
     Payout.find(query).sort({ payoutDate: -1, createdAt: -1 }).lean(),
-    Transaction.find({ $or: [{ type: 'withdrawal' }, { isAgentWithdrawal: true }] })
-      .populate('clientId', 'name clientCode email')
-      .populate('agentId', 'name clientCode agentCode email')
-      .sort({ createdAt: -1 })
-      .lean(),
     RoiPayout.find({}).populate('clientId', 'name clientCode email').sort({ createdAt: -1 }).lean(),
     AgentCommission.find({}).populate('agentId', 'name clientCode email').populate('clientId', 'name clientCode email').sort({ createdAt: -1 }).lean()
   ]);
@@ -450,9 +449,7 @@ const getPayouts = asyncHandler(async (req, res, next) => {
     ClientProfile.find({ _id: { $in: objectIds } }).populate('userId', 'name clientCode monthlyRoi roiPercent').lean(),
     AgentProfile.find({ _id: { $in: objectIds } }).populate('userId', 'name').lean(),
     ClientProfile.find({}).populate('userId', 'name clientCode monthlyRoi roiPercent').lean(),
-    User.find({ role: 'client' }, { _id: 1, clientCode: 1, name: 1, monthlyRoi: 1, roiPercent: 1, roiPercentage: 1 }).lean(),
-    DividendAllotment.find({}).populate('clientId', 'name clientCode').populate('projectId', 'name').sort({ allotmentDate: -1, createdAt: -1 }).lean(),
-    Transaction.find({ status: { $regex: /^(paid|approved|credited|completed)$/i } }).sort({ createdAt: -1 }).lean()
+    User.find({ role: 'client' }, { _id: 1, clientCode: 1, name: 1, monthlyRoi: 1, roiPercent: 1, roiPercentage: 1 }).lean()
   ]);
 
   const userMap = {};
@@ -523,8 +520,64 @@ const getPayouts = asyncHandler(async (req, res, next) => {
     }
     const normMonth = String(periodFormatted).replace(/\bSept\b/i, 'Sep').trim();
 
+    const isWithdrawalRecord = Boolean(p.isWithdrawal) || /withdrawal/i.test(p.commissionType || '') || /withdrawal/i.test(p.category || '');
     const isClient = p.recipientType === 'Client Return (ROI)' || p.recipientType === 'CLIENT' || p.recipientType === 'Client' || (p.commissionType && /ROI/i.test(p.commissionType));
-    
+
+    if (isWithdrawalRecord) {
+      const isDivWD = /dividend/i.test(p.commissionType || p.category || '');
+      const isCapWD = /capital/i.test(p.commissionType || p.category || '');
+      const isRoiWD = /roi/i.test(p.commissionType || '');
+      const categoryStr = isDivWD ? 'DIVIDEND WITHDRAWAL' : (isCapWD ? 'CAPITAL WITHDRAWAL' : 'WITHDRAWAL');
+
+      let displayType = p.commissionType || 'Withdrawal';
+      let payoutDetailStr = p.commissionType || 'Withdrawal';
+
+      if (isClient) {
+        if (isRoiWD && p.roiPercentage) {
+          displayType = `Withdrawal ROI (${p.roiPercentage}%)`;
+          payoutDetailStr = `Withdrawal ROI (${p.roiPercentage}%)`;
+        } else if (isCapWD) {
+          displayType = 'Capital Withdrawal';
+          payoutDetailStr = 'Capital Account Withdrawal';
+        } else if (isDivWD) {
+          displayType = 'Dividend Withdrawal';
+          payoutDetailStr = 'Withdrawal Dividend Bonus';
+        } else {
+          displayType = p.commissionType || 'Withdrawal';
+          payoutDetailStr = p.commissionType || 'Wallet Withdrawal';
+        }
+      } else {
+        displayType = p.commissionType || 'Commission Withdrawal';
+        payoutDetailStr = p.commissionType || 'Commission Withdrawal';
+      }
+
+      if (p.transactionRefId && p.transactionRefId !== '—') {
+        seenTransactionRefs.add(p.transactionRefId);
+      }
+      existingIds.add(String(p._id));
+
+      return {
+        _id: p._id,
+        recipientId: p.recipientId,
+        recipientName: name,
+        recipientCode: p.recipientId,
+        recipientType: isClient ? 'CLIENT' : 'AGENT',
+        isWithdrawal: true,
+        category: categoryStr,
+        type: displayType,
+        payoutDetail: payoutDetailStr,
+        roiPercentage: p.roiPercentage || null,
+        period: normMonth || periodFormatted,
+        amount: p.amount,
+        payoutDate: p.payoutDate,
+        paymentMode: p.paymentMode || '—',
+        transactionRefId: p.transactionRefId || '—',
+        status: (p.status || 'paid').toUpperCase(),
+        paidAt: p.paidAt ? p.paidAt.toISOString().split('T')[0] : (p.payoutDate || '—'),
+        rawDate: p.payoutDate || p.createdAt,
+      };
+    }
+
     let displayType = p.commissionType || p.type;
     let payoutDetailStr = p.payoutDetail || p.commissionType || p.type;
     let finalRoiVal = p.roiPercentage;
@@ -569,92 +622,6 @@ const getPayouts = asyncHandler(async (req, res, next) => {
       paidAt: p.paidAt ? p.paidAt.toISOString().split('T')[0] : (p.payoutDate || '—'),
       rawDate: p.payoutDate || p.createdAt,
     };
-  });
-
-  // Merge approved Transaction withdrawals as separate distinct rows in Complete Transaction Details
-  withdrawalTransactions.forEach(tx => {
-    const txIdStr = String(tx._id);
-    const isAgent = tx.isAgentWithdrawal;
-    const user = isAgent ? (tx.agentId || {}) : (tx.clientId || {});
-    const code = isAgent ? (user.clientCode || user.agentCode || 'AGT-001') : (user.clientCode || tx.clientCode || 'KFPL-CL-1001');
-    const name = user.name || tx.clientName || (isAgent ? 'Agent' : 'Client');
-
-    if (!existingIds.has(txIdStr)) {
-      let periodFormatted = '—';
-      const dVal = tx.actionAt || tx.createdAt;
-      if (dVal) {
-        const dObj = new Date(dVal);
-        if (!isNaN(dObj.getTime())) {
-          periodFormatted = new Intl.DateTimeFormat('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }).format(dObj);
-        }
-      }
-
-      const itemRecipientType = isAgent ? 'AGENT' : 'CLIENT';
-      if (!recipientType || recipientType === 'All' || recipientType.toUpperCase() === itemRecipientType) {
-        const cidStr = tx.clientId ? (tx.clientId._id ? tx.clientId._id.toString() : String(tx.clientId)) : null;
-        const clientRoiVal = tx.roiPercentage || tx.snapshotRoi || (cidStr && roiMap[cidStr]) || null;
-
-        const descLower = String(tx.description || tx.remarks || tx.referenceNumber || '').toLowerCase();
-        const isRoiWD = tx.withdrawalType === 'roi' || descLower.includes('roi');
-        const isDivWD = tx.withdrawalType === 'dividend' || (descLower.includes('div') && !isRoiWD);
-        const isCapWD = tx.withdrawalCategory === 'capital' || (descLower.includes('capital') && !isRoiWD && !isDivWD);
-
-        const isOneTimeCommWD = isAgent && (tx.withdrawalCategory === 'one-time' || descLower.includes('one-time') || descLower.includes('onetime'));
-        const isMonthlyCommWD = isAgent && (tx.withdrawalCategory === 'monthly' || descLower.includes('monthly'));
-
-        let typeLabel = 'Withdrawal';
-        let detailLabel = 'Withdrawal';
-
-        if (isAgent) {
-          if (isOneTimeCommWD) {
-            typeLabel = 'Commission Withdrawal (One-Time)';
-            detailLabel = tx.paymentMethod ? `One-Time Commission (${tx.paymentMethod})` : 'Withdrawal One Time Commission';
-          } else if (isMonthlyCommWD) {
-            typeLabel = 'Commission Withdrawal (Monthly)';
-            detailLabel = tx.paymentMethod ? `Monthly Commission (${tx.paymentMethod})` : 'Withdrawal Monthly Commission';
-          } else {
-            typeLabel = 'Commission Withdrawal';
-            detailLabel = tx.paymentMethod ? `Commission Withdrawal (${tx.paymentMethod})` : 'Agent Commission Withdrawal';
-          }
-        } else {
-          if (isDivWD) {
-            typeLabel = 'Dividend Withdrawal';
-            detailLabel = 'Withdrawal Dividend Bonus';
-          } else if (isRoiWD) {
-            typeLabel = clientRoiVal ? `Withdrawal ROI (${clientRoiVal}%)` : 'ROI Withdrawal';
-            detailLabel = clientRoiVal ? `Withdrawal ROI (${clientRoiVal}%)` : 'Monthly ROI Withdrawal';
-          } else if (isCapWD) {
-            typeLabel = 'Capital Withdrawal';
-            detailLabel = 'Capital Account Withdrawal';
-          } else {
-            typeLabel = 'Withdrawal';
-            detailLabel = tx.remarks || 'Wallet Withdrawal';
-          }
-        }
-
-        formatted.push({
-          _id: tx._id,
-          recipientId: code,
-          recipientName: name,
-          recipientCode: code,
-          recipientType: itemRecipientType,
-          isWithdrawal: true,
-          type: typeLabel,
-          payoutDetail: detailLabel,
-          category: isDivWD ? 'DIVIDEND WITHDRAWAL' : (isCapWD ? 'CAPITAL WITHDRAWAL' : 'WITHDRAWAL'),
-          period: periodFormatted,
-          amount: tx.amount,
-          payoutDate: tx.createdAt ? new Date(tx.createdAt).toISOString().split('T')[0] : '—',
-          paymentMode: tx.paymentMethod || 'Bank Transfer',
-          transactionRefId: tx.referenceNumber || `WD-${tx._id.toString().slice(-6)}`,
-          transactionRef: tx.referenceNumber || '',
-          referenceNumber: tx.referenceNumber || '',
-          status: (tx.status || 'PAID').toUpperCase(),
-          paidAt: tx.actionAt ? new Date(tx.actionAt).toISOString().split('T')[0] : (tx.createdAt ? new Date(tx.createdAt).toISOString().split('T')[0] : '—'),
-          rawDate: tx.createdAt,
-        });
-      }
-    }
   });
 
   // Deduplicate and merge auto-generated ROIs
@@ -1028,25 +995,33 @@ const deletePayout = asyncHandler(async (req, res, next) => {
   let payout = await Payout.findByIdAndDelete(id);
 
   if (payout) {
-    try {
-      let clientUser = await User.findOne({ clientCode: payout.recipientId, role: 'client' });
-      if (!clientUser && mongoose.Types.ObjectId.isValid(payout.recipientId)) {
-        clientUser = await User.findOne({ _id: payout.recipientId, role: 'client' });
+    if (payout.isWithdrawal || payout.category === 'WITHDRAWAL' || /withdrawal/i.test(payout.commissionType || '')) {
+      if (payout.transactionRefId) {
+        try {
+          await Transaction.deleteMany({ referenceNumber: payout.transactionRefId });
+        } catch (e) {}
       }
-      if (clientUser) {
-        const d = new Date(payout.payoutDate);
-        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-        const mStr = `${months[d.getMonth()]} ${d.getFullYear()}`;
-        await RoiPayout.deleteMany({
-          clientId: clientUser._id,
-          $or: [
-            { _id: payout._id },
-            { payoutMonth: mStr },
-            ...(payout.transactionRefId ? [{ transactionRefId: payout.transactionRefId }] : [])
-          ]
-        });
-      }
-    } catch (e) {}
+    } else {
+      try {
+        let clientUser = await User.findOne({ clientCode: payout.recipientId, role: 'client' });
+        if (!clientUser && mongoose.Types.ObjectId.isValid(payout.recipientId)) {
+          clientUser = await User.findOne({ _id: payout.recipientId, role: 'client' });
+        }
+        if (clientUser) {
+          const d = new Date(payout.payoutDate);
+          const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+          const mStr = `${months[d.getMonth()]} ${d.getFullYear()}`;
+          await RoiPayout.deleteMany({
+            clientId: clientUser._id,
+            $or: [
+              { _id: payout._id },
+              { payoutMonth: mStr },
+              ...(payout.transactionRefId ? [{ transactionRefId: payout.transactionRefId }] : [])
+            ]
+          });
+        }
+      } catch (e) {}
+    }
   } else {
     payout = await RoiPayout.findByIdAndDelete(id);
     if (payout) {

@@ -53,6 +53,14 @@ const payoutSchema = new mongoose.Schema(
     },
     paidAt: {
       type: Date
+    },
+    category: {
+      type: String,
+      default: ''
+    },
+    isWithdrawal: {
+      type: Boolean,
+      default: false
     }
   },
   {
@@ -65,6 +73,10 @@ payoutSchema.index({ status: 1 });
 
 payoutSchema.post('save', async function (doc) {
   try {
+    if (doc.isWithdrawal || /withdrawal/i.test(doc.commissionType || '') || /withdrawal/i.test(doc.category || '') || /withdrawal/i.test(doc.recipientType || '')) {
+      return;
+    }
+
     const isClientRoi = doc.recipientType === 'Client Return (ROI)' || doc.recipientType === 'CLIENT';
     if (!isClientRoi) return;
 
