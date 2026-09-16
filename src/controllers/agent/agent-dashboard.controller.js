@@ -111,7 +111,7 @@ const syncAgentCommissionsHelper = async (agentId) => {
                 investmentAmount: depAmt,
                 slabPercentage: rate,
                 amount: amt,
-                status: 'PENDING',
+                status: 'PAID',
                 date: depDate
               });
               existingComms.push(newComm);
@@ -145,7 +145,7 @@ const syncAgentCommissionsHelper = async (agentId) => {
                 investmentAmount: invAmt,
                 slabPercentage: rate,
                 amount: amt,
-                status: 'PENDING',
+                status: 'PAID',
                 date: invDate
               });
               existingComms.push(newComm);
@@ -154,19 +154,60 @@ const syncAgentCommissionsHelper = async (agentId) => {
         }
       }
 
-      // 2. Monthly Commission (Starts from NEXT month after capital deposit, activates on 1st of next month)
+      // 2. Monthly Commission (Strictly follows client's original investment date anniversary)
       if (activeAmount > 0) {
-        const depositDate = deps[0]?.createdAt || invs[0]?.investmentDate || new Date();
-        const depositMonth = new Date(depositDate);
-        const nextMonthDate = new Date(depositMonth.getFullYear(), depositMonth.getMonth() + 1, 1);
+        const earliestDate = invs.reduce((min, inv) => {
+          const d = new Date(inv.investmentDate || inv.createdAt);
+          return d < min ? d : min;
+        }, new Date(deps[0]?.createdAt || invs[0]?.investmentDate || new Date()));
+
         const now = new Date();
+        const start = new Date(earliestDate);
+        let elapsedMonths = (now.getFullYear() - start.getFullYear()) * 12 + (now.getMonth() - start.getMonth());
+        if (now.getDate() < start.getDate()) {
+          elapsedMonths -= 1;
+        }
+        elapsedMonths = Math.max(0, elapsedMonths);
 
-        // Monthly commission begins from the NEXT month (e.g. Sept 1st for Aug deposit)
-        if (now >= nextMonthDate) {
-          const monthlyPeriod = new Intl.DateTimeFormat('en-IN', { month: 'short', year: 'numeric' }).format(now);
+        const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const formatMonth = (date) => `${MONTH_NAMES[date.getMonth()]} ${date.getFullYear()}`;
+        const getDueDate = (invDate, offset) => {
+          const s = new Date(invDate);
+          const targetYear = s.getFullYear() + Math.floor((s.getMonth() + offset) / 12);
+          const targetMonth = (s.getMonth() + offset) % 12;
+          const originalDay = s.getDate();
+          const lastDay = new Date(targetYear, targetMonth + 1, 0).getDate();
+          return new Date(targetYear, targetMonth, Math.min(originalDay, lastDay), s.getHours(), s.getMinutes(), s.getSeconds());
+        };
 
-          const hasMonthly = existingComms.some(c => String(c.clientId) === cidStr && (c.slabType === 'monthly' || c.type === 'MONTHLY') && c.period === monthlyPeriod);
-          if (!hasMonthly) {
+        // 2a. Auto-transition any PENDING monthly commissions whose due date has arrived to PAID
+        await AgentCommission.updateMany(
+          {
+            agentId,
+            clientId: client._id,
+            type: 'MONTHLY',
+            status: 'PENDING',
+            date: { $lte: now }
+          },
+          {
+            $set: {
+              status: 'PAID',
+              paidAt: now
+            }
+          }
+        );
+
+        // 2b. For past elapsed completed cycles: ensure records exist with status PAID directly
+        for (let m = 1; m <= elapsedMonths; m++) {
+          const dueDate = getDueDate(earliestDate, m);
+          const monthlyPeriod = formatMonth(dueDate);
+          const existing = existingComms.find(c => 
+            String(c.clientId) === cidStr && 
+            (c.slabType === 'monthly' || c.type === 'MONTHLY') && 
+            (c.period === monthlyPeriod || String(c.period).replace(/\bSept\b/i, 'Sep') === monthlyPeriod)
+          );
+
+          if (!existing) {
             const rate = getSlabRate(activeAmount, 'monthly');
             const amt = Math.round((activeAmount * rate) / 100);
             if (amt > 0) {
@@ -179,11 +220,17 @@ const syncAgentCommissionsHelper = async (agentId) => {
                 investmentAmount: activeAmount,
                 slabPercentage: rate,
                 amount: amt,
-                status: 'PENDING',
-                date: new Date()
+                status: 'PAID',
+                paidAt: dueDate,
+                paymentMode: '',
+                transactionRefId: '',
+                date: dueDate
               });
               existingComms.push(newComm);
             }
+          } else if (existing.status !== 'PAID') {
+            await AgentCommission.updateOne({ _id: existing._id }, { $set: { status: 'PAID', paidAt: dueDate } });
+            existing.status = 'PAID';
           }
         }
       }
@@ -253,8 +300,8 @@ const syncAgentCommissionsHelper = async (agentId) => {
         if (matchComm) {
           matchComm.status = 'PAID';
           if (pAmt > 0) matchComm.amount = pAmt;
-          matchComm.paymentMode = payout.paymentMode || 'Bank Transfer';
-          matchComm.transactionRefId = payout.transactionRefId || payout.referenceNumber || 'TXN-PAID';
+          matchComm.paymentMode = payout.paymentMode || '—';
+          matchComm.transactionRefId = payout.transactionRefId || payout.referenceNumber || '—';
           matchComm.paidAt = payout.paidAt || payout.createdAt || new Date();
           await matchComm.save();
         }
@@ -387,18 +434,49 @@ const getAgentDashboard = asyncHandler(async (req, res, next) => {
 
   // 3) Calculate commissions
   const realPaidComms = validCommissions.filter(c => String(c.status).toUpperCase() === 'PAID').reduce((sum, c) => sum + (c.amount || 0), 0);
-  const realPendingComms = validCommissions.filter(c => String(c.status).toUpperCase() === 'PENDING').reduce((sum, c) => sum + (c.amount || 0), 0);
+  const dbPendingComms = validCommissions.filter(c => String(c.status).toUpperCase() === 'PENDING').reduce((sum, c) => sum + (c.amount || 0), 0);
+
+  // Dynamic upcoming monthly commission for active clients until anniversary date arrives
+  let dynamicPendingUpcoming = 0;
+  clients.forEach(c => {
+    const cidStr = String(c._id);
+    const activeInvAmt = clientActiveInvMap[cidStr] || 0;
+    if (activeInvAmt > 0) {
+      const isPaid = validCommissions.some(com => 
+        String(com.clientId?._id || com.clientId) === cidStr && 
+        (com.type === 'MONTHLY' || com.slabType === 'monthly') && 
+        String(com.status).toUpperCase() === 'PAID'
+      );
+      if (!isPaid) {
+        const rate = getSlabRate(activeInvAmt, 'monthly');
+        dynamicPendingUpcoming += Math.round((activeInvAmt * rate) / 100);
+      }
+    }
+  });
 
   const commissionPaid = realPaidComms;
-  const commissionPending = realPendingComms;
+  const commissionPending = dbPendingComms > 0 ? dbPendingComms : dynamicPendingUpcoming;
 
   const now = new Date();
-  const thisMonthCommission = validCommissions
+  let thisMonthCommission = validCommissions
     .filter(c => {
       const d = new Date(c.date || c.createdAt);
       return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
     })
     .reduce((sum, c) => sum + (c.amount || 0), 0);
+
+  if (thisMonthCommission === 0 && clients.length > 0) {
+    const projectedMonthly = clients.reduce((sum, c) => {
+      const cidStr = String(c._id);
+      const activeInvAmt = clientActiveInvMap[cidStr] || 0;
+      if (activeInvAmt <= 0) return sum;
+      const rate = getSlabRate(activeInvAmt, 'monthly');
+      return sum + Math.round((activeInvAmt * rate) / 100);
+    }, 0);
+    if (projectedMonthly > 0) {
+      thisMonthCommission = projectedMonthly;
+    }
+  }
 
   // 4) Dynamically compute reward milestones status and progress
   const milestones = [
@@ -1037,8 +1115,14 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
           clientCount: uniqueOneTimeClients.size,
         },
         monthly: {
-          amount: monthlyAmount,
-          payoutCount: recurringPayoutCount,
+          amount: monthlyAmount > 0 ? monthlyAmount : (assignedClients.reduce((sum, c) => {
+            const cidStr = String(c._id);
+            const invAmt = investmentMap[cidStr] || 0;
+            if (invAmt <= 0) return sum;
+            const rate = getSlabNum(invAmt, 'monthly');
+            return sum + Math.round((invAmt * rate) / 100);
+          }, 0)),
+          payoutCount: recurringPayoutCount > 0 ? recurringPayoutCount : (assignedClients.length > 0 ? 1 : 0),
         },
         special: {
           amount: specialAmount,

@@ -78,16 +78,27 @@ const getAdminDashboard = asyncHandler(async (req, res, next) => {
     };
 
     const getMonthKeyStr = (p) => {
-      if (p.payoutMonth) return p.payoutMonth.trim();
-      if (p.month) return p.month.trim();
-      const dateVal = p.payoutDate || p.processedDate || p.paidAt || p.createdAt;
-      if (dateVal) {
-        const d = new Date(dateVal);
-        if (!isNaN(d.getTime())) {
-          return d.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+      let raw = p.payoutMonth || p.month;
+      if (!raw) {
+        const dateVal = p.payoutDate || p.processedDate || p.paidAt || p.createdAt;
+        if (dateVal) {
+          const d = new Date(dateVal);
+          if (!isNaN(d.getTime())) {
+            raw = d.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+          }
         }
       }
-      return 'Aug 2026';
+      if (!raw) return 'Sep 2026';
+      
+      const str = String(raw).replace(/\bSept\b/i, 'Sep').trim();
+      // Match month name and 4 digit year from strings like "16 Sept 2026", "Sep 2026", "2026-09-16"
+      const match = str.match(/([a-zA-Z]{3,9})\s*(\d{4})/);
+      if (match) {
+        const m = match[1].slice(0, 3).toLowerCase();
+        const months = { jan: 'Jan', feb: 'Feb', mar: 'Mar', apr: 'Apr', may: 'May', jun: 'Jun', jul: 'Jul', aug: 'Aug', sep: 'Sep', oct: 'Oct', nov: 'Nov', dec: 'Dec' };
+        return `${months[m] || match[1]} ${match[2]}`;
+      }
+      return str;
     };
 
     paidRoiPayouts.forEach(p => {
@@ -95,7 +106,7 @@ const getAdminDashboard = asyncHandler(async (req, res, next) => {
       if (matchedCid && validClientIds.has(matchedCid)) {
         if ((clientActiveInvMap[matchedCid] || 0) > 0) {
           const monthStr = getMonthKeyStr(p);
-          const key = `${matchedCid}_${monthStr}_${p.amount}`;
+          const key = `${matchedCid}_${monthStr}`;
           if (!uniqueRoiPaidMap.has(key)) {
             uniqueRoiPaidMap.set(key, p);
           }
@@ -108,7 +119,7 @@ const getAdminDashboard = asyncHandler(async (req, res, next) => {
       if (matchedCid && validClientIds.has(matchedCid)) {
         if ((clientActiveInvMap[matchedCid] || 0) > 0) {
           const monthStr = getMonthKeyStr(p);
-          const key = `${matchedCid}_${monthStr}_${p.amount}`;
+          const key = `${matchedCid}_${monthStr}`;
           if (!uniqueRoiPaidMap.has(key)) {
             uniqueRoiPaidMap.set(key, p);
           }

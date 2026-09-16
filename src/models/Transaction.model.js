@@ -104,27 +104,7 @@ const transactionSchema = new mongoose.Schema(
   }
 );
 
-// Post-save middleware to maintain capped collection limit of 100 transactions (FIFO)
-transactionSchema.post('save', async function() {
-  try {
-    const TransactionModel = this.constructor;
-    const count = await TransactionModel.countDocuments();
-    if (count > 100) {
-      // Find the oldest transactions to remove
-      const oldestDocs = await TransactionModel.find({}, { _id: 1 })
-        .sort({ createdAt: 1 })
-        .limit(count - 100);
-      const oldestIds = oldestDocs.map(doc => doc._id);
-      if (oldestIds.length > 0) {
-        await TransactionModel.deleteMany({ _id: { $in: oldestIds } });
-        console.log(`[Capped Collection] Removed ${oldestIds.length} oldest transactions to maintain limit of 100.`);
-      }
-    }
-  } catch (err) {
-    console.error('Error capping transaction collection:', err);
-  }
-});
-
 const Transaction = mongoose.model('Transaction', transactionSchema);
 
 module.exports = Transaction;
+

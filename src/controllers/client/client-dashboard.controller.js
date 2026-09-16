@@ -152,6 +152,9 @@ const calculateDashboardData = async (userId) => {
     projectIds.length > 0 ? Project.find({ _id: { $in: projectIds } }).lean() : Promise.resolve([])
   ]);
 
+  const roiPayoutsCount = (clientRoiPayouts || []).filter(r => (r.status || 'PAID').toUpperCase() === 'PAID').length;
+  const effectivePayoutsCount = payoutsCount + roiPayoutsCount;
+
   // Wealth Advisor details
   let wealthAdvisor = null;
   if (agentUser) {
@@ -190,7 +193,7 @@ const calculateDashboardData = async (userId) => {
     { step: 4, label: 'Agreement Signed', completed: !!profile.agreementDocument, isCompleted: !!profile.agreementDocument, status: profile.agreementDocument ? 'completed' : 'pending' },
     { step: 5, label: 'First Investment', completed: investments.length > 0, isCompleted: investments.length > 0, status: investments.length > 0 ? 'completed' : 'pending' },
     { step: 6, label: 'ROI Configured', completed: activeInvestmentsCount > 0 || !!profile.monthlyRoi, isCompleted: activeInvestmentsCount > 0 || !!profile.monthlyRoi, status: (activeInvestmentsCount > 0 || !!profile.monthlyRoi) ? 'completed' : 'pending' },
-    { step: 7, label: 'First ROI Received', completed: payoutsCount > 0, isCompleted: payoutsCount > 0, status: payoutsCount > 0 ? 'completed' : 'pending' }
+    { step: 7, label: 'First ROI Received', completed: effectivePayoutsCount > 0, isCompleted: effectivePayoutsCount > 0, status: effectivePayoutsCount > 0 ? 'completed' : 'pending' }
   ];
 
   const completedCount = steps.filter(s => s.completed).length;
@@ -249,33 +252,81 @@ const calculateDashboardData = async (userId) => {
     amount: monthlyRoiMap[index]
   }));
 
-  const recentPayouts = clientPayouts.slice(0, 5).map(p => {
-    const pDate = p.payoutDate ? new Date(p.payoutDate) : new Date(p.createdAt || Date.now());
-    const monthStr = !isNaN(pDate.getTime())
-      ? pDate.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })
-      : 'Jul 2026';
-    return {
-      id: p._id,
-      _id: p._id,
-      month: p.month || p.payoutMonth || p.period || monthStr,
-      payoutMonth: p.payoutMonth || p.month || monthStr,
-      period: p.period || p.month || monthStr,
-      amount: p.amount,
-      received: p.amount,
-      expected: p.amount,
-      date: p.payoutDate || p.createdAt,
-      paidAt: p.payoutDate || p.createdAt,
-      processedDate: p.payoutDate || p.createdAt,
-      paymentMode: p.paymentMode || 'Bank Transfer',
-      status: p.status ? p.status.toUpperCase() : 'PAID',
-      refId: p.transactionRefId || p.transactionRef || '',
-      transactionRef: p.transactionRefId || p.transactionRef || '',
-      transactionRefId: p.transactionRefId || p.transactionRef || '',
-      referenceNumber: p.transactionRefId || p.transactionRef || ''
-    };
+  const allClientRois = [
+    ...clientPayouts.map(p => {
+      const pDate = p.payoutDate ? new Date(p.payoutDate) : new Date(p.createdAt || Date.now());
+      const monthStr = !isNaN(pDate.getTime())
+        ? pDate.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })
+        : 'Sep 2026';
+      return {
+        id: p._id,
+        _id: p._id,
+        month: p.month || p.payoutMonth || p.period || monthStr,
+        payoutMonth: p.payoutMonth || p.month || monthStr,
+        period: p.period || p.month || monthStr,
+        amount: Number(p.amount || 0),
+        received: p.status === 'paid' ? Number(p.amount || 0) : 0,
+        expected: Number(p.amount || 0),
+        date: p.payoutDate || p.createdAt,
+        paidAt: p.paidAt || p.payoutDate || p.createdAt,
+        processedDate: p.payoutDate || p.createdAt,
+        paymentMode: (p.paymentMode && p.paymentMode !== '—') ? p.paymentMode : '—',
+        status: p.status ? p.status.toUpperCase() : 'PAID',
+        refId: (p.transactionRefId && p.transactionRefId !== '—') ? p.transactionRefId : '',
+        transactionRef: (p.transactionRefId && p.transactionRefId !== '—') ? p.transactionRefId : '',
+        transactionRefId: (p.transactionRefId && p.transactionRefId !== '—') ? p.transactionRefId : '',
+        referenceNumber: (p.transactionRefId && p.transactionRefId !== '—') ? p.transactionRefId : ''
+      };
+    }),
+    ...clientRoiPayouts.map(r => {
+      const pDate = r.processedDate ? new Date(r.processedDate) : new Date(r.createdAt || Date.now());
+      const monthStr = r.payoutMonth || (!isNaN(pDate.getTime())
+        ? pDate.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })
+        : 'Sep 2026');
+      const amt = Number(r.amount || 0);
+      const isPaid = (r.status || 'PAID').toUpperCase() === 'PAID';
+      return {
+        id: r._id,
+        _id: r._id,
+        month: monthStr,
+        payoutMonth: monthStr,
+        period: monthStr,
+        amount: amt,
+        received: isPaid ? amt : 0,
+        expected: amt,
+        date: r.processedDate || r.createdAt,
+        paidAt: r.processedDate || r.createdAt,
+        processedDate: r.processedDate || r.createdAt,
+        paymentMode: (r.paymentMode && r.paymentMode !== '—') ? r.paymentMode : '—',
+        status: isPaid ? 'PAID' : 'PENDING',
+        refId: '',
+        transactionRef: '',
+        transactionRefId: '',
+        referenceNumber: ''
+      };
+    })
+  ];
+
+  // Deduplicate by normalized month string (e.g. "Sep 2026")
+  const uniqueRoiMap = new Map();
+  allClientRois.forEach(item => {
+    const norm = String(item.payoutMonth || item.month || item.period || '').replace(/\bSept\b/i, 'Sep').trim();
+    if (!uniqueRoiMap.has(norm)) {
+      uniqueRoiMap.set(norm, { ...item, month: norm, payoutMonth: norm, period: norm });
+    } else {
+      const existing = uniqueRoiMap.get(norm);
+      if (item.status === 'PAID' && existing.status !== 'PAID') {
+        uniqueRoiMap.set(norm, { ...item, month: norm, payoutMonth: norm, period: norm });
+      }
+    }
   });
 
-  const totalRoiPaidVal = clientRoiPayouts.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+  const mergedRoiHistory = Array.from(uniqueRoiMap.values()).sort((a, b) => new Date(b.date) - new Date(a.date));
+  const recentPayouts = mergedRoiHistory.slice(0, 10);
+
+  const totalRoiPaidVal = mergedRoiHistory
+    .filter(p => p.status === 'PAID')
+    .reduce((sum, p) => sum + Number(p.amount || 0), 0);
   const netRoiReceivedVal = Math.max(0, totalRoiPaidVal - totalApprovedWithdrawalsSum);
 
   return {
@@ -319,7 +370,7 @@ const calculateDashboardData = async (userId) => {
     assetAllocation,
     monthlyRoiEarnings,
     recentPayouts,
-    roiHistory: recentPayouts,
+    roiHistory: mergedRoiHistory,
     wealthAdvisor,
 
     // Nested stats object to cover all frontend fetch patterns
@@ -643,27 +694,30 @@ const getClientDocuments = asyncHandler(async (req, res, next) => {
 
 const getClientPayouts = asyncHandler(async (req, res, next) => {
   const clientCode = req.user.clientCode;
+  const clientId = req.user._id;
 
-  if (!clientCode) {
-    return next(new AppError('Client code not found on user record.', 400));
+  if (!clientCode && !clientId) {
+    return next(new AppError('Client user identification not found.', 400));
   }
 
-  const payouts = await Payout.find({
-    recipientId: clientCode,
-    recipientType: 'Client Return (ROI)'
-  }).sort({ payoutDate: -1, createdAt: -1 });
+  const [payouts, roiPayouts] = await Promise.all([
+    clientCode ? Payout.find({
+      recipientId: clientCode,
+      recipientType: 'Client Return (ROI)'
+    }).sort({ payoutDate: -1, createdAt: -1 }).lean() : [],
+    RoiPayout.find({
+      clientId: clientId,
+      status: 'PAID'
+    }).sort({ processedDate: -1, createdAt: -1 }).lean()
+  ]);
 
-  // Calculate metrics
-  const totalRecords = payouts.length;
-  const paidPayouts = payouts.filter(p => p.status === 'paid').length;
-  const pending = payouts.filter(p => p.status === 'pending').length;
-  
-  const totalReceived = payouts
-    .filter(p => p.status === 'paid')
-    .reduce((sum, p) => sum + p.amount, 0);
+  const existingIds = new Set(payouts.map(p => String(p._id)));
+  const seenMonths = new Set();
 
   // Formatted records
-  const formattedPayouts = payouts.map(p => {
+  const formattedPayouts = [];
+
+  payouts.forEach(p => {
     let periodFormatted = '—';
     try {
       if (p.payoutDate) {
@@ -677,21 +731,56 @@ const getClientPayouts = asyncHandler(async (req, res, next) => {
       console.error('[getClientPayouts] Error formatting period:', e.message);
     }
 
-    return {
+    const normPeriod = periodFormatted.replace(/\bSept\b/i, 'Sep').trim();
+    seenMonths.add(normPeriod);
+
+    formattedPayouts.push({
       _id: p._id,
       recipientType: p.recipientType,
       recipientId: p.recipientId,
       amount: p.amount,
       payoutDate: p.payoutDate,
-      paymentMode: p.paymentMode || '—',
-      transactionRefId: p.transactionRefId || '',
-      transactionRef: p.transactionRefId || p.transactionRef || '',
-      referenceNumber: p.transactionRefId || p.transactionRef || '',
+      paymentMode: (p.paymentMode && p.paymentMode !== '—') ? p.paymentMode : '—',
+      transactionRefId: (p.transactionRefId && p.transactionRefId !== '—') ? p.transactionRefId : '',
+      transactionRef: (p.transactionRefId && p.transactionRefId !== '—') ? p.transactionRefId : '',
+      referenceNumber: (p.transactionRefId && p.transactionRefId !== '—') ? p.transactionRefId : '',
       status: p.status === 'paid' ? 'PAID' : 'PENDING',
       paidAt: p.paidAt ? p.paidAt.toISOString().split('T')[0] : '—',
       period: periodFormatted
-    };
+    });
   });
+
+  roiPayouts.forEach(r => {
+    const rIdStr = String(r._id);
+    const normMonth = String(r.payoutMonth || '').replace(/\bSept\b/i, 'Sep').trim();
+    if (!existingIds.has(rIdStr) && !seenMonths.has(normMonth)) {
+      seenMonths.add(normMonth);
+      const pDateStr = r.processedDate ? new Date(r.processedDate).toISOString().split('T')[0] : '—';
+      formattedPayouts.push({
+        _id: r._id,
+        recipientType: 'Client Return (ROI)',
+        recipientId: clientCode,
+        amount: r.amount,
+        payoutDate: pDateStr,
+        paymentMode: (r.paymentMode && r.paymentMode !== '—') ? r.paymentMode : '—',
+        transactionRefId: '',
+        transactionRef: '',
+        referenceNumber: '',
+        status: (r.status || 'PAID').toUpperCase(),
+        paidAt: pDateStr,
+        period: normMonth || r.payoutMonth || '—'
+      });
+      existingIds.add(rIdStr);
+    }
+  });
+
+  // Calculate metrics
+  const totalRecords = formattedPayouts.length;
+  const paidPayouts = formattedPayouts.filter(p => p.status === 'PAID').length;
+  const pending = formattedPayouts.filter(p => p.status === 'PENDING').length;
+  const totalReceived = formattedPayouts
+    .filter(p => p.status === 'PAID')
+    .reduce((sum, p) => sum + (p.amount || 0), 0);
 
   res.status(200).json({
     success: true,

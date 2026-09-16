@@ -43,6 +43,9 @@ const agentCommissionSchema = new mongoose.Schema(
       },
       default: 'PENDING',
     },
+    paidAt: {
+      type: Date,
+    },
     remarks: {
       type: String,
       trim: true,

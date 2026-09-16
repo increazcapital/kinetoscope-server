@@ -428,13 +428,15 @@ const getPayouts = asyncHandler(async (req, res, next) => {
     }
   }
 
-  const [payouts, withdrawalTransactions] = await Promise.all([
+  const [payouts, withdrawalTransactions, autoRois, autoCommissions] = await Promise.all([
     Payout.find(query).sort({ payoutDate: -1, createdAt: -1 }).lean(),
     Transaction.find({ $or: [{ type: 'withdrawal' }, { isAgentWithdrawal: true }] })
       .populate('clientId', 'name clientCode email')
       .populate('agentId', 'name clientCode agentCode email')
       .sort({ createdAt: -1 })
-      .lean()
+      .lean(),
+    RoiPayout.find({}).populate('clientId', 'name clientCode email').sort({ createdAt: -1 }).lean(),
+    AgentCommission.find({}).populate('agentId', 'name clientCode email').populate('clientId', 'name clientCode email').sort({ createdAt: -1 }).lean()
   ]);
 
   // Populate recipient names
@@ -500,16 +502,18 @@ const getPayouts = asyncHandler(async (req, res, next) => {
     }
   });
 
+  const seenClientMonths = new Set();
+  const seenAgentPeriods = new Set();
+  const seenTransactionRefs = new Set();
+  const existingIds = new Set();
+
   let formatted = payouts.map(p => {
     const name = userMap[p.recipientId] || 'Unknown';
     let periodFormatted = '—';
     try {
       if (p.payoutDate) {
         const parts = p.payoutDate.split('-');
-        if (parts.length >= 3) {
-          const dObj = new Date(parts[0], parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
-          periodFormatted = new Intl.DateTimeFormat('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }).format(dObj);
-        } else if (parts.length >= 2) {
+        if (parts.length >= 2) {
           const dObj = new Date(parts[0], parseInt(parts[1], 10) - 1, 1);
           periodFormatted = new Intl.DateTimeFormat('en-IN', { month: 'short', year: 'numeric' }).format(dObj);
         }
@@ -517,6 +521,7 @@ const getPayouts = asyncHandler(async (req, res, next) => {
     } catch (e) {
       console.error('[getPayouts] Error formatting period:', e.message);
     }
+    const normMonth = String(periodFormatted).replace(/\bSept\b/i, 'Sep').trim();
 
     const isClient = p.recipientType === 'Client Return (ROI)' || p.recipientType === 'CLIENT' || p.recipientType === 'Client' || (p.commissionType && /ROI/i.test(p.commissionType));
     
@@ -531,11 +536,20 @@ const getPayouts = asyncHandler(async (req, res, next) => {
         : (regexMatch ? parseFloat(regexMatch[1]) : (roiMap[p.recipientId] !== undefined ? roiMap[p.recipientId] : (roiMap[p.clientId] !== undefined ? roiMap[p.clientId] : 0)));
       displayType = `ROI (${finalRoiVal}%)`;
       payoutDetailStr = `Monthly ROI Return (${finalRoiVal}%)`;
+      if (normMonth && normMonth !== '—') {
+        seenClientMonths.add(`${p.recipientId}_${normMonth}`);
+        if (p.clientId) seenClientMonths.add(`${p.clientId}_${normMonth}`);
+      }
     } else {
       const isOneTime = String(p.commissionType || p.type || '').toLowerCase().includes('one');
       displayType = isOneTime ? 'ONE TIME' : 'MONTHLY';
       payoutDetailStr = isOneTime ? 'One-Time Commission' : 'Monthly Slab Commission';
     }
+
+    if (p.transactionRefId && p.transactionRefId !== '—') {
+      seenTransactionRefs.add(p.transactionRefId);
+    }
+    existingIds.add(String(p._id));
 
     return {
       _id: p._id,
@@ -546,7 +560,7 @@ const getPayouts = asyncHandler(async (req, res, next) => {
       type: displayType,
       payoutDetail: payoutDetailStr,
       roiPercentage: finalRoiVal,
-      period: periodFormatted,
+      period: normMonth || periodFormatted,
       amount: p.amount,
       payoutDate: p.payoutDate,
       paymentMode: p.paymentMode || '—',
@@ -558,8 +572,6 @@ const getPayouts = asyncHandler(async (req, res, next) => {
   });
 
   // Merge approved Transaction withdrawals as separate distinct rows in Complete Transaction Details
-  const existingIds = new Set(formatted.map(p => String(p._id)));
-
   withdrawalTransactions.forEach(tx => {
     const txIdStr = String(tx._id);
     const isAgent = tx.isAgentWithdrawal;
@@ -641,6 +653,99 @@ const getPayouts = asyncHandler(async (req, res, next) => {
           paidAt: tx.actionAt ? new Date(tx.actionAt).toISOString().split('T')[0] : (tx.createdAt ? new Date(tx.createdAt).toISOString().split('T')[0] : '—'),
           rawDate: tx.createdAt,
         });
+      }
+    }
+  });
+
+  // Deduplicate and merge auto-generated ROIs
+  autoRois.forEach(roi => {
+    const roiIdStr = String(roi._id);
+    const user = roi.clientId || {};
+    const code = user.clientCode || 'Unknown';
+    const name = user.name || 'Unknown Client';
+    const normMonth = String(roi.payoutMonth || '').replace(/\bSept\b/i, 'Sep').trim();
+    const clientMonthKey = `${code}_${normMonth}`;
+    const cidMonthKey = user._id ? `${String(user._id)}_${normMonth}` : null;
+
+    const alreadyExists = existingIds.has(roiIdStr) || 
+      seenClientMonths.has(clientMonthKey) || 
+      (cidMonthKey && seenClientMonths.has(cidMonthKey)) ||
+      (roi.transactionRefId && seenTransactionRefs.has(roi.transactionRefId));
+
+    if (!alreadyExists) {
+      seenClientMonths.add(clientMonthKey);
+      if (cidMonthKey) seenClientMonths.add(cidMonthKey);
+      if (roi.transactionRefId && roi.transactionRefId !== '—') seenTransactionRefs.add(roi.transactionRefId);
+      
+      const itemRecipientType = 'CLIENT';
+      if (!recipientType || recipientType === 'All' || recipientType.toUpperCase() === itemRecipientType) {
+        formatted.push({
+          _id: roi._id,
+          recipientId: code,
+          recipientName: name,
+          recipientCode: code,
+          recipientType: itemRecipientType,
+          type: `ROI (${roi.roiPercentage || 0}%)`,
+          payoutDetail: `Monthly ROI Return (${roi.roiPercentage || 0}%)`,
+          roiPercentage: roi.roiPercentage || 0,
+          period: normMonth || roi.payoutMonth || '—',
+          amount: roi.amount,
+          payoutDate: roi.processedDate ? new Date(roi.processedDate).toISOString().split('T')[0] : '—',
+          paymentMode: (roi.paymentMode && roi.paymentMode !== '—') ? roi.paymentMode : '—',
+          transactionRefId: (roi.transactionRefId && roi.transactionRefId !== '—') ? roi.transactionRefId : '—',
+          status: (roi.status || 'PAID').toUpperCase(),
+          paidAt: roi.processedDate ? new Date(roi.processedDate).toISOString().split('T')[0] : '—',
+          rawDate: roi.processedDate || roi.createdAt,
+        });
+        existingIds.add(roiIdStr);
+      }
+    }
+  });
+
+  // Deduplicate and merge auto-generated Commissions (including upcoming pending commissions)
+  const now = new Date();
+  autoCommissions.forEach(comm => {
+    const commIdStr = String(comm._id);
+    const commDate = comm.date ? new Date(comm.date) : new Date(comm.createdAt);
+    const isCommPaid = (comm.status || '').toUpperCase() === 'PAID';
+
+    // Do not show pending commissions in Complete Transaction Details before they are paid
+    if (!isCommPaid) return;
+    if (commDate > now) return;
+
+    const agentUser = comm.agentId || {};
+    const agentCode = agentUser.clientCode || 'Unknown';
+    const agentName = agentUser.name || 'Unknown Agent';
+    const normPeriod = String(comm.period || '').replace(/\bSept\b/i, 'Sep').trim();
+    const agentPeriodKey = `${agentCode}_${normPeriod}_${comm.type}`;
+
+    if (!existingIds.has(commIdStr) && !seenAgentPeriods.has(agentPeriodKey)) {
+      seenAgentPeriods.add(agentPeriodKey);
+      
+      const itemRecipientType = 'AGENT';
+      if (!recipientType || recipientType === 'All' || recipientType.toUpperCase() === itemRecipientType) {
+        const commPaidDate = comm.paidAt || (isCommPaid ? (comm.date || comm.createdAt) : null);
+        const commPaidAtStr = commPaidDate ? new Date(commPaidDate).toISOString().split('T')[0] : '—';
+        const commPayoutDateStr = comm.date ? new Date(comm.date).toISOString().split('T')[0] : (comm.createdAt ? new Date(comm.createdAt).toISOString().split('T')[0] : '—');
+
+        formatted.push({
+          _id: comm._id,
+          recipientId: agentCode,
+          recipientName: agentName,
+          recipientCode: agentCode,
+          recipientType: itemRecipientType,
+          type: comm.type === 'ONE TIME' ? 'ONE TIME' : 'MONTHLY',
+          payoutDetail: comm.type === 'ONE TIME' ? 'One-Time Commission' : 'Monthly Slab Commission',
+          period: normPeriod || comm.period || '—',
+          amount: comm.amount,
+          payoutDate: commPayoutDateStr,
+          paymentMode: (comm.paymentMode && comm.paymentMode !== '—') ? comm.paymentMode : '—',
+          transactionRefId: (comm.transactionRefId && comm.transactionRefId !== '—') ? comm.transactionRefId : '—',
+          status: isCommPaid ? 'PAID' : 'PENDING',
+          paidAt: commPaidAtStr,
+          rawDate: comm.date || comm.createdAt,
+        });
+        existingIds.add(commIdStr);
       }
     }
   });
@@ -899,12 +1004,18 @@ const bulkUploadPayouts = asyncHandler(async (req, res, next) => {
  * DELETE /api/super-admin/roi/payouts
  */
 const clearAllPayouts = asyncHandler(async (req, res, next) => {
-  const result = await Payout.deleteMany({});
+  const [payoutResult, roiResult, commResult] = await Promise.all([
+    Payout.deleteMany({}),
+    RoiPayout.deleteMany({}),
+    AgentCommission.deleteMany({ $or: [{ type: 'MONTHLY' }, { slabType: 'monthly' }] })
+  ]);
+
+  const totalDeleted = (payoutResult.deletedCount || 0) + (roiResult.deletedCount || 0) + (commResult.deletedCount || 0);
 
   res.status(200).json({
     success: true,
-    message: `All payout records (${result.deletedCount}) have been cleared successfully.`,
-    count: result.deletedCount
+    message: `All payout and return records (${totalDeleted}) have been cleared successfully.`,
+    count: totalDeleted
   });
 });
 
@@ -915,6 +1026,42 @@ const clearAllPayouts = asyncHandler(async (req, res, next) => {
 const deletePayout = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
   let payout = await Payout.findByIdAndDelete(id);
+
+  if (payout) {
+    try {
+      let clientUser = await User.findOne({ clientCode: payout.recipientId, role: 'client' });
+      if (!clientUser && mongoose.Types.ObjectId.isValid(payout.recipientId)) {
+        clientUser = await User.findOne({ _id: payout.recipientId, role: 'client' });
+      }
+      if (clientUser) {
+        const d = new Date(payout.payoutDate);
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const mStr = `${months[d.getMonth()]} ${d.getFullYear()}`;
+        await RoiPayout.deleteMany({
+          clientId: clientUser._id,
+          $or: [
+            { _id: payout._id },
+            { payoutMonth: mStr },
+            ...(payout.transactionRefId ? [{ transactionRefId: payout.transactionRefId }] : [])
+          ]
+        });
+      }
+    } catch (e) {}
+  } else {
+    payout = await RoiPayout.findByIdAndDelete(id);
+    if (payout) {
+      await Payout.deleteMany({
+        $or: [
+          { _id: id },
+          ...(payout.transactionRefId ? [{ transactionRefId: payout.transactionRefId }] : [])
+        ]
+      });
+    }
+  }
+
+  if (!payout) {
+    payout = await AgentCommission.findByIdAndDelete(id);
+  }
 
   if (!payout) {
     payout = await Transaction.findByIdAndDelete(id);

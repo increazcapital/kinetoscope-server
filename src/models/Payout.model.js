@@ -94,11 +94,13 @@ payoutSchema.post('save', async function (doc) {
 
     const targetStatus = doc.status === 'paid' ? 'PAID' : 'PENDING';
 
-    // Find if a RoiPayout already exists for this exact Payout doc._id or transactionRefId, or create a new one
+    // Find if a RoiPayout already exists for this client and month, or exact Payout doc._id / transactionRefId
     let roiPayout = await RoiPayout.findOne({
+      clientId: clientUser._id,
       $or: [
         { _id: doc._id },
-        ...(doc.transactionRefId ? [{ transactionRefId: doc.transactionRefId, clientId: clientUser._id }] : [])
+        { payoutMonth },
+        ...(doc.transactionRefId ? [{ transactionRefId: doc.transactionRefId }] : [])
       ]
     });
 
@@ -106,11 +108,13 @@ payoutSchema.post('save', async function (doc) {
       roiPayout.status = targetStatus;
       roiPayout.amount = doc.amount;
       roiPayout.payoutMonth = payoutMonth;
+      if (doc.paymentMode) roiPayout.paymentMode = doc.paymentMode;
+      if (doc.transactionRefId) roiPayout.transactionRefId = doc.transactionRefId;
       if (doc.roiPercentage) roiPayout.roiPercentage = doc.roiPercentage;
       if (doc.roiRate) roiPayout.roiRate = doc.roiRate;
       roiPayout.processedDate = targetStatus === 'PAID' ? (doc.paidAt || new Date()) : undefined;
       await roiPayout.save();
-      console.log(`[Payout Sync] Automatically updated RoiPayout for ${clientUser.name} (${payoutMonth})`);
+      console.log(`[Payout Sync] Automatically updated existing RoiPayout for ${clientUser.name} (${payoutMonth})`);
     } else {
       await RoiPayout.create({
         _id: doc._id,
