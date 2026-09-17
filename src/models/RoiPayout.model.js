@@ -10,6 +10,10 @@ const roiPayoutSchema = new mongoose.Schema(
       ref: 'User',
       required: [true, 'Client ID is required'],
     },
+    investmentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Investment',
+    },
     payoutMonth: {
       type: String, // e.g. "Jan 2025"
       required: [true, 'Payout month is required'],

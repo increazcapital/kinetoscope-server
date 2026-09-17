@@ -53,8 +53,12 @@ const startServer = async () => {
           startScheduledEmailCheck();
           const { runInvestmentBackfill } = require('./controllers/super-admin/transaction.controller');
           runInvestmentBackfill();
-          const { startRoiScheduler } = require('./services/roi-scheduler.service');
-          startRoiScheduler();
+          try {
+            const { startRoiScheduler } = require('./services/roi-scheduler.service');
+            startRoiScheduler();
+          } catch(e) {}
+          const { initCronJobs } = require('./services/cron.service');
+          initCronJobs();
         } catch (err) {
           console.error('Failed to start scheduled services:', err.message);
         }

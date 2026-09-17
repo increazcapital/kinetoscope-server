@@ -61,7 +61,20 @@ const payoutSchema = new mongoose.Schema(
     isWithdrawal: {
       type: Boolean,
       default: false
-    }
+    },
+    linkedTransactionId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Transaction',
+      default: null
+    },
+    linkedRoiIds: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'RoiPayout'
+    }],
+    linkedCommissionIds: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'AgentCommission'
+    }]
   },
   {
     timestamps: true

@@ -6,6 +6,7 @@ const AgentCommission = require('../../models/AgentCommission.model');
 const Transaction = require('../../models/Transaction.model');
 const CommissionSlab = require('../../models/CommissionSlab.model');
 const AgentOverride = require('../../models/AgentOverride.model');
+const Payout = require('../../models/Payout.model');
 const mongoose = require('mongoose');
 const agentDetailsService = require('../../services/agent-details.service');
 const asyncHandler = require('../../utils/asyncHandler');
@@ -28,7 +29,7 @@ const syncAgentCommissionsHelper = async (agentId) => {
       }).lean(),
       CommissionSlab.find({}).sort({ minAmount: 1 }).lean(),
       AgentOverride.findOne({ agentId }).lean(),
-      AgentCommission.find({ agentId }).lean()
+      AgentCommission.find({ agentId, status: { $ne: 'CANCELLED' } }).lean()
     ]);
 
     const getSlabRate = (amount, slabType = 'one-time') => {
@@ -236,7 +237,7 @@ const syncAgentCommissionsHelper = async (agentId) => {
       }
 
       // 3. Deduplicate DB: Ensure distinct keys per deposit transaction so multiple deposits remain separate rows
-      const allComms = await AgentCommission.find({ agentId }).sort({ createdAt: -1 });
+      const allComms = await AgentCommission.find({ agentId, status: { $ne: 'CANCELLED' } }).sort({ createdAt: -1 });
       const seenKeys = new Set();
       const duplicateIdsToDelete = [];
 
@@ -274,6 +275,8 @@ const syncAgentCommissionsHelper = async (agentId) => {
 
       const paidPayouts = await Payout.find({
         status: { $regex: /^paid$/i },
+        isWithdrawal: { $ne: true },
+        category: { $ne: 'WITHDRAWAL' },
         $or: [
           { recipientType: { $regex: /agent/i } },
           { recipientId: { $in: searchCodes } }
@@ -325,7 +328,7 @@ const getAgentDashboard = asyncHandler(async (req, res, next) => {
   // 1) Find assigned clients, agent commissions, agent profile, active investments, commission slabs, and override in a single parallel batch
   const [clients, commissions, agentProfile, allActiveInvestments, slabs, agentOverride] = await Promise.all([
     User.find({ role: ROLES.CLIENT, assignedAgent: agentId }).sort({ createdAt: -1 }).lean(),
-    AgentCommission.find({ agentId }).lean(),
+    AgentCommission.find({ agentId, status: { $ne: 'CANCELLED' } }).lean(),
     AgentProfile.findOne({ userId: agentId }).lean(),
     Investment.find({ status: 'active' }).lean(),
     CommissionSlab.find({}).sort({ minAmount: 1 }).lean(),
@@ -333,7 +336,7 @@ const getAgentDashboard = asyncHandler(async (req, res, next) => {
   ]);
 
   const clientObjectIds = clients.map(c => c._id);
-  const [clientProfiles, clientDeposits, clientTransactions, approvedAgentWithdrawals] = await Promise.all([
+  const [clientProfiles, clientDeposits, clientTransactions, approvedAgentWithdrawals, manualAgentWithdrawals] = await Promise.all([
     ClientProfile.find({ userId: { $in: clientObjectIds } }).lean(),
     Transaction.find({
       clientId: { $in: clientObjectIds },
@@ -347,10 +350,37 @@ const getAgentDashboard = asyncHandler(async (req, res, next) => {
       agentId,
       isAgentWithdrawal: true,
       status: { $regex: /^(paid|approved|credited|completed)$/i }
+    }).lean(),
+    Payout.find({
+      $or: [
+        { recipientId: String(agentId) },
+        ...(req.user?.clientCode ? [{ recipientId: req.user.clientCode }] : []),
+        ...(req.user?.name ? [{ recipientId: req.user.name }] : [])
+      ],
+      $or: [
+        { isWithdrawal: true },
+        { category: 'WITHDRAWAL' },
+        { commissionType: { $regex: /withdrawal/i } }
+      ]
     }).lean()
   ]);
 
-  const totalWithdrawn = approvedAgentWithdrawals.reduce((sum, w) => sum + (w.amount || 0), 0);
+  // Deduplicate manual withdrawal entries by month (only count once per month even if multiple entries exist)
+  const agentMonthMap = new Map();
+  (manualAgentWithdrawals || []).forEach(w => {
+    const d = w.payoutDate ? new Date(w.payoutDate) : new Date(w.createdAt);
+    const monthKey = !isNaN(d.getTime())
+      ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+      : (w.month || w.period || 'current');
+
+    if (!agentMonthMap.has(monthKey)) {
+      agentMonthMap.set(monthKey, Number(w.amount || 0));
+    } else {
+      agentMonthMap.set(monthKey, Math.max(agentMonthMap.get(monthKey), Number(w.amount || 0)));
+    }
+  });
+
+  const totalWithdrawn = Array.from(agentMonthMap.values()).reduce((sum, amt) => sum + amt, 0);
 
   const clientObjectIdsStr = clientObjectIds.map(id => String(id));
   const investmentsList = allActiveInvestments.filter(inv => {
@@ -763,7 +793,7 @@ const getAgentClients = asyncHandler(async (req, res, next) => {
       type: 'deposit',
       status: 'approved'
     }).lean(),
-    AgentCommission.find({ agentId }).lean()
+    AgentCommission.find({ agentId, status: { $ne: 'CANCELLED' } }).lean()
   ]);
 
   // 4) Map profiles, investments, deposits, and commissions for O(1) in-memory lookup
@@ -895,6 +925,7 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
 
   // Let's populate the related client details
   const commissions = await AgentCommission.find({
+    status: { $ne: 'CANCELLED' },
     $or: [
       { agentId },
       { agentId: req.user._id },
@@ -1102,6 +1133,7 @@ const getAgentCommissions = asyncHandler(async (req, res, next) => {
       sourceTransactionId: c.sourceTransactionId || null,
     };
   });
+
 
   res.status(200).json({
     success: true,

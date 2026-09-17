@@ -230,7 +230,11 @@ const recordPayout = asyncHandler(async (req, res, next) => {
   // Normalize recipientType to database format
   let normalizedRecipientType = recipientType;
   const lowerType = String(recipientType).toLowerCase();
-  const isWithdrawalRecord = Boolean(isWithdrawal) || lowerType.includes('withdrawal') || /withdrawal/i.test(commissionType || '') || /withdrawal/i.test(category || '');
+  
+  // In this system, any manual payout recorded by the Super Admin via the "Record Payout" form
+  // is fundamentally a Withdrawal of either ROI or Commission balance.
+  // The auto-generated ROI/Commission entries handle the actual crediting of the balance.
+  const isWithdrawalRecord = true;
 
   if (lowerType === 'client' || lowerType === 'client-withdrawal' || lowerType.includes('client') || lowerType.includes('roi')) {
     normalizedRecipientType = 'Client Return (ROI)';
@@ -296,7 +300,70 @@ const recordPayout = asyncHandler(async (req, res, next) => {
     paidAt: payoutStatus === 'paid' ? new Date() : undefined
   });
 
-  // If this is an Agent Commission payout and marked as paid, sync matching AgentCommission record to PAID
+  // Link matching Transaction withdrawal request to this payout record
+  if (isWithdrawalRecord) {
+    try {
+      let matchingTx = null;
+
+      // Try Agent first
+      let agentUser = await User.findOne({
+        $or: [
+          ...(mongoose.Types.ObjectId.isValid(recipientId) ? [{ _id: recipientId }] : []),
+          { clientCode: resolvedRecipientId },
+          { name: { $regex: new RegExp(`^${resolvedRecipientId}$`, 'i') } }
+        ],
+        role: 'agent'
+      });
+
+      if (agentUser) {
+        matchingTx = await Transaction.findOne({
+          agentId: agentUser._id,
+          isAgentWithdrawal: true,
+          type: { $regex: /withdrawal/i },
+          amount: numericAmount
+        }).sort({ createdAt: -1 });
+      }
+
+      // Try Client if not found
+      if (!matchingTx) {
+        let clientUser = await User.findOne({
+          $or: [
+            ...(mongoose.Types.ObjectId.isValid(recipientId) ? [{ _id: recipientId }] : []),
+            { clientCode: resolvedRecipientId },
+            ...(resolvedClientId ? [{ clientCode: resolvedClientId }] : []),
+            { name: { $regex: new RegExp(`^${resolvedRecipientId}$`, 'i') } }
+          ],
+          role: 'client'
+        });
+
+        if (clientUser) {
+          matchingTx = await Transaction.findOne({
+            clientId: clientUser._id,
+            isAgentWithdrawal: { $ne: true },
+            type: { $regex: /withdrawal/i },
+            amount: numericAmount
+          }).sort({ createdAt: -1 });
+        }
+      }
+
+      if (matchingTx) {
+        matchingTx.status = 'approved';
+        matchingTx.payoutRecordId = payout._id;
+        if (transactionRefId && (!matchingTx.referenceNumber || matchingTx.referenceNumber.startsWith('TXN-WITHDRAWAL-'))) {
+          matchingTx.referenceNumber = transactionRefId;
+        }
+        await matchingTx.save();
+
+        payout.linkedTransactionId = matchingTx._id;
+        await payout.save();
+        console.log(`[Payout Record] Linked Payout ${payout._id} with Transaction ${matchingTx._id}`);
+      }
+    } catch (txLinkErr) {
+      console.error('[Payout Record] Error linking transaction to payout:', txLinkErr);
+    }
+  }
+
+  // If this is an actual Agent Commission payout (NOT a withdrawal) and marked as paid, sync matching AgentCommission record to PAID
   if (!isWithdrawalRecord && normalizedRecipientType === 'Agent Commission' && payoutStatus === 'paid') {
     try {
       let agentUser = await User.findOne({
@@ -361,20 +428,6 @@ const recordPayout = asyncHandler(async (req, res, next) => {
             await comm.save();
             console.log(`[Payout Sync Success] Agent ${agentUser.name} Commission ${comm._id} (₹${comm.amount}) marked as PAID`);
           }
-        } else {
-          await AgentCommission.create({
-            agentId: agentUser._id,
-            clientId: targetClientUser ? targetClientUser._id : undefined,
-            period: new Date().toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }),
-            date: new Date(),
-            type: typeFilter,
-            amount: numericAmount,
-            status: 'PAID',
-            paymentMode: paymentMode || 'Bank Transfer',
-            transactionRefId: transactionRefId || `TXN-${Date.now()}`,
-            paidAt: new Date(),
-            remarks: `Paid via Super Admin Payout`
-          });
         }
       }
     } catch (err) {
@@ -660,8 +713,8 @@ const getPayouts = asyncHandler(async (req, res, next) => {
           payoutDate: roi.processedDate ? new Date(roi.processedDate).toISOString().split('T')[0] : '—',
           paymentMode: (roi.paymentMode && roi.paymentMode !== '—') ? roi.paymentMode : '—',
           transactionRefId: (roi.transactionRefId && roi.transactionRefId !== '—') ? roi.transactionRefId : '—',
-          status: (roi.status || 'PAID').toUpperCase(),
-          paidAt: roi.processedDate ? new Date(roi.processedDate).toISOString().split('T')[0] : '—',
+          status: (roi.status || 'PENDING').toUpperCase(),
+          paidAt: (roi.status && roi.status.toUpperCase() === 'PAID' && roi.processedDate) ? new Date(roi.processedDate).toISOString().split('T')[0] : '—',
           rawDate: roi.processedDate || roi.createdAt,
         });
         existingIds.add(roiIdStr);
@@ -676,8 +729,7 @@ const getPayouts = asyncHandler(async (req, res, next) => {
     const commDate = comm.date ? new Date(comm.date) : new Date(comm.createdAt);
     const isCommPaid = (comm.status || '').toUpperCase() === 'PAID';
 
-    // Do not show pending commissions in Complete Transaction Details before they are paid
-    if (!isCommPaid) return;
+    // Do not show upcoming commissions that are in the future
     if (commDate > now) return;
 
     const agentUser = comm.agentId || {};
@@ -770,6 +822,12 @@ const getPayouts = asyncHandler(async (req, res, next) => {
       item.transactionRefId.toLowerCase().includes(searchLower) ||
       item.period.toLowerCase().includes(searchLower)
     );
+  }
+
+  // Filter by status if specified (because autoRois and autoCommissions were pushed regardless)
+  if (status && status !== 'All') {
+    const statusLower = status.toLowerCase();
+    formatted = formatted.filter(item => (item.status || '').toLowerCase() === statusLower);
   }
 
   res.status(200).json({
@@ -996,11 +1054,94 @@ const deletePayout = asyncHandler(async (req, res, next) => {
 
   if (payout) {
     if (payout.isWithdrawal || payout.category === 'WITHDRAWAL' || /withdrawal/i.test(payout.commissionType || '')) {
-      if (payout.transactionRefId) {
-        try {
-          await Transaction.deleteMany({ referenceNumber: payout.transactionRefId });
-        } catch (e) {}
+      // Revert withdrawal: Delete the matching Transaction so:
+      // 1. Amount is completely removed from totalWithdrawn
+      // 2. Funds revert to ROI/Commission received on Client/Agent dashboards
+      // 3. The transaction does NOT return to Super Admin Deposit & Withdrawal Approvals as pending
+      try {
+        let deletedTx = null;
+
+        // 1. By direct link if present
+        if (payout.linkedTransactionId) {
+          deletedTx = await Transaction.findByIdAndDelete(payout.linkedTransactionId);
+        }
+
+        // 2. By transactionRefId if provided
+        if (!deletedTx && payout.transactionRefId && String(payout.transactionRefId).trim() !== '' && payout.transactionRefId !== '—') {
+          deletedTx = await Transaction.findOneAndDelete({
+            $or: [
+              { referenceNumber: payout.transactionRefId },
+              { transactionRefId: payout.transactionRefId },
+              { utrNumber: payout.transactionRefId }
+            ],
+            type: { $regex: /withdrawal/i }
+          });
+        }
+
+        // 3. Fallback for Agent: find matching agent withdrawal Transaction and delete it
+        if (!deletedTx) {
+          let agentUser = await User.findOne({ 
+            $or: [
+              { clientCode: payout.recipientId, role: 'agent' },
+              ...(mongoose.Types.ObjectId.isValid(payout.recipientId) ? [{ _id: payout.recipientId, role: 'agent' }] : []),
+              { name: { $regex: new RegExp(`^${payout.recipientId}$`, 'i') }, role: 'agent' }
+            ]
+          });
+          
+          if (agentUser) {
+            deletedTx = await Transaction.findOneAndDelete({
+              agentId: agentUser._id,
+              isAgentWithdrawal: true,
+              type: { $regex: /withdrawal/i },
+              amount: payout.amount
+            }).sort({ createdAt: -1 });
+          }
+        }
+
+        // 4. Fallback for Client: find matching client withdrawal Transaction and delete it
+        if (!deletedTx) {
+          let clientUser = await User.findOne({
+            $or: [
+              { clientCode: payout.recipientId, role: 'client' },
+              ...(mongoose.Types.ObjectId.isValid(payout.recipientId) ? [{ _id: payout.recipientId, role: 'client' }] : []),
+              ...(payout.clientId && mongoose.Types.ObjectId.isValid(payout.clientId) ? [{ _id: payout.clientId, role: 'client' }] : []),
+              ...(payout.clientId ? [{ clientCode: payout.clientId, role: 'client' }] : []),
+              { name: { $regex: new RegExp(`^${payout.recipientId}$`, 'i') }, role: 'client' }
+            ]
+          });
+
+          if (!clientUser && payout.recipientId) {
+            const prof = await ClientProfile.findOne({
+              $or: [
+                { clientCode: payout.recipientId },
+                ...(mongoose.Types.ObjectId.isValid(payout.recipientId) ? [{ _id: payout.recipientId }] : [])
+              ]
+            });
+            if (prof && prof.userId) {
+              clientUser = await User.findById(prof.userId);
+            }
+          }
+
+          if (clientUser) {
+            deletedTx = await Transaction.findOneAndDelete({
+              $or: [
+                { clientId: clientUser._id },
+                ...(clientUser.clientCode ? [{ clientCode: clientUser.clientCode }] : [])
+              ],
+              isAgentWithdrawal: { $ne: true },
+              type: { $regex: /withdrawal/i },
+              amount: payout.amount
+            }).sort({ createdAt: -1 });
+          }
+        }
+
+        if (deletedTx) {
+          console.log(`[Payout Delete Revert] Deleted matching withdrawal Transaction ${deletedTx._id} (amount: ₹${deletedTx.amount}). Balance returned to wallet/dashboard.`);
+        }
+      } catch (e) {
+        console.error('Error deleting matching withdrawal transaction:', e);
       }
+      // Withdrawal deleted: Do not alter RoiPayout status. ROI earned remains intact and returns to available/received ROI.
     } else {
       try {
         let clientUser = await User.findOne({ clientCode: payout.recipientId, role: 'client' });
@@ -1011,13 +1152,16 @@ const deletePayout = asyncHandler(async (req, res, next) => {
           const d = new Date(payout.payoutDate);
           const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
           const mStr = `${months[d.getMonth()]} ${d.getFullYear()}`;
-          await RoiPayout.deleteMany({
+          // Revert ROI payout to PENDING instead of deleting
+          await RoiPayout.updateMany({
             clientId: clientUser._id,
             $or: [
               { _id: payout._id },
               { payoutMonth: mStr },
               ...(payout.transactionRefId ? [{ transactionRefId: payout.transactionRefId }] : [])
             ]
+          }, {
+            $set: { status: 'PENDING', paymentMode: '', transactionRefId: '', processedDate: null }
           });
         }
       } catch (e) {}
@@ -1035,7 +1179,15 @@ const deletePayout = asyncHandler(async (req, res, next) => {
   }
 
   if (!payout) {
-    payout = await AgentCommission.findByIdAndDelete(id);
+    const comm = await AgentCommission.findById(id);
+    if (comm) {
+      comm.status = 'PENDING';
+      comm.paidAt = null;
+      comm.transactionRefId = '';
+      comm.paymentMode = '';
+      await comm.save();
+      payout = comm; // flag as handled
+    }
   }
 
   if (!payout) {
@@ -1050,55 +1202,7 @@ const deletePayout = asyncHandler(async (req, res, next) => {
     return next(new AppError('Payout or transaction record not found.', 404));
   }
 
-  // Revert corresponding AgentCommission record status back to PENDING if deleted
-  if (payout.recipientType === 'Agent Commission' || (payout.recipientType || '').toLowerCase().includes('agent')) {
-    try {
-      let agentUser = await User.findOne({
-        $or: [
-          { clientCode: payout.recipientId },
-          { name: { $regex: new RegExp(`^${payout.recipientId}$`, 'i') } }
-        ],
-        role: 'agent'
-      });
 
-      if (!agentUser && payout.recipientId) {
-        const agProf = await AgentProfile.findOne({
-          $or: [
-            { agentCode: payout.recipientId },
-            { clientCode: payout.recipientId }
-          ]
-        });
-        if (agProf) agentUser = await User.findById(agProf.userId);
-      }
-
-      if (agentUser) {
-        const revertFilter = {
-          agentId: agentUser._id,
-          status: 'PAID'
-        };
-        if (payout.transactionRefId) {
-          revertFilter.$or = [
-            { transactionRefId: payout.transactionRefId },
-            { amount: payout.amount }
-          ];
-        }
-        const updateRes = await AgentCommission.updateMany(
-          revertFilter,
-          {
-            $set: {
-              status: 'PENDING',
-              paymentMode: '',
-              transactionRefId: '',
-              paidAt: null
-            }
-          }
-        );
-        console.log(`[Payout Delete Revert] Reverted ${updateRes.modifiedCount} Agent ${agentUser.name} Commissions back to PENDING.`);
-      }
-    } catch (revertErr) {
-      console.error('Error reverting agent commission on payout delete:', revertErr);
-    }
-  }
 
   res.status(200).json({
     success: true,

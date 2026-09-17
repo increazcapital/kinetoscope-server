@@ -151,10 +151,25 @@ const getClientTransactions = asyncHandler(async (req, res, next) => {
     query.status = req.query.status;
   }
 
-  // Calculate metrics (Approved Deposits sum, Approved Withdrawals sum, Pending requests count)
-  const allUserTx = await Transaction.find({ clientId, isAgentWithdrawal: false }).lean();
+  // Calculate metrics (Approved Deposits sum, Approved Withdrawals sum from manual payouts, Pending requests count)
+  const Payout = require('../../models/Payout.model');
+  const [allUserTx, manualClientWithdrawals] = await Promise.all([
+    Transaction.find({ clientId, isAgentWithdrawal: false }).lean(),
+    Payout.find({
+      $or: [
+        { recipientId: String(clientId) },
+        ...(req.user.clientCode ? [{ recipientId: req.user.clientCode }] : []),
+        ...(req.user.clientCode ? [{ clientId: req.user.clientCode }] : [])
+      ],
+      $or: [
+        { isWithdrawal: true },
+        { category: 'WITHDRAWAL' },
+        { commissionType: { $regex: /withdrawal/i } }
+      ]
+    }).lean()
+  ]);
+
   let totalDeposits = 0;
-  let totalWithdrawals = 0;
   let pendingRequests = 0;
 
   allUserTx.forEach(tx => {
@@ -163,11 +178,24 @@ const getClientTransactions = asyncHandler(async (req, res, next) => {
     } else if (tx.status === TRANSACTION_STATUS.APPROVED) {
       if (tx.type === TRANSACTION_TYPES.DEPOSIT) {
         totalDeposits += tx.amount;
-      } else if (tx.type === TRANSACTION_TYPES.WITHDRAWAL) {
-        totalWithdrawals += tx.amount;
       }
     }
   });
+
+  const clientMonthMap = new Map();
+  (manualClientWithdrawals || []).forEach(w => {
+    const d = w.payoutDate ? new Date(w.payoutDate) : new Date(w.createdAt);
+    const monthKey = !isNaN(d.getTime())
+      ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+      : (w.month || w.period || 'current');
+
+    if (!clientMonthMap.has(monthKey)) {
+      clientMonthMap.set(monthKey, Number(w.amount || 0));
+    } else {
+      clientMonthMap.set(monthKey, Math.max(clientMonthMap.get(monthKey), Number(w.amount || 0)));
+    }
+  });
+  const totalWithdrawals = Array.from(clientMonthMap.values()).reduce((sum, amt) => sum + amt, 0);
 
   const total = await Transaction.countDocuments(query);
   const transactions = await Transaction.find(query)

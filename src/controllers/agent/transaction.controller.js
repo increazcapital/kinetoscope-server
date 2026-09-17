@@ -278,10 +278,27 @@ const getAgentWithdrawals = asyncHandler(async (req, res, next) => {
   ]);
 
   const commEarned = commissions.reduce((sum, c) => sum + (c.amount || 0), 0);
-  const payoutEarned = recordedPayouts.reduce((sum, p) => sum + (p.amount || 0), 0);
+  const validRecordedPayouts = recordedPayouts.filter(p => !p.isWithdrawal && String(p.category || '').toUpperCase() !== 'WITHDRAWAL' && !/withdrawal/i.test(p.commissionType || ''));
+  const payoutEarned = validRecordedPayouts.reduce((sum, p) => sum + (p.amount || 0), 0);
   const totalEarned = Math.max(commEarned, payoutEarned);
 
-  const totalWithdrawn = withdrawals.reduce((sum, w) => sum + (w.amount || 0), 0);
+  // Deduplicate manual withdrawal entries by month (only count once per month even if multiple entries exist)
+  const manualAgentWithdrawals = recordedPayouts.filter(p => p.isWithdrawal || String(p.category || '').toUpperCase() === 'WITHDRAWAL' || /withdrawal/i.test(p.commissionType || ''));
+  const agentMonthMap = new Map();
+  manualAgentWithdrawals.forEach(w => {
+    const d = w.payoutDate ? new Date(w.payoutDate) : new Date(w.createdAt);
+    const monthKey = !isNaN(d.getTime())
+      ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+      : (w.month || w.period || 'current');
+
+    if (!agentMonthMap.has(monthKey)) {
+      agentMonthMap.set(monthKey, Number(w.amount || 0));
+    } else {
+      agentMonthMap.set(monthKey, Math.max(agentMonthMap.get(monthKey), Number(w.amount || 0)));
+    }
+  });
+
+  const totalWithdrawn = Array.from(agentMonthMap.values()).reduce((sum, amt) => sum + amt, 0);
   const availableBalance = Math.max(0, totalEarned - totalWithdrawn);
 
   // 2. Get Bank Account
@@ -291,8 +308,22 @@ const getAgentWithdrawals = asyncHandler(async (req, res, next) => {
     accountNumber: agentProfile.accountNumber ? `****${agentProfile.accountNumber.slice(-4)}` : '—',
   } : { bankName: '—', accountNumber: '—' };
 
-  // 3. Fetch History list
-  const history = await Transaction.find({ agentId, isAgentWithdrawal: true }).sort({ createdAt: -1 });
+  // 3. Fetch History list (combine Transaction withdrawal requests + Manual Payouts recorded by Super Admin)
+  const txHistory = await Transaction.find({ agentId, isAgentWithdrawal: true }).lean();
+  
+  const mappedPayouts = recordedPayouts
+    .filter(p => !p.isWithdrawal && String(p.category || '').toUpperCase() !== 'WITHDRAWAL' && !/withdrawal/i.test(p.commissionType || ''))
+    .map(p => ({
+      _id: p._id,
+      amount: p.amount,
+      status: p.status,
+      createdAt: p.createdAt,
+      requestId: p.transactionRefId || `MANUAL-${p._id.toString().slice(-4)}`,
+      paymentMethod: p.paymentMode || 'Bank Transfer',
+      isManualPayout: true
+    }));
+
+  const history = [...txHistory, ...mappedPayouts].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
   res.status(200).json({
     success: true,

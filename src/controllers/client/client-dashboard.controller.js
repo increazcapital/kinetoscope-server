@@ -20,7 +20,8 @@ const calculateDashboardData = async (userId) => {
 
   // 1) Batch 1: parallel fetch primary resources (querying by userId OR clientCode)
   const Transaction = require('../../models/Transaction.model');
-  const [profile, rawInvestments, clientRoiPayouts, approvedDeposits, approvedWithdrawals] = await Promise.all([
+  const Payout = require('../../models/Payout.model');
+  const [profile, rawInvestments, clientRoiPayouts, approvedDeposits, approvedWithdrawals, manualClientWithdrawals] = await Promise.all([
     ClientProfile.findOne({ userId }),
     Investment.find({
       $or: [{ clientId: userId }, ...(clientCode ? [{ clientCode }] : [])]
@@ -35,6 +36,18 @@ const calculateDashboardData = async (userId) => {
       $or: [{ clientId: userId }, ...(clientCode ? [{ clientCode }] : [])],
       type: 'withdrawal',
       status: 'approved'
+    }).lean(),
+    Payout.find({
+      $or: [
+        { recipientId: String(userId) },
+        ...(clientCode ? [{ recipientId: clientCode }] : []),
+        ...(clientCode ? [{ clientId: clientCode }] : [])
+      ],
+      $or: [
+        { isWithdrawal: true },
+        { category: 'WITHDRAWAL' },
+        { commissionType: { $regex: /withdrawal/i } }
+      ]
     }).lean()
   ]);
 
@@ -42,12 +55,28 @@ const calculateDashboardData = async (userId) => {
     throw new AppError('Client profile could not be found for the specified user.', 404);
   }
 
+  // Deduplicate manual withdrawal entries by month (only count once per month even if multiple entries exist)
+  const clientMonthMap = new Map();
+  (manualClientWithdrawals || []).forEach(w => {
+    const d = w.payoutDate ? new Date(w.payoutDate) : new Date(w.createdAt);
+    const monthKey = !isNaN(d.getTime())
+      ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+      : (w.month || w.period || 'current');
+
+    if (!clientMonthMap.has(monthKey)) {
+      clientMonthMap.set(monthKey, Number(w.amount || 0));
+    } else {
+      clientMonthMap.set(monthKey, Math.max(clientMonthMap.get(monthKey), Number(w.amount || 0)));
+    }
+  });
+
+  const totalApprovedWithdrawalsSum = Array.from(clientMonthMap.values()).reduce((sum, amt) => sum + amt, 0);
+
   // Filter out cancelled investments for the totals
   const validInvestments = rawInvestments.filter(inv => inv.status !== 'cancelled');
   const investmentsSum = validInvestments.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
   const approvedDepositsSum = approvedDeposits.reduce((sum, tx) => sum + (tx.amount || 0), 0);
   const capitalWithdrawalsSum = approvedWithdrawals.filter(w => w.withdrawalType === 'capital').reduce((sum, tx) => sum + (tx.amount || 0), 0);
-  const totalApprovedWithdrawalsSum = approvedWithdrawals.reduce((sum, tx) => sum + (tx.amount || 0), 0);
 
   const netCapital = Math.max(0, approvedDepositsSum - capitalWithdrawalsSum);
 
@@ -58,7 +87,7 @@ const calculateDashboardData = async (userId) => {
     ? Number(profile.totalInvestment)
     : Number(profile?.totalPortfolioValue || 0);
   let effectiveCapital = Math.max(netCapital, activeInvsTotal, profileTotal);
-  if (profile?.totalInvestment !== undefined && profile?.totalInvestment !== null && !isFullCapitalWithdrawn) {
+  if (Number(profile?.totalInvestment) > 0 && !isFullCapitalWithdrawn) {
     effectiveCapital = Number(profile.totalInvestment);
   } else if (activeInvsTotal > 0 && !isFullCapitalWithdrawn) {
     effectiveCapital = activeInvsTotal;
@@ -146,8 +175,14 @@ const calculateDashboardData = async (userId) => {
   const agentUser = clientUser && clientUser.assignedAgent ? clientUser.assignedAgent : null;
 
   const [payoutsCount, clientPayouts, agentProfile, projectsList] = await Promise.all([
-    clientCode ? Payout.countDocuments({ recipientId: clientCode, status: 'paid' }) : Promise.resolve(0),
-    clientCode ? Payout.find({ recipientId: clientCode, recipientType: 'Client Return (ROI)' }).sort({ payoutDate: -1 }).lean() : Promise.resolve([]),
+    clientCode ? Payout.countDocuments({ recipientId: clientCode, status: 'paid', isWithdrawal: { $ne: true }, category: { $ne: 'WITHDRAWAL' } }) : Promise.resolve(0),
+    clientCode ? Payout.find({
+      recipientId: clientCode,
+      recipientType: 'Client Return (ROI)',
+      isWithdrawal: { $ne: true },
+      category: { $ne: 'WITHDRAWAL' },
+      commissionType: { $not: /withdrawal/i }
+    }).sort({ payoutDate: -1 }).lean() : Promise.resolve([]),
     agentUser ? AgentProfile.findOne({ userId: agentUser._id }).lean() : Promise.resolve(null),
     projectIds.length > 0 ? Project.find({ _id: { $in: projectIds } }).lean() : Promise.resolve([])
   ]);
@@ -344,6 +379,7 @@ const calculateDashboardData = async (userId) => {
     expectedMonthlyRoi,
     monthlyRoi: expectedMonthlyRoi,
     roiReceived: netRoiReceivedVal,
+    totalWithdrawn: totalApprovedWithdrawalsSum,
     perkTier: (profile.tier || 'GOLD').toUpperCase(),
     nextRoiDate: nextRoiDate ? nextRoiDate.toISOString().split('T')[0] : null,
     nextRoiDateFormatted,
@@ -388,6 +424,7 @@ const calculateDashboardData = async (userId) => {
       expectedMonthlyRoi,
       monthlyRoi: expectedMonthlyRoi,
       roiReceived: netRoiReceivedVal,
+      totalWithdrawn: totalApprovedWithdrawalsSum,
       perkTier: (profile.tier || 'GOLD').toUpperCase()
     }
   };
@@ -702,8 +739,12 @@ const getClientPayouts = asyncHandler(async (req, res, next) => {
 
   const [payouts, roiPayouts] = await Promise.all([
     clientCode ? Payout.find({
-      recipientId: clientCode,
-      recipientType: 'Client Return (ROI)'
+      $or: [
+        { recipientId: clientCode },
+        { clientId: clientCode },
+        ...(clientId ? [{ recipientId: String(clientId) }] : []),
+        ...(clientId ? [{ clientId: String(clientId) }] : [])
+      ]
     }).sort({ payoutDate: -1, createdAt: -1 }).lean() : [],
     RoiPayout.find({
       clientId: clientId,
@@ -712,7 +753,7 @@ const getClientPayouts = asyncHandler(async (req, res, next) => {
   ]);
 
   const existingIds = new Set(payouts.map(p => String(p._id)));
-  const seenMonths = new Set();
+  const seenRoiMonths = new Set();
 
   // Formatted records
   const formattedPayouts = [];
@@ -731,8 +772,13 @@ const getClientPayouts = asyncHandler(async (req, res, next) => {
       console.error('[getClientPayouts] Error formatting period:', e.message);
     }
 
+    const isWd = p.isWithdrawal === true || String(p.category || '').toUpperCase() === 'WITHDRAWAL' || /withdrawal/i.test(p.commissionType || '');
     const normPeriod = periodFormatted.replace(/\bSept\b/i, 'Sep').trim();
-    seenMonths.add(normPeriod);
+    
+    // Only track seen month for ROI payouts so withdrawal entries do NOT block/merge with ROI returns
+    if (!isWd && normPeriod && normPeriod !== '—') {
+      seenRoiMonths.add(normPeriod);
+    }
 
     formattedPayouts.push({
       _id: p._id,
@@ -746,15 +792,19 @@ const getClientPayouts = asyncHandler(async (req, res, next) => {
       referenceNumber: (p.transactionRefId && p.transactionRefId !== '—') ? p.transactionRefId : '',
       status: p.status === 'paid' ? 'PAID' : 'PENDING',
       paidAt: p.paidAt ? p.paidAt.toISOString().split('T')[0] : '—',
-      period: periodFormatted
+      period: isWd ? 'ROI Dividend Withdrawal' : periodFormatted,
+      isWithdrawal: isWd,
+      type: isWd ? 'WITHDRAWAL' : 'ROI RETURN',
+      category: isWd ? 'WITHDRAWAL' : (p.category || 'ROI'),
+      commissionType: p.commissionType
     });
   });
 
   roiPayouts.forEach(r => {
     const rIdStr = String(r._id);
     const normMonth = String(r.payoutMonth || '').replace(/\bSept\b/i, 'Sep').trim();
-    if (!existingIds.has(rIdStr) && !seenMonths.has(normMonth)) {
-      seenMonths.add(normMonth);
+    if (!existingIds.has(rIdStr) && !seenRoiMonths.has(normMonth)) {
+      seenRoiMonths.add(normMonth);
       const pDateStr = r.processedDate ? new Date(r.processedDate).toISOString().split('T')[0] : '—';
       formattedPayouts.push({
         _id: r._id,
@@ -768,7 +818,11 @@ const getClientPayouts = asyncHandler(async (req, res, next) => {
         referenceNumber: '',
         status: (r.status || 'PAID').toUpperCase(),
         paidAt: pDateStr,
-        period: normMonth || r.payoutMonth || '—'
+        period: normMonth || r.payoutMonth || '—',
+        isWithdrawal: false,
+        type: 'ROI RETURN',
+        category: 'ROI',
+        commissionType: 'ROI'
       });
       existingIds.add(rIdStr);
     }

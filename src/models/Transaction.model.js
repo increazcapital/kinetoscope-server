@@ -81,6 +81,11 @@ const transactionSchema = new mongoose.Schema(
       ref: 'Investment',
       default: null,
     },
+    payoutRecordId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Payout',
+      default: null,
+    },
     projectId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Project',
