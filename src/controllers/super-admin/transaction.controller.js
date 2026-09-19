@@ -17,6 +17,19 @@ const getPendingApprovals = asyncHandler(async (req, res, next) => {
   const limit = parseInt(req.query.limit, 10) || 10000;
   const skip = (page - 1) * limit;
 
+  // Clean up any stale unapproved pending withdrawal transactions as requested
+  try {
+    await Transaction.deleteMany({
+      $or: [
+        { type: { $regex: /withdrawal/i } },
+        { isAgentWithdrawal: true }
+      ],
+      status: { $regex: /^pending$/i }
+    });
+  } catch (cleanErr) {
+    console.error('[Approvals] Error cleaning pending withdrawals:', cleanErr.message);
+  }
+
   // 1. Calculate Approvals Stats
   const allPending = await Transaction.find({ status: TRANSACTION_STATUS.PENDING }).lean();
   const pendingRequests = allPending.length;

@@ -37,6 +37,78 @@ const requestAgentTransaction = asyncHandler(async (req, res, next) => {
     return next(new AppError('You do not have authorization to request transactions for this client.', 403));
   }
 
+  const numericAmount = Number(amount);
+  if (isNaN(numericAmount) || numericAmount <= 0) {
+    return next(new AppError('Amount must be a positive number.', 400));
+  }
+
+  if (type === TRANSACTION_TYPES.WITHDRAWAL) {
+    const RoiPayout = require('../../models/RoiPayout.model');
+    const Payout = require('../../models/Payout.model');
+    const DividendAllotment = require('../../models/DividendAllotment.model');
+
+    const [clientRoiPayouts, clientPayouts, dividendAllotments, manualWithdrawals] = await Promise.all([
+      RoiPayout.find({ clientId: clientUser._id, status: 'PAID' }).lean(),
+      clientUser.clientCode ? Payout.find({
+        recipientId: clientUser.clientCode,
+        recipientType: 'Client Return (ROI)',
+        isWithdrawal: { $ne: true },
+        category: { $ne: 'WITHDRAWAL' },
+        commissionType: { $not: /withdrawal/i },
+        status: 'paid'
+      }).lean() : Promise.resolve([]),
+      DividendAllotment.find({ clientId: clientUser._id, status: { $in: ['COMPLETED', 'ALLOTTED', 'PAID', 'paid', 'completed'] } }).lean(),
+      Payout.find({
+        $or: [
+          { recipientId: String(clientUser._id) },
+          ...(clientUser.clientCode ? [{ recipientId: clientUser.clientCode }] : []),
+          ...(clientUser.clientCode ? [{ clientId: clientUser.clientCode }] : [])
+        ],
+        $or: [
+          { isWithdrawal: true },
+          { category: 'WITHDRAWAL' },
+          { commissionType: { $regex: /withdrawal/i } }
+        ]
+      }).lean()
+    ]);
+
+    const roiGross = [...clientRoiPayouts, ...clientPayouts];
+    const uniqueRoiMap = new Map();
+    roiGross.forEach(r => {
+      const m = r.payoutMonth || r.month || r.period || (r.processedDate ? new Date(r.processedDate).toISOString().slice(0, 7) : '');
+      const norm = String(m).replace(/\bSept\b/i, 'Sep').trim();
+      if (!uniqueRoiMap.has(norm)) {
+        uniqueRoiMap.set(norm, Number(r.amount || 0));
+      }
+    });
+    const totalRoiEarned = Array.from(uniqueRoiMap.values()).reduce((sum, a) => sum + a, 0);
+    const totalDividendEarned = dividendAllotments.reduce((sum, d) => sum + Number(d.payoutAmount || d.dividendAmount || d.amount || 0), 0);
+    const totalIncome = totalRoiEarned + totalDividendEarned;
+
+    const clientMonthMap = new Map();
+    manualWithdrawals.forEach(w => {
+      const d = w.payoutDate ? new Date(w.payoutDate) : new Date(w.createdAt);
+      const monthKey = !isNaN(d.getTime())
+        ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+        : (w.month || w.period || 'current');
+
+      if (!clientMonthMap.has(monthKey)) {
+        clientMonthMap.set(monthKey, Number(w.amount || 0));
+      } else {
+        clientMonthMap.set(monthKey, Math.max(clientMonthMap.get(monthKey), Number(w.amount || 0)));
+      }
+    });
+    const totalWithdrawn = Array.from(clientMonthMap.values()).reduce((sum, amt) => sum + amt, 0);
+    const availableBalance = Math.max(0, totalIncome - totalWithdrawn);
+
+    if (availableBalance <= 0) {
+      return next(new AppError(`Client ${clientUser.name} (${clientUser.clientCode || ''}) has ₹0 withdrawable balance. Withdrawal cannot be requested.`, 400));
+    }
+    if (numericAmount > availableBalance) {
+      return next(new AppError(`Requested withdrawal amount (₹${numericAmount.toLocaleString('en-IN')}) exceeds client's available balance of ₹${availableBalance.toLocaleString('en-IN')}.`, 400));
+    }
+  }
+
   // Create transaction document
   const transaction = await Transaction.create({
     clientId: clientUser._id,
@@ -44,7 +116,7 @@ const requestAgentTransaction = asyncHandler(async (req, res, next) => {
     clientCode: clientUser.clientCode,
     agentId: req.user._id,
     type,
-    amount,
+    amount: numericAmount,
     paymentMethod,
     referenceNumber,
     remarks,
@@ -164,7 +236,7 @@ const requestAgentWithdrawal = asyncHandler(async (req, res, next) => {
   const agentCode = agentUser ? (agentUser.clientCode || '') : '';
   const agentName = agentUser ? (agentUser.name || '') : '';
 
-  const [commissions, recordedPayouts, withdrawals] = await Promise.all([
+  const [commissions, recordedPayouts, approvedWithdrawalTxs, pendingWithdrawalTxs] = await Promise.all([
     AgentCommission.find({ agentId, status: 'PAID' }).lean(),
     Payout.find({
       status: { $regex: /^paid$/i },
@@ -174,18 +246,41 @@ const requestAgentWithdrawal = asyncHandler(async (req, res, next) => {
         ...(agentName ? [{ recipientId: agentName }] : [])
       ]
     }).lean(),
-    Transaction.find({ agentId, isAgentWithdrawal: true, status: { $regex: /^(pending|approved|paid|credited|completed)$/i } }).lean()
+    Transaction.find({ agentId, isAgentWithdrawal: true, status: { $regex: /^(approved|paid|credited|completed)$/i } }).lean(),
+    Transaction.find({ agentId, isAgentWithdrawal: true, status: 'pending' }).lean()
   ]);
 
   const commEarned = commissions.reduce((sum, c) => sum + (c.amount || 0), 0);
-  const payoutEarned = recordedPayouts.reduce((sum, p) => sum + (p.amount || 0), 0);
+  const validRecordedPayouts = recordedPayouts.filter(p => !p.isWithdrawal && String(p.category || '').toUpperCase() !== 'WITHDRAWAL' && !/withdrawal/i.test(p.commissionType || ''));
+  const payoutEarned = validRecordedPayouts.reduce((sum, p) => sum + (p.amount || 0), 0);
   const totalEarned = Math.max(commEarned, payoutEarned);
 
-  const totalWithdrawn = withdrawals.reduce((sum, w) => sum + (w.amount || 0), 0);
-  const availableBalance = Math.max(0, totalEarned - totalWithdrawn);
+  // Deduplicate manual withdrawal entries by month
+  const manualAgentWithdrawals = recordedPayouts.filter(p => p.isWithdrawal || String(p.category || '').toUpperCase() === 'WITHDRAWAL' || /withdrawal/i.test(p.commissionType || ''));
+  const agentMonthMap = new Map();
+  manualAgentWithdrawals.forEach(w => {
+    const d = w.payoutDate ? new Date(w.payoutDate) : new Date(w.createdAt);
+    const monthKey = !isNaN(d.getTime())
+      ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+      : (w.month || w.period || 'current');
+
+    if (!agentMonthMap.has(monthKey)) {
+      agentMonthMap.set(monthKey, Number(w.amount || 0));
+    } else {
+      agentMonthMap.set(monthKey, Math.max(agentMonthMap.get(monthKey), Number(w.amount || 0)));
+    }
+  });
+  const totalManualWithdrawn = Array.from(agentMonthMap.values()).reduce((sum, amt) => sum + amt, 0);
+  const totalWithdrawn = Math.max(totalManualWithdrawn, approvedWithdrawalTxs.reduce((sum, w) => sum + (w.amount || 0), 0));
+  const pendingWithdrawn = pendingWithdrawalTxs.reduce((sum, w) => sum + (w.amount || 0), 0);
+  const availableBalance = Math.max(0, totalEarned - totalWithdrawn - pendingWithdrawn);
+
+  if (availableBalance <= 0) {
+    return next(new AppError('No withdrawable commission balance available. Payout requests can only be submitted after commissions are earned.', 400));
+  }
 
   if (numericAmount > availableBalance) {
-    return next(new AppError(`Withdrawal request exceeds your available balance of ₹${availableBalance.toLocaleString('en-IN')}`, 400));
+    return next(new AppError(`Withdrawal request (₹${numericAmount.toLocaleString('en-IN')}) exceeds your available commission balance of ₹${availableBalance.toLocaleString('en-IN')}.`, 400));
   }
 
   // 2. Fetch Agent bank details & selected payout mode

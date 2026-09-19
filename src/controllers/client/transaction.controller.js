@@ -56,16 +56,96 @@ const requestTransaction = asyncHandler(async (req, res, next) => {
     }
   }
 
-  if (type === TRANSACTION_TYPES.WITHDRAWAL && (!parsedBankDetails.accountNumber || !parsedBankDetails.ifscCode)) {
-    const profile = await ClientProfile.findOne({ userId: req.user.id || req.user._id }).lean();
-    if (profile) {
-      parsedBankDetails = {
-        accountHolderName: parsedBankDetails.accountHolderName || profile.accountHolderName || profile.fullName || req.user.name,
-        bankName: parsedBankDetails.bankName || profile.bankName || '',
-        accountNumber: parsedBankDetails.accountNumber || profile.accountNumber || profile.accountNo || '',
-        ifscCode: parsedBankDetails.ifscCode || profile.ifscCode || profile.ifsc || '',
-        upiId: parsedBankDetails.upiId || profile.upiId || '',
-      };
+  if (type === TRANSACTION_TYPES.WITHDRAWAL) {
+    const RoiPayout = require('../../models/RoiPayout.model');
+    const Payout = require('../../models/Payout.model');
+    const DividendAllotment = require('../../models/DividendAllotment.model');
+
+    const clientId = req.user.id || req.user._id;
+    const clientCode = req.user.clientCode || '';
+
+    const [clientRoiPayouts, clientPayouts, dividendAllotments, manualWithdrawals, pendingWithdrawalTxs] = await Promise.all([
+      RoiPayout.find({ clientId, status: 'PAID' }).lean(),
+      clientCode ? Payout.find({
+        recipientId: clientCode,
+        recipientType: 'Client Return (ROI)',
+        isWithdrawal: { $ne: true },
+        category: { $ne: 'WITHDRAWAL' },
+        commissionType: { $not: /withdrawal/i },
+        status: 'paid'
+      }).lean() : Promise.resolve([]),
+      DividendAllotment.find({ clientId, status: { $in: ['COMPLETED', 'ALLOTTED', 'PAID', 'paid', 'completed'] } }).lean(),
+      Payout.find({
+        $or: [
+          { recipientId: String(clientId) },
+          ...(clientCode ? [{ recipientId: clientCode }] : []),
+          ...(clientCode ? [{ clientId: clientCode }] : [])
+        ],
+        $or: [
+          { isWithdrawal: true },
+          { category: 'WITHDRAWAL' },
+          { commissionType: { $regex: /withdrawal/i } }
+        ]
+      }).lean(),
+      Transaction.find({
+        clientId,
+        type: 'withdrawal',
+        status: 'pending'
+      }).lean()
+    ]);
+
+    // Calculate gross income
+    const roiGross = [...clientRoiPayouts, ...clientPayouts];
+    const uniqueRoiMap = new Map();
+    roiGross.forEach(r => {
+      const m = r.payoutMonth || r.month || r.period || (r.processedDate ? new Date(r.processedDate).toISOString().slice(0, 7) : '');
+      const norm = String(m).replace(/\bSept\b/i, 'Sep').trim();
+      if (!uniqueRoiMap.has(norm)) {
+        uniqueRoiMap.set(norm, Number(r.amount || 0));
+      }
+    });
+    const totalRoiEarned = Array.from(uniqueRoiMap.values()).reduce((sum, a) => sum + a, 0);
+    const totalDividendEarned = dividendAllotments.reduce((sum, d) => sum + Number(d.payoutAmount || d.dividendAmount || d.amount || 0), 0);
+    const totalIncome = totalRoiEarned + totalDividendEarned;
+
+    // Calculate total withdrawn
+    const clientMonthMap = new Map();
+    manualWithdrawals.forEach(w => {
+      const d = w.payoutDate ? new Date(w.payoutDate) : new Date(w.createdAt);
+      const monthKey = !isNaN(d.getTime())
+        ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+        : (w.month || w.period || 'current');
+
+      if (!clientMonthMap.has(monthKey)) {
+        clientMonthMap.set(monthKey, Number(w.amount || 0));
+      } else {
+        clientMonthMap.set(monthKey, Math.max(clientMonthMap.get(monthKey), Number(w.amount || 0)));
+      }
+    });
+    const totalWithdrawn = Array.from(clientMonthMap.values()).reduce((sum, amt) => sum + amt, 0);
+    const pendingWithdrawn = pendingWithdrawalTxs.reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+
+    const availableWithdrawableBalance = Math.max(0, totalIncome - totalWithdrawn - pendingWithdrawn);
+
+    if (availableWithdrawableBalance <= 0) {
+      return next(new AppError('No withdrawable balance available. Withdrawal requests can only be submitted after ROI returns or dividends are received.', 400));
+    }
+
+    if (numericAmount > availableWithdrawableBalance) {
+      return next(new AppError(`Requested withdrawal amount (₹${numericAmount.toLocaleString('en-IN')}) exceeds your available withdrawable balance of ₹${availableWithdrawableBalance.toLocaleString('en-IN')}.`, 400));
+    }
+
+    if (!parsedBankDetails.accountNumber || !parsedBankDetails.ifscCode) {
+      const profile = await ClientProfile.findOne({ userId: req.user.id || req.user._id }).lean();
+      if (profile) {
+        parsedBankDetails = {
+          accountHolderName: parsedBankDetails.accountHolderName || profile.accountHolderName || profile.fullName || req.user.name,
+          bankName: parsedBankDetails.bankName || profile.bankName || '',
+          accountNumber: parsedBankDetails.accountNumber || profile.accountNumber || profile.accountNo || '',
+          ifscCode: parsedBankDetails.ifscCode || profile.ifscCode || profile.ifsc || '',
+          upiId: parsedBankDetails.upiId || profile.upiId || '',
+        };
+      }
     }
   }
 
