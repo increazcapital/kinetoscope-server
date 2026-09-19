@@ -26,41 +26,48 @@ const generateMonthlyPayouts = async () => {
       const invDate = new Date(inv.investmentDate);
       invDate.setHours(0, 0, 0, 0);
       
-      const diffMonths = (today.getFullYear() - invDate.getFullYear()) * 12 + (today.getMonth() - invDate.getMonth());
+      let diffMonths = (today.getFullYear() - invDate.getFullYear()) * 12 + (today.getMonth() - invDate.getMonth());
+      if (today.getDate() < invDate.getDate()) {
+        diffMonths -= 1;
+      }
       
-      // We only generate for subsequent months (diffMonths > 0)
+      // Generate ROI for all elapsed months (not just exact anniversary day)
       if (diffMonths > 0) {
-        // Calculate the target day, accounting for months with fewer days
-        let targetDay = invDate.getDate();
-        const daysInCurrentMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
-        if (targetDay > daysInCurrentMonth) {
-          targetDay = daysInCurrentMonth;
-        }
+        const maxMonths = inv.durationMonths || 18;
+        const dueMonths = Math.min(diffMonths, maxMonths);
 
-        // If today is exactly the anniversary day
-        if (today.getDate() === targetDay) {
-          const payoutMonthStr = new Intl.DateTimeFormat('en-IN', { month: 'short', year: 'numeric' }).format(today);
+        for (let m = 1; m <= dueMonths; m++) {
+          // Calculate the exact due date for this month offset
+          const startD = new Date(invDate);
+          const tYear = startD.getFullYear() + Math.floor((startD.getMonth() + m) / 12);
+          const tMonth = (startD.getMonth() + m) % 12;
+          const origDay = startD.getDate();
+          const lastDay = new Date(tYear, tMonth + 1, 0).getDate();
+          const dueDate = new Date(tYear, tMonth, Math.min(origDay, lastDay));
+
+          const MONTH_NAMES_CRON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+          const payoutMonthStr = `${MONTH_NAMES_CRON[dueDate.getMonth()]} ${dueDate.getFullYear()}`;
           
           // 1. Generate Client ROI
           const existingRoi = await RoiPayout.findOne({
             clientId: inv.clientId._id,
-            investmentId: inv._id,
             payoutMonth: payoutMonthStr
           });
 
           if (!existingRoi) {
-            const roiAmount = (inv.investmentAmount * ((inv.roiPercentage || 0) / 100));
+            const roiAmount = Math.round(inv.investmentAmount * ((inv.roiPercentage || 0) / 100));
             if (roiAmount > 0) {
               await RoiPayout.create({
                 clientId: inv.clientId._id,
                 investmentId: inv._id,
                 payoutMonth: payoutMonthStr,
                 amount: roiAmount,
-                status: 'PENDING',
+                status: 'PAID',
+                processedDate: dueDate,
                 roiPercentage: inv.roiPercentage,
                 roiRate: `${inv.roiPercentage}%`
               });
-              console.log(`[Cron] Auto-generated PENDING ROI for Client ${inv.clientCode || inv.clientId._id}, Amount: ${roiAmount}`);
+              console.log(`[Cron] Auto-generated PAID ROI for Client ${inv.clientCode || inv.clientId._id}, Month: ${payoutMonthStr}, Amount: ${roiAmount}`);
             }
           }
 
@@ -102,10 +109,10 @@ const generateMonthlyPayouts = async () => {
                     agentId: agentId,
                     clientId: inv.clientId._id,
                     period: payoutMonthStr,
-                    date: new Date(),
+                    date: dueDate,
                     type: 'MONTHLY',
                     amount: commAmount,
-                    status: 'PENDING',
+                    status: 'PAID',
                     remarks: `Auto-calculated monthly commission from investment ₹${depositAmount.toLocaleString('en-IN')} at ${pct}%`,
                     investmentAmount: depositAmount,
                     slabPercentage: pct,

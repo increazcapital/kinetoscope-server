@@ -1,3 +1,4 @@
+const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -63,8 +64,20 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Cookie parser
 app.use(cookieParser());
 
-// Serve static uploads
+// Serve static uploads and public assets
 app.use('/uploads', express.static('uploads'));
+app.use(express.static(path.join(__dirname, '../public')));
+
+// Prevent search engine crawlers and bots from indexing or crawling the backend server
+app.use((req, res, next) => {
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
+  next();
+});
+
+// Serve robots.txt file directly to block all crawlers
+app.get('/robots.txt', (req, res) => {
+  res.sendFile(path.join(__dirname, '../robots.txt'));
+});
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -73,7 +86,6 @@ app.get('/health', (req, res) => {
     message: 'KFPL API Server is healthy and running.'
   });
 });
-
 
 app.get('/', (req, res) => {
   res.status(200).json({

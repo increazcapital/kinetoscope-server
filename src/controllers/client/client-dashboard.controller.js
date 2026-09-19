@@ -8,6 +8,134 @@ const AgentProfile = require('../../models/AgentProfile.model');
 const AppError = require('../../utils/AppError');
 const asyncHandler = require('../../utils/asyncHandler');
 
+// ──────────────────────────────────────────────────────────────
+// ROI Auto-Sync Helpers (mirrors roi-scheduler.service.js logic)
+// ──────────────────────────────────────────────────────────────
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+const formatMonthYear = (date) => {
+  const d = new Date(date);
+  return `${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`;
+};
+
+const normalizeMonthStr = (str) => {
+  if (!str) return '';
+  return String(str).replace(/\bSept\b/i, 'Sep').trim();
+};
+
+const getElapsedMonths = (startDate, now) => {
+  const start = new Date(startDate);
+  const current = new Date(now);
+  let months = (current.getFullYear() - start.getFullYear()) * 12 + (current.getMonth() - start.getMonth());
+  if (current.getDate() < start.getDate()) {
+    months -= 1;
+  }
+  return Math.max(0, months);
+};
+
+const getDueDateForMonth = (investmentDate, monthOffset) => {
+  const start = new Date(investmentDate);
+  const targetYear = start.getFullYear() + Math.floor((start.getMonth() + monthOffset) / 12);
+  const targetMonth = (start.getMonth() + monthOffset) % 12;
+  const originalDay = start.getDate();
+  const lastDay = new Date(targetYear, targetMonth + 1, 0).getDate();
+  return new Date(targetYear, targetMonth, Math.min(originalDay, lastDay), start.getHours(), start.getMinutes(), start.getSeconds());
+};
+
+/**
+ * Auto-sync ROI payouts for a client on dashboard load.
+ * Checks all active investments and creates PAID RoiPayout entries
+ * for any months that are due but haven't been generated yet.
+ * This guarantees ROIs are never missed even if the background
+ * cron/scheduler was sleeping on Hostinger shared hosting.
+ *
+ * @param {string} userId - Client User ID
+ * @param {Array} activeInvestments - Active investment documents (lean)
+ * @param {object|null} profile - ClientProfile document (lean)
+ * @returns {Promise<number>} Number of new ROI payouts created
+ */
+const autoSyncClientRoi = async (userId, activeInvestments, profile) => {
+  if (!activeInvestments || activeInvestments.length === 0) return 0;
+
+  const now = new Date();
+  let createdCount = 0;
+
+  // Fetch all existing ROI payouts for this client once
+  const existingPayouts = await RoiPayout.find({ clientId: userId }).lean();
+  const existingMonthSet = new Set(
+    existingPayouts.map(p => normalizeMonthStr(p.payoutMonth))
+  );
+
+  for (const inv of activeInvestments) {
+    try {
+      const investmentDate = new Date(inv.investmentDate);
+      if (isNaN(investmentDate.getTime())) continue;
+
+      const maxMonths = inv.durationMonths || 18;
+      const elapsedMonths = getElapsedMonths(investmentDate, now);
+      const dueMonths = Math.min(elapsedMonths, maxMonths);
+
+      if (dueMonths <= 0) continue;
+
+      // ROI rate: prefer profile.monthlyRoi, fallback to investment.roiPercentage
+      const roiRate = (profile && profile.monthlyRoi !== undefined && profile.monthlyRoi !== null && String(profile.monthlyRoi).trim() !== '')
+        ? Number(profile.monthlyRoi)
+        : (inv.roiPercentage || 0);
+
+      if (roiRate <= 0) continue;
+
+      const roiAmount = Math.round((inv.investmentAmount * roiRate) / 100);
+      if (roiAmount <= 0) continue;
+
+      // Create payouts for each due month that doesn't already exist
+      for (let m = 1; m <= dueMonths; m++) {
+        const dueDate = getDueDateForMonth(investmentDate, m);
+        const monthStr = formatMonthYear(dueDate);
+        const normalizedStr = normalizeMonthStr(monthStr);
+
+        if (existingMonthSet.has(normalizedStr)) continue;
+
+        await RoiPayout.create({
+          clientId: userId,
+          investmentId: inv._id,
+          payoutMonth: monthStr,
+          amount: roiAmount,
+          roiPercentage: roiRate,
+          roiRate: `${roiRate}%`,
+          status: 'PAID',
+          processedDate: dueDate,
+          paymentMode: '',
+          transactionRefId: '',
+        });
+
+        existingMonthSet.add(normalizedStr);
+        createdCount++;
+      }
+    } catch (invErr) {
+      console.error(`[Client ROI Auto-Sync] Error processing investment ${inv._id}:`, invErr.message);
+    }
+  }
+
+  // Also upgrade any leftover PENDING records whose due date has passed to PAID
+  if (existingPayouts.length > 0) {
+    const pendingIds = existingPayouts
+      .filter(p => p.status === 'PENDING' && p.processedDate && new Date(p.processedDate) <= now)
+      .map(p => p._id);
+    if (pendingIds.length > 0) {
+      await RoiPayout.updateMany(
+        { _id: { $in: pendingIds } },
+        { $set: { status: 'PAID' } }
+      );
+    }
+  }
+
+  if (createdCount > 0) {
+    console.log(`[Client ROI Auto-Sync] Created ${createdCount} ROI payout(s) for client ${userId}`);
+  }
+
+  return createdCount;
+};
+
 /**
  * Reusable utility to compute dashboard statistics for a client
  * @param {string} userId - Client User ID
@@ -21,11 +149,21 @@ const calculateDashboardData = async (userId) => {
   // 1) Batch 1: parallel fetch primary resources (querying by userId OR clientCode)
   const Transaction = require('../../models/Transaction.model');
   const Payout = require('../../models/Payout.model');
-  const [profile, rawInvestments, clientRoiPayouts, approvedDeposits, approvedWithdrawals, manualClientWithdrawals] = await Promise.all([
+
+  // First fetch profile and investments to run auto-sync before fetching ROI payouts
+  const [profile, rawInvestments] = await Promise.all([
     ClientProfile.findOne({ userId }),
     Investment.find({
       $or: [{ clientId: userId }, ...(clientCode ? [{ clientCode }] : [])]
     }).sort({ investmentDate: -1 }).lean(),
+  ]);
+
+  // Auto-sync: create any missing ROI payouts for due months BEFORE fetching them
+  const activeInvsForSync = rawInvestments.filter(inv => inv.status === 'active');
+  await autoSyncClientRoi(userId, activeInvsForSync, profile ? (profile.toObject ? profile.toObject() : profile) : null);
+
+  // Now fetch ROI payouts (will include any just-created ones) along with other data
+  const [clientRoiPayouts, approvedDeposits, approvedWithdrawals, manualClientWithdrawals] = await Promise.all([
     RoiPayout.find({ clientId: userId, status: 'PAID' }).sort({ processedDate: -1 }).lean(),
     Transaction.find({
       $or: [{ clientId: userId }, ...(clientCode ? [{ clientCode }] : [])],
@@ -736,6 +874,13 @@ const getClientPayouts = asyncHandler(async (req, res, next) => {
   if (!clientCode && !clientId) {
     return next(new AppError('Client user identification not found.', 400));
   }
+
+  // Auto-sync: ensure all due ROIs exist before fetching
+  const [activeInvestments, clientProfile] = await Promise.all([
+    Investment.find({ clientId, status: 'active' }).lean(),
+    ClientProfile.findOne({ userId: clientId }).lean()
+  ]);
+  await autoSyncClientRoi(clientId, activeInvestments, clientProfile);
 
   const [payouts, roiPayouts] = await Promise.all([
     clientCode ? Payout.find({
