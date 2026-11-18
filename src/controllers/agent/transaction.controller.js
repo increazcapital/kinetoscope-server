@@ -59,15 +59,21 @@ const requestAgentTransaction = asyncHandler(async (req, res, next) => {
       }).lean() : Promise.resolve([]),
       DividendAllotment.find({ clientId: clientUser._id, status: { $in: ['COMPLETED', 'ALLOTTED', 'PAID', 'paid', 'completed'] } }).lean(),
       Payout.find({
-        $or: [
-          { recipientId: String(clientUser._id) },
-          ...(clientUser.clientCode ? [{ recipientId: clientUser.clientCode }] : []),
-          ...(clientUser.clientCode ? [{ clientId: clientUser.clientCode }] : [])
-        ],
-        $or: [
-          { isWithdrawal: true },
-          { category: 'WITHDRAWAL' },
-          { commissionType: { $regex: /withdrawal/i } }
+        $and: [
+          {
+            $or: [
+              { recipientId: String(clientUser._id) },
+              ...(clientUser.clientCode ? [{ recipientId: clientUser.clientCode }] : []),
+              ...(clientUser.clientCode ? [{ clientId: clientUser.clientCode }] : [])
+            ]
+          },
+          {
+            $or: [
+              { isWithdrawal: true },
+              { category: 'WITHDRAWAL' },
+              { commissionType: { $regex: /withdrawal/i } }
+            ]
+          }
         ]
       }).lean()
     ]);

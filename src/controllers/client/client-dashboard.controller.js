@@ -176,15 +176,21 @@ const calculateDashboardData = async (userId) => {
       status: 'approved'
     }).lean(),
     Payout.find({
-      $or: [
-        { recipientId: String(userId) },
-        ...(clientCode ? [{ recipientId: clientCode }] : []),
-        ...(clientCode ? [{ clientId: clientCode }] : [])
-      ],
-      $or: [
-        { isWithdrawal: true },
-        { category: 'WITHDRAWAL' },
-        { commissionType: { $regex: /withdrawal/i } }
+      $and: [
+        {
+          $or: [
+            { recipientId: String(userId) },
+            ...(clientCode ? [{ recipientId: clientCode }] : []),
+            ...(clientCode ? [{ clientId: clientCode }] : [])
+          ]
+        },
+        {
+          $or: [
+            { isWithdrawal: true },
+            { category: 'WITHDRAWAL' },
+            { commissionType: { $regex: /withdrawal/i } }
+          ]
+        }
       ]
     }).lean()
   ]);

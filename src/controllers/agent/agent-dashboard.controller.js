@@ -352,15 +352,21 @@ const getAgentDashboard = asyncHandler(async (req, res, next) => {
       status: { $regex: /^(paid|approved|credited|completed)$/i }
     }).lean(),
     Payout.find({
-      $or: [
-        { recipientId: String(agentId) },
-        ...(req.user?.clientCode ? [{ recipientId: req.user.clientCode }] : []),
-        ...(req.user?.name ? [{ recipientId: req.user.name }] : [])
-      ],
-      $or: [
-        { isWithdrawal: true },
-        { category: 'WITHDRAWAL' },
-        { commissionType: { $regex: /withdrawal/i } }
+      $and: [
+        {
+          $or: [
+            { recipientId: String(agentId) },
+            ...(req.user?.clientCode ? [{ recipientId: req.user.clientCode }] : []),
+            ...(req.user?.name ? [{ recipientId: req.user.name }] : [])
+          ]
+        },
+        {
+          $or: [
+            { isWithdrawal: true },
+            { category: 'WITHDRAWAL' },
+            { commissionType: { $regex: /withdrawal/i } }
+          ]
+        }
       ]
     }).lean()
   ]);

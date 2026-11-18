@@ -76,15 +76,21 @@ const requestTransaction = asyncHandler(async (req, res, next) => {
       }).lean() : Promise.resolve([]),
       DividendAllotment.find({ clientId, status: { $in: ['COMPLETED', 'ALLOTTED', 'PAID', 'paid', 'completed'] } }).lean(),
       Payout.find({
-        $or: [
-          { recipientId: String(clientId) },
-          ...(clientCode ? [{ recipientId: clientCode }] : []),
-          ...(clientCode ? [{ clientId: clientCode }] : [])
-        ],
-        $or: [
-          { isWithdrawal: true },
-          { category: 'WITHDRAWAL' },
-          { commissionType: { $regex: /withdrawal/i } }
+        $and: [
+          {
+            $or: [
+              { recipientId: String(clientId) },
+              ...(clientCode ? [{ recipientId: clientCode }] : []),
+              ...(clientCode ? [{ clientId: clientCode }] : [])
+            ]
+          },
+          {
+            $or: [
+              { isWithdrawal: true },
+              { category: 'WITHDRAWAL' },
+              { commissionType: { $regex: /withdrawal/i } }
+            ]
+          }
         ]
       }).lean(),
       Transaction.find({
@@ -236,15 +242,21 @@ const getClientTransactions = asyncHandler(async (req, res, next) => {
   const [allUserTx, manualClientWithdrawals] = await Promise.all([
     Transaction.find({ clientId, isAgentWithdrawal: false }).lean(),
     Payout.find({
-      $or: [
-        { recipientId: String(clientId) },
-        ...(req.user.clientCode ? [{ recipientId: req.user.clientCode }] : []),
-        ...(req.user.clientCode ? [{ clientId: req.user.clientCode }] : [])
-      ],
-      $or: [
-        { isWithdrawal: true },
-        { category: 'WITHDRAWAL' },
-        { commissionType: { $regex: /withdrawal/i } }
+      $and: [
+        {
+          $or: [
+            { recipientId: String(clientId) },
+            ...(req.user.clientCode ? [{ recipientId: req.user.clientCode }] : []),
+            ...(req.user.clientCode ? [{ clientId: req.user.clientCode }] : [])
+          ]
+        },
+        {
+          $or: [
+            { isWithdrawal: true },
+            { category: 'WITHDRAWAL' },
+            { commissionType: { $regex: /withdrawal/i } }
+          ]
+        }
       ]
     }).lean()
   ]);
