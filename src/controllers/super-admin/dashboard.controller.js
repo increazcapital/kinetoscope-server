@@ -27,6 +27,7 @@ const getAdminDashboard = asyncHandler(async (req, res, next) => {
     paidPayouts,
     approvedDepositsList,
     approvedWithdrawalsList,
+    approvedPayoutWithdrawalsList,
     closedInvestmentsCount,
     pendingDepositsCount
   ] = await Promise.all([
@@ -42,6 +43,14 @@ const getAdminDashboard = asyncHandler(async (req, res, next) => {
     Payout.find({ recipientType: 'Client Return (ROI)', status: 'paid' }).lean(),
     Transaction.find({ type: 'deposit', status: { $in: ['approved', 'APPROVED', 'paid'] } }).lean(),
     Transaction.find({ type: 'withdrawal', status: { $in: ['approved', 'APPROVED', 'paid'] } }).lean(),
+    Payout.find({
+      status: { $regex: /^paid$/i },
+      $or: [
+        { isWithdrawal: true },
+        { category: 'WITHDRAWAL' },
+        { commissionType: { $regex: /withdrawal/i } }
+      ]
+    }).lean(),
     Investment.countDocuments({ status: { $in: ['completed', 'cancelled'] } }),
     Transaction.countDocuments({ type: 'deposit', status: 'pending' })
   ]);
@@ -51,7 +60,26 @@ const getAdminDashboard = asyncHandler(async (req, res, next) => {
   const depSum = (approvedDepositsList || []).reduce((sum, tx) => sum + (tx.amount || 0), 0);
   const withSum = (approvedWithdrawalsList || []).reduce((sum, tx) => sum + (tx.amount || 0), 0);
 
-  const totalWithdrawalAmount = withSum;
+  // Deduplicate manual payout withdrawals per recipient per month
+  const payoutWithdrawalsMap = new Map();
+  (approvedPayoutWithdrawalsList || []).forEach(w => {
+    const d = w.payoutDate ? new Date(w.payoutDate) : new Date(w.createdAt);
+    const monthStr = !isNaN(d.getTime())
+      ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+      : (w.month || w.period || 'current');
+    const recipientKey = String(w.recipientId || w.clientId || w._id);
+    const uniqueKey = `${recipientKey}_${monthStr}`;
+
+    if (!payoutWithdrawalsMap.has(uniqueKey)) {
+      payoutWithdrawalsMap.set(uniqueKey, { amount: Number(w.amount || 0), date: d });
+    } else {
+      const prev = payoutWithdrawalsMap.get(uniqueKey);
+      payoutWithdrawalsMap.set(uniqueKey, { amount: Math.max(prev.amount, Number(w.amount || 0)), date: d });
+    }
+  });
+  const payoutWithSum = Array.from(payoutWithdrawalsMap.values()).reduce((sum, item) => sum + item.amount, 0);
+
+  const totalWithdrawalAmount = withSum + payoutWithSum;
   const totalInvestmentAmount = invSum > 0 ? invSum : Math.max(0, depSum);
 
   // 3) Calculate total ROI paid (deduplicated & filtered for active client investments)
@@ -221,7 +249,19 @@ const getAdminDashboard = asyncHandler(async (req, res, next) => {
   allTransactions.forEach(tx => {
     if (tx.status === 'approved' && tx.type === 'withdrawal') {
       const date = tx.actionAt ? new Date(tx.actionAt) : new Date(tx.createdAt);
-      monthlyWithdrawalMap[date.getMonth()] += (tx.amount || 0);
+      if (!isNaN(date.getTime()) && date.getMonth() >= 0 && date.getMonth() < 12) {
+        monthlyWithdrawalMap[date.getMonth()] += (tx.amount || 0);
+      }
+    }
+  });
+
+  // Group approved payout withdrawals by month
+  payoutWithdrawalsMap.forEach(item => {
+    if (item.date && !isNaN(item.date.getTime())) {
+      const m = item.date.getMonth();
+      if (m >= 0 && m < 12) {
+        monthlyWithdrawalMap[m] += item.amount;
+      }
     }
   });
 
