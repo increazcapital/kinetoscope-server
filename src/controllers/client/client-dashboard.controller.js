@@ -214,7 +214,9 @@ const calculateDashboardData = async (userId) => {
     }
   });
 
-  const totalApprovedWithdrawalsSum = Array.from(clientMonthMap.values()).reduce((sum, amt) => sum + amt, 0);
+  const txWithdrawalsSum = (approvedWithdrawals || []).reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0);
+  const manualWithdrawalsSum = Array.from(clientMonthMap.values()).reduce((sum, amt) => sum + amt, 0);
+  const totalApprovedWithdrawalsSum = txWithdrawalsSum > 0 ? txWithdrawalsSum : manualWithdrawalsSum;
 
   // Filter out cancelled investments for the totals
   const validInvestments = rawInvestments.filter(inv => inv.status !== 'cancelled');
@@ -942,8 +944,10 @@ const getClientPayouts = asyncHandler(async (req, res, next) => {
       transactionRef: (p.transactionRefId && p.transactionRefId !== '—') ? p.transactionRefId : '',
       referenceNumber: (p.transactionRefId && p.transactionRefId !== '—') ? p.transactionRefId : '',
       status: p.status === 'paid' ? 'PAID' : 'PENDING',
-      paidAt: p.paidAt ? p.paidAt.toISOString().split('T')[0] : '—',
-      period: isWd ? 'ROI Dividend Withdrawal' : periodFormatted,
+      paidAt: p.paidAt ? p.paidAt.toISOString() : (p.createdAt ? p.createdAt.toISOString() : (p.payoutDate || '—')),
+      createdAt: p.createdAt,
+      rawDate: p.paidAt || p.createdAt || p.payoutDate,
+      period: isWd ? 'ROI Withdrawal' : periodFormatted,
       isWithdrawal: isWd,
       type: isWd ? 'WITHDRAWAL' : 'ROI RETURN',
       category: isWd ? 'WITHDRAWAL' : (p.category || 'ROI'),
@@ -957,6 +961,8 @@ const getClientPayouts = asyncHandler(async (req, res, next) => {
     if (!existingIds.has(rIdStr) && !seenRoiMonths.has(normMonth)) {
       seenRoiMonths.add(normMonth);
       const pDateStr = r.processedDate ? new Date(r.processedDate).toISOString().split('T')[0] : '—';
+      const effectiveDate = r.createdAt || r.processedDate;
+      const fullIsoStr = effectiveDate ? new Date(effectiveDate).toISOString() : pDateStr;
       formattedPayouts.push({
         _id: r._id,
         recipientType: 'Client Return (ROI)',
@@ -968,7 +974,9 @@ const getClientPayouts = asyncHandler(async (req, res, next) => {
         transactionRef: '',
         referenceNumber: '',
         status: (r.status || 'PAID').toUpperCase(),
-        paidAt: pDateStr,
+        paidAt: fullIsoStr,
+        createdAt: r.createdAt,
+        rawDate: effectiveDate,
         period: normMonth || r.payoutMonth || '—',
         isWithdrawal: false,
         type: 'ROI RETURN',

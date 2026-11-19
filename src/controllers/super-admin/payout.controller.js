@@ -231,10 +231,12 @@ const recordPayout = asyncHandler(async (req, res, next) => {
   let normalizedRecipientType = recipientType;
   const lowerType = String(recipientType).toLowerCase();
   
-  // In this system, any manual payout recorded by the Super Admin via the "Record Payout" form
-  // is fundamentally a Withdrawal of either ROI or Commission balance.
-  // The auto-generated ROI/Commission entries handle the actual crediting of the balance.
-  const isWithdrawalRecord = true;
+  // Determine if this manual payout is an actual withdrawal or a regular ROI / Commission disbursement
+  const isWithdrawalRecord = req.body.isWithdrawal === true 
+    || String(category || '').toUpperCase() === 'WITHDRAWAL' 
+    || /withdrawal/i.test(commissionType || '') 
+    || lowerType === 'client-withdrawal' 
+    || lowerType === 'agent-withdrawal';
 
   if (lowerType === 'client' || lowerType === 'client-withdrawal' || lowerType.includes('client') || lowerType.includes('roi')) {
     normalizedRecipientType = 'Client Return (ROI)';
@@ -286,8 +288,8 @@ const recordPayout = asyncHandler(async (req, res, next) => {
   const payout = await Payout.create({
     recipientType: normalizedRecipientType,
     recipientId: resolvedRecipientId,
-    commissionType: finalCommissionType || commissionType || (isWithdrawalRecord ? 'Withdrawal' : ''),
-    category: category || (isWithdrawalRecord ? 'WITHDRAWAL' : ''),
+    commissionType: finalCommissionType || commissionType || (isWithdrawalRecord ? 'Withdrawal' : (normalizedRecipientType === 'Client Return (ROI)' ? (parsedRoiRate ? `ROI (${parsedRoiRate}%)` : 'ROI') : 'Commission')),
+    category: category || (isWithdrawalRecord ? 'WITHDRAWAL' : (normalizedRecipientType === 'Client Return (ROI)' ? 'ROI' : 'COMMISSION')),
     isWithdrawal: isWithdrawalRecord,
     clientId: resolvedClientId,
     amount: numericAmount,
