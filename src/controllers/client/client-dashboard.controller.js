@@ -905,7 +905,11 @@ const getClientPayouts = asyncHandler(async (req, res, next) => {
     }).sort({ processedDate: -1, createdAt: -1 }).lean()
   ]);
 
-  const existingIds = new Set(payouts.map(p => String(p._id)));
+  const existingIds = new Set(
+    payouts
+      .filter(p => !p.isWithdrawal && String(p.category || '').toUpperCase() !== 'WITHDRAWAL' && !/withdrawal/i.test(p.commissionType || ''))
+      .map(p => String(p._id))
+  );
   const seenRoiMonths = new Set();
 
   // Formatted records

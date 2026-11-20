@@ -3,7 +3,8 @@ const nodemailer = require('nodemailer');
 const smtpHost = process.env.SMTP_HOST || 'smtp.hostinger.com';
 const smtpPort = parseInt(process.env.SMTP_PORT || '465', 10);
 const smtpUser = process.env.SMTP_USER || process.env.EMAIL_USER || 'info@yieldiq.online';
-const smtpPass = process.env.SMTP_PASS || process.env.EMAIL_PASS || 'Yieldiq@0077';
+const rawPass = process.env.SMTP_PASS || process.env.EMAIL_PASS || 'Yieldiq@0077';
+const smtpPass = (rawPass === 'Yieldiq@007') ? (process.env.EMAIL_PASS || 'Yieldiq@0077') : rawPass;
 const isSecure = process.env.SMTP_SECURE === 'true' || (process.env.SMTP_SECURE === undefined && smtpPort === 465);
 
 console.log(`[SMTP Transporter Init] Host: ${smtpHost}, Port: ${smtpPort}, Secure: ${isSecure}, User: ${smtpUser}`);

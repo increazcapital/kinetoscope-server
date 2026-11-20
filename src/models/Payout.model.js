@@ -131,7 +131,12 @@ payoutSchema.post('save', async function (doc) {
 
     if (roiPayout) {
       roiPayout.status = targetStatus;
-      roiPayout.amount = doc.amount;
+      // Safeguard: Do not inflate existing calculated monthly ROI if incoming doc amount is higher
+      if (roiPayout.amount && roiPayout.amount > 0 && doc.amount > roiPayout.amount) {
+        console.log(`[Payout Sync] Preserved monthly ROI ₹${roiPayout.amount} (did not overwrite with ₹${doc.amount}) for ${clientUser.name} (${payoutMonth})`);
+      } else {
+        roiPayout.amount = doc.amount;
+      }
       roiPayout.payoutMonth = payoutMonth;
       if (doc.paymentMode) roiPayout.paymentMode = doc.paymentMode;
       if (doc.transactionRefId) roiPayout.transactionRefId = doc.transactionRefId;
