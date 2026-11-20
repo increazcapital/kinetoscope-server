@@ -64,7 +64,7 @@ const requestTransaction = asyncHandler(async (req, res, next) => {
     const clientId = req.user.id || req.user._id;
     const clientCode = req.user.clientCode || '';
 
-    const [clientRoiPayouts, clientPayouts, dividendAllotments, manualWithdrawals, pendingWithdrawalTxs] = await Promise.all([
+    const [clientRoiPayouts, clientPayouts, dividendAllotments, manualWithdrawals, approvedWithdrawalTxs, pendingWithdrawalTxs] = await Promise.all([
       RoiPayout.find({ clientId, status: 'PAID' }).lean(),
       clientCode ? Payout.find({
         recipientId: clientCode,
@@ -92,6 +92,11 @@ const requestTransaction = asyncHandler(async (req, res, next) => {
             ]
           }
         ]
+      }).lean(),
+      Transaction.find({
+        clientId,
+        type: 'withdrawal',
+        status: { $in: ['approved', 'paid', 'completed'] }
       }).lean(),
       Transaction.find({
         clientId,
@@ -128,7 +133,9 @@ const requestTransaction = asyncHandler(async (req, res, next) => {
         clientMonthMap.set(monthKey, Math.max(clientMonthMap.get(monthKey), Number(w.amount || 0)));
       }
     });
-    const totalWithdrawn = Array.from(clientMonthMap.values()).reduce((sum, amt) => sum + amt, 0);
+    const manualWithdrawnSum = Array.from(clientMonthMap.values()).reduce((sum, amt) => sum + amt, 0);
+    const approvedTxWithdrawn = (approvedWithdrawalTxs || []).reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+    const totalWithdrawn = Math.max(manualWithdrawnSum, approvedTxWithdrawn);
     const pendingWithdrawn = pendingWithdrawalTxs.reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
 
     const availableWithdrawableBalance = Math.max(0, totalIncome - totalWithdrawn - pendingWithdrawn);
@@ -235,6 +242,8 @@ const getClientTransactions = asyncHandler(async (req, res, next) => {
   }
   if (req.query.status) {
     query.status = req.query.status;
+  } else {
+    query.status = { $ne: 'rejected' };
   }
 
   // Calculate metrics (Approved Deposits sum, Approved Withdrawals sum from manual payouts, Pending requests count)

@@ -386,7 +386,9 @@ const getAgentDashboard = asyncHandler(async (req, res, next) => {
     }
   });
 
-  const totalWithdrawn = Array.from(agentMonthMap.values()).reduce((sum, amt) => sum + amt, 0);
+  const manualWithdrawn = Array.from(agentMonthMap.values()).reduce((sum, amt) => sum + amt, 0);
+  const txWithdrawn = (approvedAgentWithdrawals || []).reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+  const totalWithdrawn = Math.max(manualWithdrawn, txWithdrawn);
 
   const clientObjectIdsStr = clientObjectIds.map(id => String(id));
   const investmentsList = allActiveInvestments.filter(inv => {

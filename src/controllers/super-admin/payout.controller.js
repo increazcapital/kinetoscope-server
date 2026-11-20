@@ -468,7 +468,7 @@ const getPayouts = asyncHandler(async (req, res, next) => {
     ];
   }
 
-  if (req.user.role === 'agent') {
+  if (req.user && req.user.role === 'agent') {
     const clients = await User.find({ role: 'client', assignedAgent: req.user._id }, { _id: 1, clientCode: 1 });
     const clientIds = clients.map(c => c._id.toString());
     const clientCodes = clients.map(c => c.clientCode).filter(Boolean);
@@ -487,10 +487,14 @@ const getPayouts = asyncHandler(async (req, res, next) => {
     }
   }
 
-  const [payouts, autoRois, autoCommissions] = await Promise.all([
+  const [payouts, autoRois, autoCommissions, withdrawalTxs] = await Promise.all([
     Payout.find(query).sort({ payoutDate: -1, createdAt: -1 }).lean(),
     RoiPayout.find({}).populate('clientId', 'name clientCode email').sort({ createdAt: -1 }).lean(),
-    AgentCommission.find({}).populate('agentId', 'name clientCode email').populate('clientId', 'name clientCode email').sort({ createdAt: -1 }).lean()
+    AgentCommission.find({}).populate('agentId', 'name clientCode email').populate('clientId', 'name clientCode email').sort({ createdAt: -1 }).lean(),
+    Transaction.find({
+      type: { $regex: /withdrawal/i },
+      status: { $regex: /^(approved|paid|completed)$/i }
+    }).populate('clientId', 'name clientCode email').populate('agentId', 'name clientCode email').sort({ actionAt: -1, createdAt: -1 }).lean()
   ]);
 
   // Populate recipient names
@@ -610,6 +614,9 @@ const getPayouts = asyncHandler(async (req, res, next) => {
         seenTransactionRefs.add(p.transactionRefId);
       }
       existingIds.add(String(p._id));
+      if (p.linkedTransactionId) {
+        existingIds.add(String(p.linkedTransactionId));
+      }
 
       return {
         _id: p._id,
@@ -627,7 +634,7 @@ const getPayouts = asyncHandler(async (req, res, next) => {
         payoutDate: p.payoutDate,
         paymentMode: p.paymentMode || '—',
         transactionRefId: p.transactionRefId || '—',
-        status: (p.status || 'paid').toUpperCase(),
+        status: 'WITHDRAWAL',
         paidAt: p.paidAt ? p.paidAt.toISOString().split('T')[0] : (p.payoutDate || '—'),
         rawDate: p.payoutDate || p.createdAt,
       };
@@ -814,6 +821,77 @@ const getPayouts = asyncHandler(async (req, res, next) => {
         });
       }
     }
+  });
+
+  // Merge approved withdrawal transactions as distinct WITHDRAWAL rows
+  (withdrawalTxs || []).forEach(tx => {
+    const txIdStr = String(tx._id);
+    const refStr = tx.referenceNumber || tx.transactionRefId || '';
+    if (existingIds.has(txIdStr) || (refStr && seenTransactionRefs.has(refStr))) {
+      return;
+    }
+
+    const isAgent = Boolean(tx.isAgentWithdrawal || tx.agentId);
+    const clientUser = tx.clientId || {};
+    const agentUser = tx.agentId || {};
+    const user = isAgent ? agentUser : clientUser;
+    let code = user.clientCode || (isAgent ? tx.agentCode : tx.clientCode);
+    let name = user.name || (isAgent ? tx.agentName : tx.clientName);
+
+    if (isAgent && (!code || !name)) {
+      const agId = user._id ? String(user._id) : (tx.agentId ? String(tx.agentId) : null);
+      if (agId && userMap[agId]) {
+        name = name || userMap[agId];
+      }
+    }
+    code = code || (user._id ? String(user._id) : 'Unknown');
+    name = name || (isAgent ? 'Agent' : 'Client');
+    const itemRecipientType = isAgent ? 'AGENT' : 'CLIENT';
+
+    if (recipientType && recipientType !== 'All' && recipientType.toUpperCase() !== itemRecipientType) {
+      return;
+    }
+
+    let periodFormatted = '—';
+    const dVal = tx.actionAt || tx.createdAt;
+    if (dVal) {
+      const dObj = new Date(dVal);
+      if (!isNaN(dObj.getTime())) {
+        periodFormatted = new Intl.DateTimeFormat('en-IN', { month: 'short', year: 'numeric' }).format(dObj);
+      }
+    }
+    const normPeriod = String(periodFormatted).replace(/\bSept\b/i, 'Sep').trim();
+
+    const isDivWD = /dividend/i.test(tx.remarks || tx.category || tx.withdrawalCategory || '');
+    const isCapWD = /capital/i.test(tx.remarks || tx.category || tx.withdrawalCategory || '');
+    const categoryStr = isDivWD ? 'DIVIDEND WITHDRAWAL' : (isCapWD ? 'CAPITAL WITHDRAWAL' : 'WITHDRAWAL');
+    const payoutDetailStr = isDivWD ? 'Withdrawal Dividend Bonus' : (isCapWD ? 'Capital Account Withdrawal' : (isAgent ? 'Commission Withdrawal' : 'ROI Payout Withdrawal'));
+
+    if (refStr && refStr !== '—') {
+      seenTransactionRefs.add(refStr);
+    }
+    existingIds.add(txIdStr);
+
+    formatted.push({
+      _id: tx._id,
+      recipientId: user._id ? String(user._id) : code,
+      recipientName: name,
+      recipientCode: code,
+      recipientType: itemRecipientType,
+      isWithdrawal: true,
+      category: categoryStr,
+      type: isDivWD ? 'Dividend Withdrawal' : (isCapWD ? 'Capital Withdrawal' : (isAgent ? 'Commission Withdrawal' : 'ROI Withdrawal')),
+      payoutDetail: payoutDetailStr,
+      roiPercentage: null,
+      period: normPeriod || periodFormatted,
+      amount: Number(tx.amount || 0),
+      payoutDate: tx.actionAt ? new Date(tx.actionAt).toISOString().split('T')[0] : (tx.createdAt ? new Date(tx.createdAt).toISOString().split('T')[0] : '—'),
+      paymentMode: tx.paymentMethod || 'Bank Transfer',
+      transactionRefId: refStr || '—',
+      status: 'WITHDRAWAL',
+      paidAt: tx.actionAt ? new Date(tx.actionAt).toISOString().split('T')[0] : (tx.createdAt ? new Date(tx.createdAt).toISOString().split('T')[0] : '—'),
+      rawDate: tx.actionAt || tx.createdAt,
+    });
   });
 
   if (search) {
@@ -1194,6 +1272,16 @@ const deletePayout = asyncHandler(async (req, res, next) => {
 
   if (!payout) {
     payout = await Transaction.findByIdAndDelete(id);
+    if (payout && (payout.type === 'withdrawal' || /withdrawal/i.test(payout.type || ''))) {
+      try {
+        await Payout.deleteMany({
+          $or: [
+            { linkedTransactionId: id },
+            ...(payout.referenceNumber ? [{ transactionRefId: payout.referenceNumber }] : [])
+          ]
+        });
+      } catch (e) {}
+    }
   }
 
   if (!payout) {

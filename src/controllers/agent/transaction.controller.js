@@ -310,12 +310,14 @@ const requestAgentWithdrawal = asyncHandler(async (req, res, next) => {
   }
 
   // 3. Create the withdrawal transaction
+  const generatedRef = referenceNumber || `WD-${Date.now().toString().slice(-8).toUpperCase()}`;
   const transaction = await Transaction.create({
     agentId,
     isAgentWithdrawal: true,
     type: TRANSACTION_TYPES.WITHDRAWAL,
     amount: numericAmount,
     status: TRANSACTION_STATUS.PENDING,
+    referenceNumber: generatedRef,
     paymentMethod: selectedMode === 'UPI' ? (requestedUpi ? `UPI (${requestedUpi})` : 'UPI') : (agentProfile?.bankName ? `${agentProfile.bankName} — ${agentProfile.accountNumber}` : 'Bank Transfer'),
     bankDetails: bankDetailsObj,
     remarks: remarks || note || '',
@@ -335,7 +337,7 @@ const requestAgentWithdrawal = asyncHandler(async (req, res, next) => {
           type: 'withdrawal',
           amount: numericAmount,
           paymentMethod: bankDetails,
-          referenceNumber: `WD-${transaction._id.toString().slice(-6)}`,
+          referenceNumber: generatedRef,
         }
       );
     }
@@ -399,7 +401,11 @@ const getAgentWithdrawals = asyncHandler(async (req, res, next) => {
     }
   });
 
-  const totalWithdrawn = Array.from(agentMonthMap.values()).reduce((sum, amt) => sum + amt, 0);
+  const totalManualWithdrawn = Array.from(agentMonthMap.values()).reduce((sum, amt) => sum + amt, 0);
+  const approvedTxWithdrawn = (withdrawals || [])
+    .filter(w => /^(approved|paid|credited|completed)$/i.test(String(w.status || '')))
+    .reduce((sum, w) => sum + (Number(w.amount) || 0), 0);
+  const totalWithdrawn = Math.max(totalManualWithdrawn, approvedTxWithdrawn);
   const availableBalance = Math.max(0, totalEarned - totalWithdrawn);
 
   // 2. Get Bank Account
@@ -410,10 +416,10 @@ const getAgentWithdrawals = asyncHandler(async (req, res, next) => {
   } : { bankName: '—', accountNumber: '—' };
 
   // 3. Fetch History list (combine Transaction withdrawal requests + Manual Payouts recorded by Super Admin)
-  const txHistory = await Transaction.find({ agentId, isAgentWithdrawal: true }).lean();
+  const txHistory = await Transaction.find({ agentId, isAgentWithdrawal: true }).sort({ createdAt: -1 }).lean();
   
   const mappedPayouts = recordedPayouts
-    .filter(p => !p.isWithdrawal && String(p.category || '').toUpperCase() !== 'WITHDRAWAL' && !/withdrawal/i.test(p.commissionType || ''))
+    .filter(p => p.isWithdrawal || String(p.category || '').toUpperCase() === 'WITHDRAWAL' || /withdrawal/i.test(p.commissionType || ''))
     .map(p => ({
       _id: p._id,
       amount: p.amount,
@@ -430,9 +436,15 @@ const getAgentWithdrawals = asyncHandler(async (req, res, next) => {
     success: true,
     data: {
       availableBalance,
+      totalWithdrawn,
+      totalEarned,
       bankAccount,
       history,
     },
+    availableBalance,
+    totalWithdrawn,
+    totalEarned,
+    history
   });
 });
 
