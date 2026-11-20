@@ -162,16 +162,18 @@ const login = asyncHandler(async (req, res, next) => {
     }
 
     const { buildOtpEmailHtml } = require('../../services/email.service');
+    const otpHtml = await buildOtpEmailHtml({
+      title: `${portalLabel} Login Verification`,
+      subtitle: `Hello <strong>${user.name}</strong>, enter the OTP below to complete your ${portalLabel} sign-in.`,
+      otp,
+      expiryMinutes: 10
+    });
+
     await transporter.sendMail({
-      from: process.env.EMAIL_USER || process.env.SMTP_FROM || 'noreply@kinetoscopefilmproduction.com',
+      from: process.env.EMAIL_FROM || `YieldIQ <${process.env.SMTP_USER || process.env.EMAIL_USER || 'info@yieldiq.online'}>`,
       to: user.email,
-      subject: `Your Kinetoscope ${portalLabel} Login OTP`,
-      html: buildOtpEmailHtml({
-        title: `${portalLabel} Login Verification`,
-        subtitle: `Hello <strong>${user.name}</strong>, enter the OTP below to complete your ${portalLabel} sign-in.`,
-        otp,
-        expiryMinutes: 10
-      }),
+      subject: `Your YieldIQ ${portalLabel} Login OTP`,
+      html: otpHtml,
     });
 
     console.log(`[2FA OTP] Code sent to ${user.email} (${portalLabel})`);
