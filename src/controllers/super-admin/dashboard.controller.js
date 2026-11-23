@@ -58,11 +58,53 @@ const getAdminDashboard = asyncHandler(async (req, res, next) => {
   // 2) Calculate total investment amount & approved withdrawals
   const invSum = activeInvestmentsList.reduce((sum, inv) => sum + (inv.investmentAmount || 0), 0);
   const depSum = (approvedDepositsList || []).reduce((sum, tx) => sum + (tx.amount || 0), 0);
-  const withSum = (approvedWithdrawalsList || []).reduce((sum, tx) => sum + (tx.amount || 0), 0);
+  // Primary Source: Approved withdrawal transactions
+  const withdrawalTransactions = approvedWithdrawalsList || [];
+  const linkedTxIds = new Set();
+  const linkedPayoutIds = new Set();
+  const linkedRefs = new Set();
 
-  // Deduplicate manual payout withdrawals per recipient per month
+  withdrawalTransactions.forEach(tx => {
+    linkedTxIds.add(String(tx._id));
+    if (tx.payoutRecordId) linkedPayoutIds.add(String(tx.payoutRecordId));
+    if (tx.referenceNumber && String(tx.referenceNumber).trim() !== '' && tx.referenceNumber !== '—') {
+      linkedRefs.add(String(tx.referenceNumber).trim().toUpperCase());
+    }
+    if (tx.transactionRefId && String(tx.transactionRefId).trim() !== '' && tx.transactionRefId !== '—') {
+      linkedRefs.add(String(tx.transactionRefId).trim().toUpperCase());
+    }
+  });
+
+  // Secondary Source: Standalone manual payout withdrawals (e.g. Ashok Shukla) that have no corresponding transaction
+  const standalonePayoutWithdrawals = (approvedPayoutWithdrawalsList || []).filter(w => {
+    const pIdStr = String(w._id);
+    const linkedTxStr = w.linkedTransactionId ? String(w.linkedTransactionId) : '';
+    const refStr = (w.transactionRefId && String(w.transactionRefId).trim() !== '' && w.transactionRefId !== '—') ? String(w.transactionRefId).trim().toUpperCase() : '';
+
+    if (linkedPayoutIds.has(pIdStr)) return false;
+    if (linkedTxStr && linkedTxIds.has(linkedTxStr)) return false;
+    if (refStr && linkedRefs.has(refStr)) return false;
+
+    // Check same recipient + month + amount match against transactions
+    const d = w.payoutDate ? new Date(w.payoutDate) : new Date(w.createdAt);
+    const monthKey = !isNaN(d.getTime()) ? `${d.getFullYear()}-${d.getMonth()}` : '';
+    const wRecipient = String(w.recipientId || w.clientId || '');
+
+    const hasMatchingTx = withdrawalTransactions.some(tx => {
+      const txClient = String(tx.clientId || tx.clientCode || '');
+      const txDate = tx.actionAt ? new Date(tx.actionAt) : new Date(tx.createdAt);
+      const txMonthKey = !isNaN(txDate.getTime()) ? `${txDate.getFullYear()}-${txDate.getMonth()}` : '';
+      return (txClient === wRecipient || (w.clientCode && tx.clientCode === w.clientCode)) &&
+             txMonthKey === monthKey &&
+             Number(tx.amount) === Number(w.amount);
+    });
+
+    return !hasMatchingTx;
+  });
+
+  // Deduplicate standalone payout withdrawals per recipient per month
   const payoutWithdrawalsMap = new Map();
-  (approvedPayoutWithdrawalsList || []).forEach(w => {
+  standalonePayoutWithdrawals.forEach(w => {
     const d = w.payoutDate ? new Date(w.payoutDate) : new Date(w.createdAt);
     const monthStr = !isNaN(d.getTime())
       ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
@@ -77,9 +119,11 @@ const getAdminDashboard = asyncHandler(async (req, res, next) => {
       payoutWithdrawalsMap.set(uniqueKey, { amount: Math.max(prev.amount, Number(w.amount || 0)), date: d });
     }
   });
-  const payoutWithSum = Array.from(payoutWithdrawalsMap.values()).reduce((sum, item) => sum + item.amount, 0);
 
-  const totalWithdrawalAmount = withSum + payoutWithSum;
+  const txWithSum = withdrawalTransactions.reduce((sum, tx) => sum + (tx.amount || 0), 0);
+  const standalonePayoutWithSum = Array.from(payoutWithdrawalsMap.values()).reduce((sum, item) => sum + item.amount, 0);
+
+  const totalWithdrawalAmount = txWithSum + standalonePayoutWithSum;
   const totalInvestmentAmount = invSum > 0 ? invSum : Math.max(0, depSum);
 
   // 3) Calculate total ROI paid (deduplicated & filtered for active client investments)
